@@ -1,0 +1,32 @@
+# Secretos — NUNCA versionar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Base de datos local
+*.db
+*.sqlite3
+
+# SO / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
