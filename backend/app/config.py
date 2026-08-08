@@ -14,6 +14,13 @@ if _env_file.exists():
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./metabot.db")
 TIMEZONE = os.environ.get("TIMEZONE", "America/Asuncion")
 
+# WhatsApp Cloud API (una app de Meta puede servir varios números;
+# cada número/tenant se identifica por su phone_number_id)
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
+WHATSAPP_API_BASE = "https://graph.facebook.com/v21.0"
+
 # Proveedores LLM en orden de fallback. Todos exponen API OpenAI-compatible.
 LLM_PROVIDERS = [
     {

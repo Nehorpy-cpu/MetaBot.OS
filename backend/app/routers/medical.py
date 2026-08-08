@@ -1,10 +1,12 @@
-"""Módulo médico: doctores, citas y resumen diario por doctor."""
-from datetime import date, datetime
+"""Módulo médico: doctores, citas, recordatorios, iCalendar y resúmenes."""
+from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from .. import whatsapp
+from ..config import TIMEZONE
 from ..db import get_db
 from ..models import Appointment, Company, Doctor
 
@@ -134,6 +136,110 @@ def update_appointment_status(
     db.commit()
     db.refresh(appt)
     return appt
+
+
+# --- Recordatorios de citas (día siguiente por defecto) ---
+
+def _reminder_text(appt: Appointment, doctor: Doctor, company: Company) -> str:
+    return (
+        f"¡Hola {appt.patient_name}! Te recordamos tu cita en {company.name} "
+        f"con {doctor.name} ({doctor.specialty or 'consulta'}) mañana "
+        f"{appt.scheduled_at.strftime('%d/%m')} a las {appt.scheduled_at.strftime('%H:%M')} hs. "
+        f"Si no podés venir, avisanos por acá así reprogramamos. ¡Te esperamos!"
+    )
+
+
+@router.get("/companies/{company_id}/reminders")
+def list_reminders(company_id: int, on_date: date | None = None, db: Session = Depends(get_db)):
+    """Recordatorios para las citas de la fecha dada (mañana por defecto)."""
+    company = _get_company(company_id, db)
+    target = on_date or (date.today() + timedelta(days=1))
+    start = datetime(target.year, target.month, target.day)
+    end = start.replace(hour=23, minute=59, second=59)
+    appts = (
+        db.query(Appointment)
+        .filter(
+            Appointment.company_id == company_id,
+            Appointment.scheduled_at >= start,
+            Appointment.scheduled_at <= end,
+            Appointment.status.in_(["pending", "confirmed"]),
+        )
+        .order_by(Appointment.scheduled_at)
+        .all()
+    )
+    reminders = []
+    for a in appts:
+        doctor = db.get(Doctor, a.doctor_id)
+        reminders.append(
+            {
+                "appointment_id": a.id,
+                "patient_name": a.patient_name,
+                "phone": a.patient_phone,
+                "text": _reminder_text(a, doctor, company),
+            }
+        )
+    return {"date": target.isoformat(), "count": len(reminders), "reminders": reminders}
+
+
+@router.post("/companies/{company_id}/reminders/send")
+async def send_reminders(company_id: int, on_date: date | None = None, db: Session = Depends(get_db)):
+    """Envía los recordatorios por WhatsApp (dry-run si no hay token)."""
+    company = _get_company(company_id, db)
+    data = list_reminders(company_id, on_date, db)
+    results = []
+    for r in data["reminders"]:
+        if not r["phone"]:
+            results.append({**r, "send": {"error": "sin teléfono"}})
+            continue
+        send = await whatsapp.send_text(company.wa_phone_number_id, r["phone"], r["text"])
+        results.append({**r, "send": send})
+    return {"date": data["date"], "results": results}
+
+
+# --- Export iCalendar (Google Calendar) por doctor ---
+
+@router.get("/companies/{company_id}/doctors/{doctor_id}/calendar.ics")
+def doctor_calendar_ics(company_id: int, doctor_id: int, db: Session = Depends(get_db)):
+    """Agenda del doctor en formato iCalendar, importable en Google Calendar."""
+    company = _get_company(company_id, db)
+    doctor = db.get(Doctor, doctor_id)
+    if not doctor or doctor.company_id != company_id:
+        raise HTTPException(404, "Doctor no encontrado")
+    appts = (
+        db.query(Appointment)
+        .filter(
+            Appointment.doctor_id == doctor_id,
+            Appointment.status.in_(["pending", "confirmed"]),
+        )
+        .order_by(Appointment.scheduled_at)
+        .all()
+    )
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//MetaBot.OS//Agenda Medica//ES",
+        f"X-WR-CALNAME:{doctor.name} - {company.name}",
+        f"X-WR-TIMEZONE:{TIMEZONE}",
+    ]
+    for a in appts:
+        start_s = a.scheduled_at.strftime("%Y%m%dT%H%M%S")
+        end_s = (a.scheduled_at + timedelta(minutes=30)).strftime("%Y%m%dT%H%M%S")
+        summary = f"Cita: {a.patient_name}" + (f" — {a.notes}" if a.notes else "")
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:metabot-appt-{a.id}@metabot.os",
+            f"DTSTART;TZID={TIMEZONE}:{start_s}",
+            f"DTEND;TZID={TIMEZONE}:{end_s}",
+            f"SUMMARY:{summary}",
+            f"DESCRIPTION:Tel paciente: {a.patient_phone or 's/d'} | Estado: {STATUS_ES.get(a.status, a.status)}",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
+    return Response(
+        content="\r\n".join(lines),
+        media_type="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="agenda-{doctor_id}.ics"'},
+    )
 
 
 # --- Resumen diario por doctor (plantilla WhatsApp) ---

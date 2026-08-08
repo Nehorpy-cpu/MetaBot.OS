@@ -24,6 +24,9 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String(200))
     vertical: Mapped[str] = mapped_column(String(20))  # "medical" | "ecommerce"
     niche: Mapped[str] = mapped_column(String(200), default="")
+    # phone_number_id de WhatsApp Cloud API: identifica a qué tenant llega
+    # cada mensaje entrante del webhook
+    wa_phone_number_id: Mapped[str] = mapped_column(String(50), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     agents: Mapped[list["Agent"]] = relationship(back_populates="company", cascade="all, delete-orphan")

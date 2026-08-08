@@ -31,8 +31,14 @@ class CompanyOut(BaseModel):
     name: str
     vertical: str
     niche: str
+    wa_phone_number_id: str
 
     model_config = {"from_attributes": True}
+
+
+class CompanyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    wa_phone_number_id: str | None = Field(default=None, max_length=50)
 
 
 @router.post("", response_model=CompanyOut, status_code=201)
@@ -59,6 +65,18 @@ def get_company(company_id: int, db: Session = Depends(get_db)):
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(404, "Empresa no encontrada")
+    return company
+
+
+@router.patch("/{company_id}", response_model=CompanyOut)
+def update_company(company_id: int, payload: CompanyUpdate, db: Session = Depends(get_db)):
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(404, "Empresa no encontrada")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(company, field, value)
+    db.commit()
+    db.refresh(company)
     return company
 
 

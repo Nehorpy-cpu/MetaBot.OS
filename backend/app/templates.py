@@ -9,7 +9,7 @@ MEDICAL_AGENTS = [
         "slug": "ceo",
         "name": "CEO (Orquestador Clínico)",
         "role": "Gestión de citas, triaje y leads",
-        "model": "meta/llama-3.3-70b-instruct",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "temperature": 0.2,
         "system_prompt": (
             "Sos el CEO autónomo de un centro médico u odontológico en Paraguay. "
@@ -35,7 +35,7 @@ MEDICAL_AGENTS = [
         "slug": "guard",
         "name": "Auditor de Calidad Médica",
         "role": "Cumplimiento y normativa sanitaria",
-        "model": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+        "model": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
         "temperature": 0.1,
         "system_prompt": (
             "Auditás conversaciones médicas. Verificá que NUNCA se den "
@@ -70,7 +70,7 @@ MEDICAL_AGENTS = [
         "slug": "cx",
         "name": "CX Bot (Triaje y WhatsApp)",
         "role": "Atención 24/7 de pacientes",
-        "model": "meta/llama-3.1-8b-instruct",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "temperature": 0.3,
         "system_prompt": (
             "Atendés pacientes por WhatsApp en voseo y jopara sutil. Respondé "
@@ -85,7 +85,7 @@ ECOMMERCE_AGENTS = [
         "slug": "ceo",
         "name": "CEO (Orquestador)",
         "role": "Estrategia, presupuesto y routing",
-        "model": "meta/llama-3.3-70b-instruct",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "temperature": 0.4,
         "system_prompt": (
             "Sos el CEO autónomo. Maximizás el ROAS de campañas Meta en Paraguay "
@@ -104,7 +104,7 @@ ECOMMERCE_AGENTS = [
         "slug": "guard",
         "name": "Auditor de Calidad",
         "role": "Compliance de anuncios Meta",
-        "model": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+        "model": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
         "temperature": 0.1,
         "system_prompt": "Auditoría estricta de copys y creativos para evitar bloqueos de cuentas publicitarias en Meta.",
     },
@@ -128,7 +128,7 @@ ECOMMERCE_AGENTS = [
         "slug": "cx",
         "name": "CX & Sales Bot",
         "role": "Omnicanalidad y cierre de ventas",
-        "model": "meta/llama-3.1-8b-instruct",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "temperature": 0.3,
         "system_prompt": (
             "Atención al cliente y cierre de ventas por WhatsApp. Cuando el "
