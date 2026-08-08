@@ -263,6 +263,27 @@ export const campaignApi = {
     request<void>(`/companies/${companyId}/campaigns/${id}`, { method: "DELETE" }),
 };
 
+export interface Service {
+  id: number;
+  name: string;
+  category: string;
+  description: string;
+  price_gs: number;
+  duration_min: number;
+  active: boolean;
+  doctors: { id: number; name: string }[];
+}
+
+export const serviceApi = {
+  list: (companyId: number) => request<Service[]>(`/companies/${companyId}/services`),
+  create: (companyId: number, data: { name: string; category: string; price_gs: number; duration_min: number; doctor_ids: number[] }) =>
+    request<Service>(`/companies/${companyId}/services`, { method: "POST", body: JSON.stringify(data) }),
+  update: (companyId: number, id: number, data: Partial<{ price_gs: number; active: boolean; doctor_ids: number[] }>) =>
+    request<Service>(`/companies/${companyId}/services/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  remove: (companyId: number, id: number) =>
+    request<void>(`/companies/${companyId}/services/${id}`, { method: "DELETE" }),
+};
+
 export const chatApi = {
   send: (companyId: number, contactPhone: string, contactName: string, text: string) =>
     request<ChatResponse>(`/companies/${companyId}/chat`, {

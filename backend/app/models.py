@@ -92,6 +92,35 @@ class Appointment(Base):
     doctor: Mapped[Doctor] = relationship(back_populates="appointments")
 
 
+class Service(Base):
+    """Servicio, estudio o prestación que ofrece el negocio (ecografías,
+    limpiezas dentales, o cualquier servicio de cualquier rubro).
+    Precio en Guaraníes como entero; 0 = 'consultar'."""
+
+    __tablename__ = "services"
+    __table_args__ = (UniqueConstraint("company_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(100), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    price_gs: Mapped[int] = mapped_column(default=0)
+    duration_min: Mapped[int] = mapped_column(default=30)
+    active: Mapped[bool] = mapped_column(default=True)
+
+
+class DoctorService(Base):
+    """Qué doctores/profesionales atienden cada servicio."""
+
+    __tablename__ = "doctor_services"
+    __table_args__ = (UniqueConstraint("doctor_id", "service_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+
+
 class Conversation(Base):
     """Hilo de chat con un cliente/paciente por un canal (whatsapp, instagram)."""
 

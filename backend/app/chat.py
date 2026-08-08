@@ -17,7 +17,21 @@ from sqlalchemy.orm import Session
 
 from .config import TIMEZONE
 from .llm import chat_raw
-from .models import Agent, Appointment, Company, Conversation, Doctor, GlossaryTerm, Message
+from .models import (
+    Agent,
+    Appointment,
+    Company,
+    Conversation,
+    Doctor,
+    DoctorService,
+    GlossaryTerm,
+    Message,
+    Service,
+)
+
+
+def _fmt_gs(amount: int) -> str:
+    return f"₲ {amount:,}".replace(",", ".") if amount else "consultar"
 
 HISTORY_LIMIT = 20
 MAX_TOOL_ROUNDS = 4
@@ -56,6 +70,17 @@ REGLAS MÉDICAS (obligatorias):
 
 def _tools_for(company: Company) -> list[dict]:
     tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_services",
+                "description": "Lista los servicios/estudios del negocio con precio exacto en Guaraníes, duración y qué profesional los atiende. Usar SIEMPRE antes de dar un precio.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"category": {"type": "string", "description": "Filtrar por categoría (opcional)"}},
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -123,6 +148,28 @@ def _execute_tool(
         conversation.status = "needs_human"
         db.commit()
         return {"ok": True, "message": "Conversación derivada al equipo humano."}
+
+    if name == "list_services":
+        q = db.query(Service).filter(Service.company_id == company.id, Service.active)
+        category = str(args.get("category") or "").strip()
+        if category:
+            q = q.filter(Service.category.ilike(f"%{category}%"))
+        services = q.order_by(Service.category, Service.name).all()
+        out = []
+        for s in services:
+            links = db.query(DoctorService).filter(DoctorService.service_id == s.id).all()
+            doctors = [d.name for link in links if (d := db.get(Doctor, link.doctor_id))]
+            out.append(
+                {
+                    "name": s.name,
+                    "category": s.category,
+                    "price": _fmt_gs(s.price_gs),
+                    "duration_min": s.duration_min,
+                    "attended_by": doctors or ["cualquier profesional del equipo"],
+                    "description": s.description[:200],
+                }
+            )
+        return {"services": out} if out else {"services": [], "note": "No hay servicios cargados con ese criterio."}
 
     if name == "list_doctors":
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
@@ -236,6 +283,16 @@ def _build_system_prompt(db: Session, company: Company, agent: Agent) -> str:
             + "REGLA DURA: solo ofrecés lo que este negocio realmente vende. Si el cliente "
             "pide algo de OTRO rubro (ej. ropa si vendés perfumes), aclaralo con amabilidad "
             "y redirigí al catálogo real. Nunca sigas la corriente ofreciendo productos inexistentes."
+        )
+    services = (
+        db.query(Service).filter(Service.company_id == company.id, Service.active).limit(25).all()
+    )
+    if services:
+        listing = "; ".join(f"{s.name} ({_fmt_gs(s.price_gs)})" for s in services)
+        parts.append(
+            f"Servicios/estudios cargados: {listing}. Antes de confirmar un precio usá la "
+            "herramienta list_services (tiene el dato exacto y qué profesional atiende cada uno). "
+            "NUNCA inventes servicios ni precios que no estén en esa lista."
         )
     if company.vertical == "medical":
         parts.append(MEDICAL_RULES)

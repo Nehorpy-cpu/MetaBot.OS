@@ -5,9 +5,9 @@ import {
   Send, ShieldCheck, Sliders, Smartphone, Sparkles, Stethoscope, Users, Video, Wand2, X, Zap,
 } from "lucide-react";
 import {
-  api, campaignApi, chatApi, creativeApi, intelApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
+  api, campaignApi, chatApi, creativeApi, intelApi, serviceApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
   type Campaign, type ChatMessage, type Company, type Competitor, type Conversation, type Creative, type DailySummary,
-  type DashboardData, type Doctor, type Finding, type PromptSuggestion, type Report, type WaStatus, STATUS_ES,
+  type DashboardData, type Doctor, type Finding, type PromptSuggestion, type Report, type Service, type WaStatus, STATUS_ES,
 } from "./api";
 
 const AGENT_ICONS: Record<string, typeof Command> = {
@@ -508,6 +508,111 @@ function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
         </div>
       </form>
     </Modal>
+  );
+}
+
+function ServicesView({ company }: { company: Company }) {
+  const [services, setServices] = useState<Service[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [form, setForm] = useState({ name: "", category: "", price_gs: 0, duration_min: 30 });
+  const [selDoctors, setSelDoctors] = useState<number[]>([]);
+  const [error, setError] = useState("");
+
+  const load = useCallback(() => {
+    serviceApi.list(company.id).then(setServices).catch(() => setServices([]));
+    api.listDoctors(company.id).then(setDoctors).catch(() => setDoctors([]));
+  }, [company.id]);
+  useEffect(load, [load]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    try {
+      await serviceApi.create(company.id, { ...form, doctor_ids: selDoctors });
+      setForm({ name: "", category: "", price_gs: 0, duration_min: 30 });
+      setSelDoctors([]);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-bold text-white tracking-tight">Servicios & Estudios</h2>
+        <p className="text-zinc-400 text-sm mt-1">
+          El CX Bot usa esta base para responder precios exactos y derivar al profesional correcto. Precio 0 = "consultar".
+        </p>
+      </div>
+
+      <form onSubmit={submit} className={`${card} p-5 grid grid-cols-1 md:grid-cols-5 gap-3 items-end`}>
+        <div className="md:col-span-2">
+          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">Nombre *</label>
+          <input className={input} required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Ej. Ecografía abdominal" />
+        </div>
+        <div>
+          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">Categoría</label>
+          <input className={input} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+            placeholder="Estudios" />
+        </div>
+        <div>
+          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">Precio (₲)</label>
+          <input type="number" min={0} className={input} value={form.price_gs}
+            onChange={(e) => setForm({ ...form, price_gs: Number(e.target.value) })} />
+        </div>
+        <div>
+          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">Minutos</label>
+          <input type="number" min={5} max={480} className={input} value={form.duration_min}
+            onChange={(e) => setForm({ ...form, duration_min: Number(e.target.value) })} />
+        </div>
+        {doctors.length > 0 && (
+          <div className="md:col-span-4">
+            <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">Atendido por</label>
+            <div className="flex flex-wrap gap-2">
+              {doctors.map((d) => (
+                <label key={d.id} className={`text-xs px-3 py-1.5 rounded-lg border cursor-pointer ${selDoctors.includes(d.id) ? "bg-cyan-500/10 border-cyan-500/50 text-cyan-300" : "bg-white/[0.02] border-white/5 text-zinc-400"}`}>
+                  <input type="checkbox" className="hidden" checked={selDoctors.includes(d.id)}
+                    onChange={() => setSelDoctors((prev) => prev.includes(d.id) ? prev.filter((x) => x !== d.id) : [...prev, d.id])} />
+                  {d.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        <button type="submit" className={btnPrimary}>+ Agregar</button>
+        {error && <p className="text-red-400 text-xs md:col-span-5">{error}</p>}
+      </form>
+
+      <div className={`${card} p-5 overflow-x-auto`}>
+        <table className="w-full text-left text-sm text-zinc-300">
+          <thead className="text-[10px] uppercase text-zinc-500 border-b border-white/5">
+            <tr><th className="pb-2">Servicio</th><th className="pb-2">Categoría</th><th className="pb-2">Precio</th><th className="pb-2">Duración</th><th className="pb-2">Atiende</th><th className="pb-2 text-right">Acciones</th></tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {services.map((s) => (
+              <tr key={s.id} className={s.active ? "" : "opacity-40"}>
+                <td className="py-2.5 text-white font-medium">{s.name}</td>
+                <td className="py-2.5 text-xs">{s.category}</td>
+                <td className="py-2.5 font-mono text-cyan-300">{s.price_gs ? `₲ ${s.price_gs.toLocaleString("es-PY")}` : "consultar"}</td>
+                <td className="py-2.5 text-xs">{s.duration_min} min</td>
+                <td className="py-2.5 text-xs">{s.doctors.map((d) => d.name).join(", ") || "—"}</td>
+                <td className="py-2.5 text-right space-x-2">
+                  <button onClick={() => serviceApi.update(company.id, s.id, { active: !s.active }).then(load)}
+                    className="text-xs bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg text-zinc-300">
+                    {s.active ? "Pausar" : "Activar"}
+                  </button>
+                  <button onClick={() => serviceApi.remove(company.id, s.id).then(load)}
+                    className="text-zinc-500 hover:text-red-400"><X size={14} /></button>
+                </td>
+              </tr>
+            ))}
+            {!services.length && <tr><td colSpan={6} className="py-8 text-center text-zinc-600 text-xs">Sin servicios cargados.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -1069,7 +1174,7 @@ function ChatView({ companyId }: { companyId: number }) {
 export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services">("dashboard");
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -1127,6 +1232,7 @@ export default function App() {
           <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest px-3 py-2">Módulos</div>
           {navBtn("dashboard", "Dashboard", LayoutDashboard)}
           {active?.vertical === "medical" && navBtn("medical", "Agenda de Doctores", Calendar)}
+          {navBtn("services", "Servicios & Estudios", Sliders)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
           {navBtn("intelligence", "Inteligencia (Informes)", Activity)}
@@ -1157,6 +1263,7 @@ export default function App() {
           {active && view === "chat" && <ChatView companyId={active.id} />}
           {active && view === "intelligence" && <IntelligenceView companyId={active.id} />}
           {active && view === "studio" && <StudioView companyId={active.id} />}
+          {active && view === "services" && <ServicesView company={active} />}
           {active && view === "connections" && (
             <ConnectionsView
               company={active}
