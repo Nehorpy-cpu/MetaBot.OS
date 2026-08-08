@@ -9,6 +9,7 @@ Diseño:
 - Estilo humano: mensajes cortos, voseo, una pregunta por vez.
 """
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,17 @@ from .models import Agent, Appointment, Company, Conversation, Doctor, GlossaryT
 
 HISTORY_LIMIT = 20
 MAX_TOOL_ROUNDS = 4
+
+# Algunos modelos escriben la llamada a herramienta como TEXTO en vez de usar
+# tool_calls; eso jamás debe llegar al cliente. Se corta desde el primer tag.
+_TOOL_TEXT_RE = re.compile(
+    r"<\/?\s*(?:escalate_to_human|book_appointment|check_agenda|list_doctors|function|tool)[^>]*>.*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _sanitize_reply(text: str) -> str:
+    return _TOOL_TEXT_RE.sub("", text).strip()
 
 STYLE_RULES = """
 REGLAS DE ESTILO (obligatorias):
@@ -344,6 +356,7 @@ async def handle_incoming(
         final = await chat_raw(messages, model=agent.model, temperature=agent.temperature)
         reply_text = (final.get("content") or "").strip()
 
+    reply_text = _sanitize_reply(reply_text)
     if not reply_text:
         reply_text = "Perdoná, ¿me repetís eso último?"
 

@@ -316,6 +316,24 @@ def test_booking_phone_string_null_sanitized(monkeypatch):
     assert appts[0]["patient_phone"] == "+595977777777"
 
 
+def test_tool_syntax_in_text_is_sanitized(monkeypatch):
+    """Regresión de producción: el modelo escribió '<escalate_to_human> {...}'
+    como texto; eso no debe llegar jamás al cliente."""
+    company = _create_company(name="Clínica Sanitizada")
+    cid = company["id"]
+
+    fake, _ = _mock_llm(
+        [{"content": "Te agendo el lunes, ¿sí?\n\n<escalate_to_human>\n{\"reason\": \"pedido\"}"}]
+    )
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(
+        f"/api/companies/{cid}/chat", json={"contact_phone": "+595979999999", "text": "Turno"}
+    )
+    reply = resp.json()["reply"]
+    assert reply == "Te agendo el lunes, ¿sí?"
+    assert "escalate" not in reply
+
+
 def test_paused_cx_agent_returns_error(monkeypatch):
     company = _create_company(name="Clínica Pausada")
     cid = company["id"]
