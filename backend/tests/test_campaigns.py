@@ -142,6 +142,41 @@ def test_offer_present_in_brief_not_flagged(monkeypatch, tmp_path):
     assert resp.json()["audit_severity"] == "ok"  # el 20% sí está en el brief
 
 
+def test_visual_prompt_requires_product_hero(monkeypatch, tmp_path):
+    """Regresión: las imágenes salieron sin el producto (rosas, parejas).
+    La instrucción al Estudio Visual debe exigir el producto protagonista."""
+    company = _create_company("ecommerce", "Perfumería Hero")
+    cid = company["id"]
+
+    captured = {}
+
+    async def fake_complete(messages, **kwargs):
+        content = messages[-1]["content"]
+        if '"title"' in content:
+            return '{"title": "T", "angle": "a", "audience": "p"}'
+        if "tarjeta(s) de anuncio" in content:
+            return '[{"headline": "H", "copy": "C"}]'
+        if "prompt de imagen" in content:
+            captured["visual"] = content
+            return '["perfume bottle hero shot"]'
+        return '{"severity": "ok", "note": "ok"}'
+
+    async def fake_generate(prompt, width, height):
+        return b"img", "pollinations"
+
+    monkeypatch.setattr(campaign_engine, "complete", fake_complete)
+    monkeypatch.setattr(campaign_engine, "generate_image", fake_generate)
+    monkeypatch.setattr(campaign_engine, "MEDIA_DIR", tmp_path)
+
+    client.post(
+        f"/api/companies/{cid}/campaigns",
+        json={"brief": "Promo de prueba de campaña", "format": "single", "n_cards": 1},
+    )
+    assert "PROTAGONISTA OBLIGATORIO" in captured["visual"]
+    assert "PROHIBIDO" in captured["visual"]
+    assert "Brief:" in captured["visual"]  # el tema de la campaña llega al Visual
+
+
 def test_campaign_invalid_format_rejected():
     company = _create_company(name="Clínica Formato")
     resp = client.post(

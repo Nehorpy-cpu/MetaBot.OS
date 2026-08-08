@@ -154,11 +154,26 @@ async def build_campaign(
 
     # 3) Estudio Visual: una imagen por tarjeta (no aplica a guion de video)
     if format != "video_script":
+        try:
+            products = json.loads(company.profile or "{}").get("products") or []
+        except json.JSONDecodeError:
+            products = []
+        product_rule = (
+            f"EL PRODUCTO ES EL PROTAGONISTA OBLIGATORIO de cada imagen: este negocio "
+            f"vende {company.industry or company.niche}"
+            + (f" ({', '.join(str(p) for p in products[:8])})" if products else "")
+            + ". Cada prompt debe describir el producto físico en primer plano (ej. si son "
+            "perfumes: elegant perfume bottle as hero of the shot). PROHIBIDO: imágenes "
+            "genéricas de personas, flores o ambientes SIN el producto visible."
+        )
         prompts_raw = await _ask(
             db, company, "visual",
-            f"Campaña: {title}. Tarjetas: {json.dumps([{'headline': c['headline'], 'copy': c['copy']} for c in cards], ensure_ascii=False)}\n\n"
+            f"Campaña: {title}. Brief: {brief}\n"
+            f"Tarjetas: {json.dumps([{'headline': c['headline'], 'copy': c['copy']} for c in cards], ensure_ascii=False)}\n\n"
+            f"{product_rule}\n\n"
             "Escribí el prompt de imagen EN INGLÉS para cada tarjeta (fotografía publicitaria "
-            "profesional, sin texto en la imagen, coherencia visual entre tarjetas). "
+            "profesional, sin texto en la imagen, coherencia visual entre tarjetas, alineado "
+            "al tema de la campaña). "
             'Respondé SOLO JSON: ["prompt tarjeta 1", "prompt tarjeta 2", ...]',
             max_tokens=800,
         )

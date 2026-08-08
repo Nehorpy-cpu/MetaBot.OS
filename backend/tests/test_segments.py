@@ -1,7 +1,7 @@
 """Tests de la investigación de segmentos (scraping y LLM mockeados)."""
 import json
 
-from tests.test_api import _create_company, client
+from tests.test_api import SWARM_SLUGS, _create_company, client
 
 from app import swarm
 from app import campaigns as campaign_engine
@@ -59,6 +59,48 @@ def test_segment_research_without_sources_rejected(monkeypatch):
     resp = client.post(f"/api/companies/{company['id']}/segments/research", json={})
     assert resp.status_code == 422
     assert "fuentes" in resp.json()["detail"].lower()
+
+
+def test_cx_prompt_grounded_to_catalog(monkeypatch):
+    """Regresión de producción: el bot de una perfumería siguió la corriente
+    vendiendo ropa. El system prompt debe anclar al catálogo real."""
+    import httpx as _httpx  # noqa: F401
+    from app import chat as chat_engine
+    from app import onboarding
+    import json as _json
+
+    async def fake_profile(messages, **kwargs):
+        return _json.dumps({**FAKE_SEGMENTS_PROFILE}, ensure_ascii=False)
+
+    FAKE_SEGMENTS_PROFILE = {
+        "industry": "perfumería",
+        "vertical": "ecommerce",
+        "niche": "perfumes originales",
+        "products": ["Dior Sauvage", "Good Girl", "Lattafa Asad"],
+        "audience": "jóvenes",
+        "tone_notes": "elegante",
+        "agents": {s: "Sos el agente de Perfumería Ancla en Asunción. Atendés en voseo con precios en Guaraníes (₲), conocés el catálogo de perfumes originales y nunca inventás productos ni datos que no tengas." for s in SWARM_SLUGS},
+    }
+    monkeypatch.setattr(onboarding, "complete", fake_profile)
+    company = client.post(
+        "/api/companies/smart",
+        json={"name": "Perfumería Ancla", "description": "vendemos perfumes originales en Asunción"},
+    ).json()
+
+    captured = {}
+
+    async def fake_chat(messages, **kwargs):
+        captured["system"] = messages[0]["content"]
+        return {"content": "¡Hola!"}
+
+    monkeypatch.setattr(chat_engine, "chat_raw", fake_chat)
+    client.post(
+        f"/api/companies/{company['id']}/chat",
+        json={"contact_phone": "+595971313131", "text": "¿Venden ropa para niños?"},
+    )
+    system = captured["system"]
+    assert "Dior Sauvage" in system
+    assert "solo ofrecés lo que este negocio realmente vende" in system.lower() or "REGLA DURA" in system
 
 
 def test_campaign_uses_segments_research(monkeypatch, tmp_path):

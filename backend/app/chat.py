@@ -223,6 +223,20 @@ def _build_system_prompt(db: Session, company: Company, agent: Agent) -> str:
         f"Ahora es {days[now.weekday()]} {now.strftime('%d/%m/%Y %H:%M')} en Paraguay. "
         f"Toda cita se agenda en fecha futura, con año {now.year} o posterior.",
     ]
+    # Anclaje al catálogo real: el bot solo vende lo que el negocio vende.
+    try:
+        profile = json.loads(company.profile or "{}")
+    except json.JSONDecodeError:
+        profile = {}
+    products = profile.get("products") or []
+    if company.industry or products:
+        parts.append(
+            f"Rubro del negocio: {company.industry or company.niche}. "
+            + (f"Catálogo/servicios reales: {', '.join(str(p) for p in products[:20])}. " if products else "")
+            + "REGLA DURA: solo ofrecés lo que este negocio realmente vende. Si el cliente "
+            "pide algo de OTRO rubro (ej. ropa si vendés perfumes), aclaralo con amabilidad "
+            "y redirigí al catálogo real. Nunca sigas la corriente ofreciendo productos inexistentes."
+        )
     if company.vertical == "medical":
         parts.append(MEDICAL_RULES)
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
