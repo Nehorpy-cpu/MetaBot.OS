@@ -86,7 +86,8 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 | 6b | Voz/jopara ASR + Bancar vPOS | ⬜ |
 | 7 | Onboarding inteligente: cualquier rubro, enjambre a medida | ✅ |
 | 8 | Optimizador de Prompts: 7º agente que mejora al resto (con aprobación) | ✅ |
-| 9 | Meta Marketing: carruseles, videos, campañas | ⬜ |
+| 9a | Campañas en borrador: carruseles, guiones de video, auditoría de políticas | ✅ |
+| 9b | Publicación vía Marketing API (requiere App Review de Meta) | ⬜ |
 
 ## Tareas autónomas (planificador, hora de Asunción)
 

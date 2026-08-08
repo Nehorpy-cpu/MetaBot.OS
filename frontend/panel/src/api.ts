@@ -226,6 +226,38 @@ export const creativeApi = {
     request<void>(`/companies/${companyId}/creatives/${id}`, { method: "DELETE" }),
 };
 
+export interface CampaignCard {
+  position: number;
+  headline: string;
+  copy: string;
+  visual: string;
+  image_path: string;
+}
+
+export interface Campaign {
+  id: number;
+  title: string;
+  brief: string;
+  format: string;
+  strategy: { title?: string; angle?: string; audience?: string };
+  cards: CampaignCard[];
+  audit_severity: string;
+  audit_note: string;
+  status: string;
+  created_at: string;
+}
+
+export const campaignApi = {
+  list: (companyId: number) => request<Campaign[]>(`/companies/${companyId}/campaigns`),
+  create: (companyId: number, brief: string, format: string, n_cards: number) =>
+    request<Campaign>(`/companies/${companyId}/campaigns`, {
+      method: "POST",
+      body: JSON.stringify({ brief, format, n_cards }),
+    }),
+  remove: (companyId: number, id: number) =>
+    request<void>(`/companies/${companyId}/campaigns/${id}`, { method: "DELETE" }),
+};
+
 export const chatApi = {
   send: (companyId: number, contactPhone: string, contactName: string, text: string) =>
     request<ChatResponse>(`/companies/${companyId}/chat`, {

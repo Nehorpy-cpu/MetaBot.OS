@@ -193,6 +193,26 @@ class PromptSuggestion(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class Campaign(Base):
+    """Campaña publicitaria en borrador: plan del CEO, copys del Creativo,
+    imágenes del Estudio Visual y veredicto del Auditor. Cuando exista la
+    Marketing API aprobada, de acá se publica."""
+
+    __tablename__ = "campaigns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    brief: Mapped[str] = mapped_column(Text)
+    format: Mapped[str] = mapped_column(String(20))  # carousel | single | video_script
+    title: Mapped[str] = mapped_column(String(300), default="")
+    strategy: Mapped[str] = mapped_column(Text, default="")   # plan del CEO
+    cards: Mapped[str] = mapped_column(Text, default="[]")     # JSON [{headline, copy, image_path,...}]
+    audit_severity: Mapped[str] = mapped_column(String(10), default="")  # ok|info|warning|critical
+    audit_note: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(15), default="draft")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class GlossaryTerm(Base):
     """Glosario jopara/guaraní: correcciones human-in-the-loop para ASR y copys."""
 

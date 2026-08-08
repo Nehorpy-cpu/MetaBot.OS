@@ -6,13 +6,13 @@ from fastapi.staticfiles import StaticFiles
 
 from .db import Base, engine
 from .llm import available_providers
-from .routers import agents, bridge, chat, companies, creatives, dashboard, glossary, intelligence, medical, whatsapp_webhook
+from .routers import agents, bridge, campaigns, chat, companies, creatives, dashboard, glossary, intelligence, medical, whatsapp_webhook
 from .scheduler import start_scheduler
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="MetaBot.OS", version="0.8.0")
-for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router):
+app = FastAPI(title="MetaBot.OS", version="0.9.0")
+for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router):
     app.include_router(router, prefix="/api")
 
 
