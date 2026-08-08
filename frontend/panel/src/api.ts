@@ -139,6 +139,47 @@ export const waApi = {
   logout: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/logout`, { method: "POST" }),
 };
 
+export interface Report {
+  id: number;
+  kind: string;
+  title: string;
+  content: string;
+  created_at: string;
+}
+
+export interface Finding {
+  id: number;
+  conversation_id: number;
+  severity: string;
+  note: string;
+  created_at: string;
+}
+
+export interface Competitor {
+  id: number;
+  url: string;
+  label: string;
+}
+
+export const intelApi = {
+  listReports: (companyId: number) => request<Report[]>(`/companies/${companyId}/reports`),
+  generateWeekly: (companyId: number) =>
+    request<Report>(`/companies/${companyId}/reports/weekly`, { method: "POST" }),
+  generateCompetitive: (companyId: number) =>
+    request<Report>(`/companies/${companyId}/reports/competitive`, { method: "POST" }),
+  runAudit: (companyId: number) =>
+    request<{ new_findings: number }>(`/companies/${companyId}/audits/run`, { method: "POST" }),
+  listAudits: (companyId: number) => request<Finding[]>(`/companies/${companyId}/audits`),
+  listCompetitors: (companyId: number) => request<Competitor[]>(`/companies/${companyId}/competitors`),
+  addCompetitor: (companyId: number, url: string, label: string) =>
+    request<Competitor>(`/companies/${companyId}/competitors`, {
+      method: "POST",
+      body: JSON.stringify({ url, label }),
+    }),
+  deleteCompetitor: (companyId: number, id: number) =>
+    request<void>(`/companies/${companyId}/competitors/${id}`, { method: "DELETE" }),
+};
+
 export const chatApi = {
   send: (companyId: number, contactPhone: string, contactName: string, text: string) =>
     request<ChatResponse>(`/companies/${companyId}/chat`, {

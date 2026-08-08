@@ -35,7 +35,7 @@ MEDICAL_AGENTS = [
         "slug": "guard",
         "name": "Auditor de Calidad Médica",
         "role": "Cumplimiento y normativa sanitaria",
-        "model": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "temperature": 0.1,
         "system_prompt": (
             "Auditás conversaciones médicas. Verificá que NUNCA se den "
@@ -104,7 +104,7 @@ ECOMMERCE_AGENTS = [
         "slug": "guard",
         "name": "Auditor de Calidad",
         "role": "Compliance de anuncios Meta",
-        "model": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "temperature": 0.1,
         "system_prompt": "Auditoría estricta de copys y creativos para evitar bloqueos de cuentas publicitarias en Meta.",
     },

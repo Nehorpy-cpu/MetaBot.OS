@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity, BarChart3, Bot, Building2, Calendar, ChevronDown, Clock,
-  Command, LayoutDashboard, Link2, MessageSquare, PenTool, Plus, RefreshCw,
+  Command, Globe2, LayoutDashboard, Link2, MessageSquare, PenTool, Plus, RefreshCw,
   Send, ShieldCheck, Sliders, Smartphone, Stethoscope, Users, Video, X, Zap,
 } from "lucide-react";
 import {
-  api, chatApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
-  type ChatMessage, type Company, type Conversation, type DailySummary,
-  type DashboardData, type Doctor, type WaStatus, STATUS_ES,
+  api, chatApi, intelApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
+  type ChatMessage, type Company, type Competitor, type Conversation, type DailySummary,
+  type DashboardData, type Doctor, type Finding, type Report, type WaStatus, STATUS_ES,
 } from "./api";
 
 const AGENT_ICONS: Record<string, typeof Command> = {
@@ -470,6 +470,130 @@ function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
   );
 }
 
+const SEVERITY_STYLE: Record<string, string> = {
+  critical: "bg-red-500/10 text-red-400 border-red-500/20",
+  warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  info: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
+};
+
+function IntelligenceView({ companyId }: { companyId: number }) {
+  const [reports, setReports] = useState<Report[]>([]);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [openReport, setOpenReport] = useState<Report | null>(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+
+  const load = useCallback(() => {
+    intelApi.listReports(companyId).then(setReports).catch(() => setReports([]));
+    intelApi.listAudits(companyId).then(setFindings).catch(() => setFindings([]));
+    intelApi.listCompetitors(companyId).then(setCompetitors).catch(() => setCompetitors([]));
+  }, [companyId]);
+  useEffect(load, [load]);
+
+  const run = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    setError("");
+    try {
+      await fn();
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
+          <Activity className="text-cyan-400" size={26} /> Inteligencia del Enjambre
+        </h2>
+        <p className="text-zinc-400 text-sm mt-1">
+          Informes del Analista Quant, auditoría del Guard y escaneo de competencia. También corren
+          solos: informe los lunes 07:00, auditoría diaria 20:00, competencia los domingos.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button disabled={!!busy} onClick={() => run("weekly", () => intelApi.generateWeekly(companyId))} className={btnPrimary}>
+          {busy === "weekly" ? <RefreshCw className="animate-spin" size={15} /> : <BarChart3 size={15} />} Generar informe semanal
+        </button>
+        <button disabled={!!busy} onClick={() => run("audit", () => intelApi.runAudit(companyId))} className={btnPrimary}>
+          {busy === "audit" ? <RefreshCw className="animate-spin" size={15} /> : <ShieldCheck size={15} />} Auditar conversaciones
+        </button>
+        <button disabled={!!busy || !competitors.length} onClick={() => run("comp", () => intelApi.generateCompetitive(companyId))} className={btnPrimary}>
+          {busy === "comp" ? <RefreshCw className="animate-spin" size={15} /> : <Globe2 size={15} />} Escanear competencia
+        </button>
+      </div>
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className={`lg:col-span-2 ${card} p-5 space-y-3`}>
+          <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">Informes ({reports.length})</h3>
+          {!reports.length && <p className="text-xs text-zinc-600">Todavía no hay informes. Generá el primero.</p>}
+          {reports.map((r) => (
+            <div key={r.id} onClick={() => setOpenReport(r)}
+              className="p-3 rounded-xl border bg-white/[0.02] border-white/5 hover:bg-white/[0.04] cursor-pointer flex justify-between items-center">
+              <div>
+                <p className="font-bold text-sm text-zinc-100">{r.title}</p>
+                <p className="text-[10px] text-zinc-500">{new Date(r.created_at).toLocaleString("es-PY")}</p>
+              </div>
+              <span className="text-[9px] px-2 py-0.5 rounded-full border border-white/10 bg-white/5 text-zinc-400 font-bold uppercase">
+                {r.kind === "weekly" ? "Quant" : "Competencia"}
+              </span>
+            </div>
+          ))}
+
+          <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest pt-4">Hallazgos del Auditor ({findings.length})</h3>
+          {!findings.length && <p className="text-xs text-zinc-600">Sin hallazgos. El Guard no encontró problemas (o aún no corrió).</p>}
+          {findings.map((f) => (
+            <div key={f.id} className="p-3 rounded-xl border bg-white/[0.02] border-white/5">
+              <div className="flex justify-between items-center mb-1">
+                <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase ${SEVERITY_STYLE[f.severity] ?? SEVERITY_STYLE.info}`}>
+                  {f.severity}
+                </span>
+                <span className="text-[10px] text-zinc-500">conversación #{f.conversation_id}</span>
+              </div>
+              <p className="text-xs text-zinc-300">{f.note}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className={`${card} p-5 space-y-3`}>
+          <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">Competidores ({competitors.length})</h3>
+          <input className={input} placeholder="https://competidor.com.py" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} />
+          <input className={input} placeholder="Nombre (opcional)" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} />
+          <button disabled={!newUrl.trim() || !!busy}
+            onClick={() => run("addcomp", async () => { await intelApi.addCompetitor(companyId, newUrl.trim(), newLabel.trim()); setNewUrl(""); setNewLabel(""); })}
+            className="w-full py-2 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 rounded-xl text-xs font-bold disabled:opacity-40">
+            + Agregar competidor
+          </button>
+          {competitors.map((c) => (
+            <div key={c.id} className="p-2.5 rounded-xl border bg-white/[0.02] border-white/5 flex justify-between items-center">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-zinc-200 truncate">{c.label || c.url}</p>
+                <p className="text-[10px] text-zinc-500 truncate">{c.url}</p>
+              </div>
+              <button onClick={() => run("delcomp", () => intelApi.deleteCompetitor(companyId, c.id))}
+                className="text-zinc-500 hover:text-red-400 p-1 shrink-0"><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {openReport && (
+        <Modal title={openReport.title} onClose={() => setOpenReport(null)}>
+          <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-sans leading-relaxed">{openReport.content}</pre>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCompanyUpdated: (c: Company) => void }) {
   const [status, setStatus] = useState<WaStatus | null>(null);
   const [pnid, setPnid] = useState(company.wa_phone_number_id);
@@ -709,7 +833,7 @@ function ChatView({ companyId }: { companyId: number }) {
 export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence">("dashboard");
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -769,6 +893,7 @@ export default function App() {
           {active?.vertical === "medical" && navBtn("medical", "Agenda de Doctores", Calendar)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
+          {navBtn("intelligence", "Inteligencia (Informes)", Activity)}
           {navBtn("agents", "Enjambre de Agentes", Bot)}
         </nav>
       </aside>
@@ -793,6 +918,7 @@ export default function App() {
           {active && view === "agents" && <AgentsView companyId={active.id} />}
           {active && view === "medical" && active.vertical === "medical" && <MedicalAgendaView companyId={active.id} />}
           {active && view === "chat" && <ChatView companyId={active.id} />}
+          {active && view === "intelligence" && <IntelligenceView companyId={active.id} />}
           {active && view === "connections" && (
             <ConnectionsView
               company={active}

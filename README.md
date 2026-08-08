@@ -80,9 +80,20 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 | 2b | Webhook WhatsApp Cloud API multi-tenant (falta conectar credenciales) | ✅ |
 | 2c | Canal QR (Baileys) por empresa + Centro de Conexiones | ✅ |
 | 3 | Módulo médico: recordatorios + export iCalendar | ✅ |
-| 4 | Enjambre completo + Inteligencia Web | ⬜ |
+| 4 | Enjambre autónomo: informes Quant, auditoría Guard, competencia, planificador | ✅ |
 | 5 | Meta Marketing API (campañas) | ⬜ |
 | 6 | Voz/jopara ASR + Estudio Visual + Bancar vPOS | ⬜ |
+
+## Tareas autónomas (planificador, hora de Asunción)
+
+| Cuándo | Qué |
+|---|---|
+| Lunes 07:00 | Informe semanal del Analista Quant (datos reales, el LLM solo redacta) |
+| Diario 20:00 | Auditoría del Guard sobre conversaciones nuevas del CX Bot |
+| Diario 18:00 | Recordatorios de citas de mañana por WhatsApp |
+| Domingo 06:00 | Escaneo de competencia (URLs cargadas por empresa) |
+
+Desactivable con `SCHEDULER_ENABLED=0`.
 
 ## Reglas del proyecto
 

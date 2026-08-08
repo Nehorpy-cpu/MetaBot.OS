@@ -117,6 +117,44 @@ class Message(Base):
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
 
+class Report(Base):
+    """Informe generado por el enjambre (Quant semanal, competencia, etc.)."""
+
+    __tablename__ = "reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))  # "weekly" | "competitive"
+    title: Mapped[str] = mapped_column(String(300))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AuditFinding(Base):
+    """Hallazgo del Auditor (Guard) sobre una conversación del CX Bot."""
+
+    __tablename__ = "audit_findings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    severity: Mapped[str] = mapped_column(String(10))  # "info" | "warning" | "critical"
+    note: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CompetitorSource(Base):
+    """URL de un competidor a escanear para inteligencia de mercado."""
+
+    __tablename__ = "competitor_sources"
+    __table_args__ = (UniqueConstraint("company_id", "url"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    url: Mapped[str] = mapped_column(String(500))
+    label: Mapped[str] = mapped_column(String(200), default="")
+
+
 class GlossaryTerm(Base):
     """Glosario jopara/guaraní: correcciones human-in-the-loop para ASR y copys."""
 
