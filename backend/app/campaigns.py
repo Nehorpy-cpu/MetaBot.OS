@@ -32,6 +32,22 @@ def _agent(db: Session, company: Company, slug: str) -> Agent | None:
     )
 
 
+_OFFER_RE = re.compile(r"(?:₲|Gs\.?)\s?[\d.,]+|\b\d{1,3}\s?%", re.IGNORECASE)
+
+
+def _invented_offers(brief: str, cards: list[dict]) -> list[str]:
+    """Montos/porcentajes en las tarjetas cuyos dígitos no aparecen en el brief."""
+    brief_digits = set(re.findall(r"\d+", brief))
+    invented = []
+    for card in cards:
+        text = f"{card.get('headline', '')} {card.get('copy', '')}"
+        for offer in _OFFER_RE.findall(text):
+            digits = re.findall(r"\d+", offer)
+            if digits and not all(d in brief_digits for d in digits):
+                invented.append(offer.strip())
+    return list(dict.fromkeys(invented))
+
+
 def _json_of(raw: str) -> dict | list | None:
     match = re.search(r"[\[{].*[\]}]", raw, re.DOTALL)
     if not match:
@@ -176,6 +192,16 @@ async def build_campaign(
         # Nunca dar por aprobado lo que el auditor no evaluó de forma legible
         severity = "warning"
         audit["note"] = "El auditor no devolvió un veredicto legible; revisar manualmente antes de publicar."
+
+    # Guardia determinística: montos/porcentajes en las tarjetas que NO están
+    # en el brief son promesas inventadas por el modelo → revisión obligatoria.
+    invented = _invented_offers(brief, cards)
+    if invented and severity in {"ok", "info"}:
+        severity = "warning"
+        audit["note"] = (
+            f"Ofertas no presentes en el brief (posible invención del modelo): {', '.join(invented)}. "
+            + str(audit.get("note", ""))
+        )
 
     campaign = Campaign(
         company_id=company.id,

@@ -94,6 +94,54 @@ def test_campaign_critical_audit_is_reported(monkeypatch, tmp_path):
     assert "garantizados" in data["audit_note"]
 
 
+def test_invented_offer_forces_warning(monkeypatch, tmp_path):
+    """Regresión de producción: el modelo inventó '₲50.000 de descuento' que
+    no estaba en el brief; la guardia determinística debe forzar revisión."""
+    company = _create_company(name="Clínica Inventos")
+    cid = company["id"]
+
+    calls = []
+
+    async def fake_complete(messages, **kwargs):
+        content = messages[-1]["content"]
+        calls.append(content)
+        if '"title"' in content:
+            return '{"title": "Promo", "angle": "x", "audience": "y"}'
+        if "tarjeta(s) de anuncio" in content:
+            return '[{"headline": "Oferta", "copy": "Hasta ₲50.000 de descuento y 30% off"}]'
+        if "prompt de imagen" in content:
+            return '["photo"]'
+        return '{"severity": "ok", "note": "Sin problemas"}'
+
+    async def fake_generate(prompt, width, height):
+        return b"img", "pollinations"
+
+    monkeypatch.setattr(campaign_engine, "complete", fake_complete)
+    monkeypatch.setattr(campaign_engine, "generate_image", fake_generate)
+    monkeypatch.setattr(campaign_engine, "MEDIA_DIR", tmp_path)
+
+    resp = client.post(
+        f"/api/companies/{cid}/campaigns",
+        json={"brief": "Campaña de chequeos preventivos sin descuentos", "format": "single", "n_cards": 1},
+    )
+    data = resp.json()
+    assert data["audit_severity"] == "warning"  # el auditor LLM dijo ok, la guardia lo pisó
+    assert "50.000" in data["audit_note"]
+    assert "30" in data["audit_note"]
+
+
+def test_offer_present_in_brief_not_flagged(monkeypatch, tmp_path):
+    company = _create_company(name="Clínica Promo Real")
+    cid = company["id"]
+    _mock_pipeline(monkeypatch, tmp_path)  # tarjetas mencionan "20% off"
+
+    resp = client.post(
+        f"/api/companies/{cid}/campaigns",
+        json={"brief": "Promo blanqueamiento 20% de descuento esta semana", "format": "carousel", "n_cards": 2},
+    )
+    assert resp.json()["audit_severity"] == "ok"  # el 20% sí está en el brief
+
+
 def test_campaign_invalid_format_rejected():
     company = _create_company(name="Clínica Formato")
     resp = client.post(
