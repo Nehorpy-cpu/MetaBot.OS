@@ -7,7 +7,7 @@ from .. import swarm
 from ..analytics import compute_stats
 from ..db import get_db
 from ..llm import LLMError
-from ..models import AuditFinding, Company, CompetitorSource, Report
+from ..models import Agent, AuditFinding, Company, CompetitorSource, PromptSuggestion, Report
 
 router = APIRouter(tags=["intelligence"])
 
@@ -95,6 +95,73 @@ def list_audits(company_id: int, db: Session = Depends(get_db)):
         }
         for f in findings
     ]
+
+
+# --- Optimizador de Prompts ---
+
+@router.post("/companies/{company_id}/prompt-suggestions/run")
+async def run_optimizer(company_id: int, db: Session = Depends(get_db)):
+    try:
+        suggestions = await swarm.run_prompt_optimization(db, _company(company_id, db))
+    except LLMError as exc:
+        raise HTTPException(503, f"LLM no disponible: {exc}")
+    return {"new_suggestions": len(suggestions)}
+
+
+@router.get("/companies/{company_id}/prompt-suggestions")
+def list_suggestions(company_id: int, db: Session = Depends(get_db)):
+    _company(company_id, db)
+    suggestions = (
+        db.query(PromptSuggestion)
+        .filter(PromptSuggestion.company_id == company_id)
+        .order_by(PromptSuggestion.id.desc())
+        .limit(30)
+        .all()
+    )
+    out = []
+    for s in suggestions:
+        agent = db.get(Agent, s.agent_id)
+        out.append(
+            {
+                "id": s.id,
+                "agent_id": s.agent_id,
+                "agent_name": agent.name if agent else f"agente {s.agent_id}",
+                "old_prompt": s.old_prompt,
+                "suggested_prompt": s.suggested_prompt,
+                "rationale": s.rationale,
+                "status": s.status,
+                "created_at": s.created_at.isoformat(),
+            }
+        )
+    return out
+
+
+@router.post("/companies/{company_id}/prompt-suggestions/{suggestion_id}/apply")
+def apply_suggestion(company_id: int, suggestion_id: int, db: Session = Depends(get_db)):
+    suggestion = db.get(PromptSuggestion, suggestion_id)
+    if not suggestion or suggestion.company_id != company_id:
+        raise HTTPException(404, "Sugerencia no encontrada")
+    if suggestion.status != "pending":
+        raise HTTPException(409, f"La sugerencia ya está en estado '{suggestion.status}'")
+    agent = db.get(Agent, suggestion.agent_id)
+    if not agent:
+        raise HTTPException(404, "El agente ya no existe")
+    agent.system_prompt = suggestion.suggested_prompt
+    suggestion.status = "applied"
+    db.commit()
+    return {"applied": True, "agent_id": agent.id}
+
+
+@router.post("/companies/{company_id}/prompt-suggestions/{suggestion_id}/reject")
+def reject_suggestion(company_id: int, suggestion_id: int, db: Session = Depends(get_db)):
+    suggestion = db.get(PromptSuggestion, suggestion_id)
+    if not suggestion or suggestion.company_id != company_id:
+        raise HTTPException(404, "Sugerencia no encontrada")
+    if suggestion.status != "pending":
+        raise HTTPException(409, f"La sugerencia ya está en estado '{suggestion.status}'")
+    suggestion.status = "rejected"
+    db.commit()
+    return {"rejected": True}
 
 
 class CompetitorIn(BaseModel):

@@ -2,12 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity, BarChart3, Bot, Building2, Calendar, ChevronDown, Clock,
   Command, Globe2, LayoutDashboard, Link2, MessageSquare, PenTool, Plus, RefreshCw,
-  Send, ShieldCheck, Sliders, Smartphone, Stethoscope, Users, Video, Wand2, X, Zap,
+  Send, ShieldCheck, Sliders, Smartphone, Sparkles, Stethoscope, Users, Video, Wand2, X, Zap,
 } from "lucide-react";
 import {
   api, chatApi, creativeApi, intelApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
   type ChatMessage, type Company, type Competitor, type Conversation, type Creative, type DailySummary,
-  type DashboardData, type Doctor, type Finding, type Report, type WaStatus, STATUS_ES,
+  type DashboardData, type Doctor, type Finding, type PromptSuggestion, type Report, type WaStatus, STATUS_ES,
 } from "./api";
 
 const AGENT_ICONS: Record<string, typeof Command> = {
@@ -36,7 +36,10 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 function NewCompanyModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: Company) => void }) {
+  const [mode, setMode] = useState<"smart" | "template">("smart");
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [website, setWebsite] = useState("");
   const [vertical, setVertical] = useState<"medical" | "ecommerce">("medical");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -46,7 +49,11 @@ function NewCompanyModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setSaving(true);
     setError("");
     try {
-      onCreated(await api.createCompany(name, vertical));
+      const company =
+        mode === "smart"
+          ? await api.createCompanySmart(name, description, website.trim())
+          : await api.createCompany(name, vertical);
+      onCreated(company);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
@@ -56,29 +63,63 @@ function NewCompanyModal({ onClose, onCreated }: { onClose: () => void; onCreate
   };
 
   return (
-    <Modal title="Nueva Empresa / Consultorio" onClose={onClose}>
-      <form onSubmit={submit} className="space-y-5">
+    <Modal title="Nueva Empresa (cualquier rubro)" onClose={onClose}>
+      <div className="flex gap-2 mb-4">
+        <button type="button" onClick={() => setMode("smart")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold border ${mode === "smart" ? "bg-cyan-500/10 border-cyan-500/50 text-cyan-300" : "bg-white/[0.02] border-white/5 text-zinc-400"}`}>
+          <Sparkles size={13} className="inline mr-1" /> Con IA (detecta el rubro)
+        </button>
+        <button type="button" onClick={() => setMode("template")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold border ${mode === "template" ? "bg-cyan-500/10 border-cyan-500/50 text-cyan-300" : "bg-white/[0.02] border-white/5 text-zinc-400"}`}>
+          Plantilla clásica
+        </button>
+      </div>
+      <form onSubmit={submit} className="space-y-4">
         <div>
           <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block mb-2">Nombre</label>
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} required
-            placeholder="Ej. Centro Médico San Roque" />
+            placeholder="Ej. Ferretería El Tornillo" />
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          {([["medical", "Consultorio / Sanatorio", Stethoscope], ["ecommerce", "E-Commerce / Retail", BarChart3]] as const).map(
-            ([v, label, Icon]) => (
-              <button key={v} type="button" onClick={() => setVertical(v)}
-                className={`p-4 rounded-xl border text-left transition-all ${vertical === v ? "bg-cyan-500/10 border-cyan-500/50 text-white" : "bg-white/[0.02] border-white/5 text-zinc-400 hover:bg-white/[0.04]"}`}>
-                <Icon className="text-cyan-400 mb-2" size={22} />
-                <p className="font-bold text-sm">{label}</p>
-              </button>
-            )
-          )}
-        </div>
+
+        {mode === "smart" ? (
+          <>
+            <div>
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block mb-2">
+                ¿Qué hace el negocio? (productos, servicios, clientes)
+              </label>
+              <textarea className={`${input} min-h-24`} value={description} required minLength={10}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Ej. Vendemos herramientas, pinturas y materiales eléctricos, con delivery en Asunción. Clientes: constructores y hogares." />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block mb-2">Web o red social (opcional)</label>
+              <input className={input} value={website} onChange={(e) => setWebsite(e.target.value)}
+                placeholder="https://…" />
+            </div>
+            <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-3 text-xs text-cyan-300 flex items-start gap-2">
+              <Sparkles size={15} className="shrink-0 mt-0.5" />
+              <p>El Arquitecto de Negocio detecta rubro, productos y audiencia, y escribe los prompts de los 7 agentes a medida. Después podés ajustarlos en el Super-Configurator.</p>
+            </div>
+          </>
+        ) : (
+          <div className="grid grid-cols-2 gap-4">
+            {([["medical", "Consultorio / Sanatorio", Stethoscope], ["ecommerce", "E-Commerce / Retail", BarChart3]] as const).map(
+              ([v, label, Icon]) => (
+                <button key={v} type="button" onClick={() => setVertical(v)}
+                  className={`p-4 rounded-xl border text-left transition-all ${vertical === v ? "bg-cyan-500/10 border-cyan-500/50 text-white" : "bg-white/[0.02] border-white/5 text-zinc-400 hover:bg-white/[0.04]"}`}>
+                  <Icon className="text-cyan-400 mb-2" size={22} />
+                  <p className="font-bold text-sm">{label}</p>
+                </button>
+              )
+            )}
+          </div>
+        )}
+
         {error && <p className="text-red-400 text-xs">{error}</p>}
         <div className="flex justify-end gap-3 pt-3 border-t border-white/5">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white">Cancelar</button>
           <button type="submit" disabled={saving} className={btnPrimary}>
-            {saving ? <><RefreshCw className="animate-spin" size={15} /> Creando…</> : "Crear enjambre y empresa"}
+            {saving ? <><RefreshCw className="animate-spin" size={15} /> {mode === "smart" ? "Perfilando negocio…" : "Creando…"}</> : "Crear enjambre y empresa"}
           </button>
         </div>
       </form>
@@ -199,7 +240,7 @@ function AgentsView({ companyId }: { companyId: number }) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-3xl font-bold text-white tracking-tight">Enjambre de 6 Agentes IA</h2>
+        <h2 className="text-3xl font-bold text-white tracking-tight">Enjambre de {agents.length || 7} Agentes IA</h2>
         <p className="text-zinc-400 text-sm mt-1">Super-Configurator: prompts, temperatura y modelo por agente. Los prompts viven en el servidor.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -548,6 +589,8 @@ function IntelligenceView({ companyId }: { companyId: number }) {
   const [reports, setReports] = useState<Report[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [suggestions, setSuggestions] = useState<PromptSuggestion[]>([]);
+  const [openSuggestion, setOpenSuggestion] = useState<PromptSuggestion | null>(null);
   const [openReport, setOpenReport] = useState<Report | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -558,6 +601,7 @@ function IntelligenceView({ companyId }: { companyId: number }) {
     intelApi.listReports(companyId).then(setReports).catch(() => setReports([]));
     intelApi.listAudits(companyId).then(setFindings).catch(() => setFindings([]));
     intelApi.listCompetitors(companyId).then(setCompetitors).catch(() => setCompetitors([]));
+    intelApi.listSuggestions(companyId).then(setSuggestions).catch(() => setSuggestions([]));
   }, [companyId]);
   useEffect(load, [load]);
 
@@ -596,6 +640,9 @@ function IntelligenceView({ companyId }: { companyId: number }) {
         <button disabled={!!busy || !competitors.length} onClick={() => run("comp", () => intelApi.generateCompetitive(companyId))} className={btnPrimary}>
           {busy === "comp" ? <RefreshCw className="animate-spin" size={15} /> : <Globe2 size={15} />} Escanear competencia
         </button>
+        <button disabled={!!busy} onClick={() => run("opt", () => intelApi.runOptimizer(companyId))} className={btnPrimary}>
+          {busy === "opt" ? <RefreshCw className="animate-spin" size={15} /> : <Wand2 size={15} />} Optimizar prompts
+        </button>
       </div>
       {error && <p className="text-red-400 text-xs">{error}</p>}
 
@@ -615,6 +662,29 @@ function IntelligenceView({ companyId }: { companyId: number }) {
               </span>
             </div>
           ))}
+
+          <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest pt-4">
+            Mejoras de prompts propuestas ({suggestions.filter((s) => s.status === "pending").length} pendientes)
+          </h3>
+          {suggestions.filter((s) => s.status === "pending").map((s) => (
+            <div key={s.id} className="p-3 rounded-xl border bg-white/[0.02] border-white/5 space-y-2">
+              <div className="flex justify-between items-center">
+                <p className="font-bold text-sm text-zinc-100">{s.agent_name}</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setOpenSuggestion(s)}
+                    className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-lg text-zinc-300">Ver</button>
+                  <button onClick={() => run("apply", () => intelApi.applySuggestion(companyId, s.id))}
+                    className="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-1 rounded-lg text-emerald-300">Aplicar</button>
+                  <button onClick={() => run("reject", () => intelApi.rejectSuggestion(companyId, s.id))}
+                    className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 px-3 py-1 rounded-lg text-red-300">Rechazar</button>
+                </div>
+              </div>
+              <p className="text-xs text-zinc-400">{s.rationale}</p>
+            </div>
+          ))}
+          {!suggestions.filter((s) => s.status === "pending").length && (
+            <p className="text-xs text-zinc-600">Sin mejoras pendientes. El Optimizador corre solo los sábados o con el botón de arriba.</p>
+          )}
 
           <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest pt-4">Hallazgos del Auditor ({findings.length})</h3>
           {!findings.length && <p className="text-xs text-zinc-600">Sin hallazgos. El Guard no encontró problemas (o aún no corrió).</p>}
@@ -656,6 +726,24 @@ function IntelligenceView({ companyId }: { companyId: number }) {
       {openReport && (
         <Modal title={openReport.title} onClose={() => setOpenReport(null)}>
           <pre className="whitespace-pre-wrap text-sm text-zinc-200 font-sans leading-relaxed">{openReport.content}</pre>
+        </Modal>
+      )}
+      {openSuggestion && (
+        <Modal title={`Mejora propuesta: ${openSuggestion.agent_name}`} onClose={() => setOpenSuggestion(null)}>
+          <div className="space-y-4 text-sm">
+            <div>
+              <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Motivo</p>
+              <p className="text-zinc-300">{openSuggestion.rationale}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Prompt actual</p>
+              <pre className="whitespace-pre-wrap text-xs bg-[#040609] p-3 rounded-lg border border-white/5 text-zinc-400">{openSuggestion.old_prompt}</pre>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Prompt propuesto</p>
+              <pre className="whitespace-pre-wrap text-xs bg-[#040609] p-3 rounded-lg border border-cyan-500/20 text-cyan-100">{openSuggestion.suggested_prompt}</pre>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
@@ -943,7 +1031,7 @@ export default function App() {
                 className="w-full bg-white/[0.03] border border-white/10 rounded-xl py-2.5 px-3 text-xs text-zinc-200 font-semibold focus:outline-none focus:border-cyan-500 appearance-none cursor-pointer">
                 {companies.map((c) => (
                   <option key={c.id} value={c.id} className="bg-[#06080d]">
-                    {c.name} ({c.vertical === "medical" ? "Médico" : "E-Comm"})
+                    {c.name} ({c.vertical === "medical" ? "Médico" : c.industry || c.vertical})
                   </option>
                 ))}
               </select>

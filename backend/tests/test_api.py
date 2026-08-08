@@ -34,13 +34,16 @@ def test_health():
     assert resp.json()["status"] == "ok"
 
 
-def test_create_medical_company_seeds_six_agents():
+SWARM_SLUGS = {"ceo", "quant", "guard", "creative", "visual", "cx", "optimizer"}
+
+
+def test_create_medical_company_seeds_seven_agents():
     company = _create_company()
     assert company["niche"].startswith("Clínica")
 
     agents = client.get(f"/api/companies/{company['id']}/agents").json()
-    assert len(agents) == 6
-    assert {a["slug"] for a in agents} == {"ceo", "quant", "guard", "creative", "visual", "cx"}
+    assert len(agents) == 7
+    assert {a["slug"] for a in agents} == SWARM_SLUGS
     # El system prompt NO debe exponerse en el listado público
     assert "system_prompt" not in agents[0]
 
@@ -48,7 +51,7 @@ def test_create_medical_company_seeds_six_agents():
 def test_create_ecommerce_company():
     company = _create_company("ecommerce", "Tienda Test")
     agents = client.get(f"/api/companies/{company['id']}/agents").json()
-    assert len(agents) == 6
+    assert len(agents) == 7
 
 
 def test_invalid_vertical_rejected():
@@ -193,7 +196,7 @@ def test_dashboard_counts():
     company = _create_company()
     cid = company["id"]
     data = client.get(f"/api/companies/{cid}/dashboard").json()
-    assert data["agents_total"] == 6
-    assert data["agents_active"] == 6
+    assert data["agents_total"] == 7
+    assert data["agents_active"] == 7
     assert data["doctors"] == 0
     assert data["company"]["vertical"] == "medical"

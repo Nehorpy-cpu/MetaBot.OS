@@ -78,6 +78,20 @@ MEDICAL_AGENTS = [
             "agendar turno. Precios en Guaraníes (₲) con puntos de miles."
         ),
     },
+    {
+        "slug": "optimizer",
+        "name": "Optimizador de Prompts",
+        "role": "Audita y mejora los prompts del enjambre",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "temperature": 0.2,
+        "system_prompt": (
+            "Sos ingeniero de prompts. Auditás las salidas reales de cada agente "
+            "del enjambre (respuestas de WhatsApp, copys, informes) y proponés "
+            "versiones mejoradas de sus system prompts: más claras, más fieles al "
+            "negocio y sus reglas (voseo, ₲, sin diagnósticos médicos por chat). "
+            "Nunca elimines reglas de seguridad existentes."
+        ),
+    },
 ]
 
 ECOMMERCE_AGENTS = [
@@ -134,6 +148,20 @@ ECOMMERCE_AGENTS = [
             "Atención al cliente y cierre de ventas por WhatsApp. Cuando el "
             "cliente confirma compra, generá el enlace de cobro (Bancar vPOS). "
             "Precios en Guaraníes (₲) con puntos de miles."
+        ),
+    },
+    {
+        "slug": "optimizer",
+        "name": "Optimizador de Prompts",
+        "role": "Audita y mejora los prompts del enjambre",
+        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "temperature": 0.2,
+        "system_prompt": (
+            "Sos ingeniero de prompts. Auditás las salidas reales de cada agente "
+            "del enjambre (respuestas de WhatsApp, copys, informes) y proponés "
+            "versiones mejoradas de sus system prompts: más claras, más fieles al "
+            "negocio y sus reglas (voseo, ₲, sin diagnósticos médicos por chat). "
+            "Nunca elimines reglas de seguridad existentes."
         ),
     },
 ]

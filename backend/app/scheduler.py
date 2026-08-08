@@ -53,6 +53,10 @@ async def job_competitive_scans():
     await _for_each_company("competencia", swarm.run_competitive_scan)
 
 
+async def job_prompt_optimization():
+    await _for_each_company("optimización de prompts", swarm.run_prompt_optimization)
+
+
 async def job_send_reminders():
     from .routers.medical import list_reminders  # import tardío: evita ciclo
 
@@ -81,6 +85,7 @@ def start_scheduler() -> AsyncIOScheduler | None:
     _scheduler.add_job(job_guard_audits, CronTrigger(hour=20, minute=0))
     _scheduler.add_job(job_send_reminders, CronTrigger(hour=18, minute=0))
     _scheduler.add_job(job_competitive_scans, CronTrigger(day_of_week="sun", hour=6, minute=0))
+    _scheduler.add_job(job_prompt_optimization, CronTrigger(day_of_week="sat", hour=7, minute=0))
     _scheduler.start()
     logger.info("planificador del enjambre iniciado (%s)", TIMEZONE)
     return _scheduler

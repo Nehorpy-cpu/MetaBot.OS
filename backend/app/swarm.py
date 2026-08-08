@@ -22,7 +22,9 @@ from .models import (
     Company,
     CompetitorSource,
     Conversation,
+    Creative,
     Message,
+    PromptSuggestion,
     Report,
 )
 
@@ -157,6 +159,135 @@ async def run_guard_audit(
         findings.append(finding)
     db.commit()
     return findings
+
+
+# --- Optimizador de Prompts: el agente que mejora al resto ---
+
+def _gather_evidence(db: Session, company: Company, agent: Agent) -> str:
+    """Junta salidas reales recientes del agente para que el Optimizador
+    las evalúe. Sin evidencia no hay optimización (no se opina en el vacío)."""
+    if agent.slug == "cx":
+        msgs = (
+            db.query(Message)
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .filter(Conversation.company_id == company.id, Message.direction == "out")
+            .order_by(Message.id.desc())
+            .limit(15)
+            .all()
+        )
+        findings = (
+            db.query(AuditFinding)
+            .filter(AuditFinding.company_id == company.id)
+            .order_by(AuditFinding.id.desc())
+            .limit(10)
+            .all()
+        )
+        parts = [f"RESPUESTA DEL BOT: {m.body}" for m in reversed(msgs)]
+        parts += [f"HALLAZGO DEL AUDITOR [{f.severity}]: {f.note}" for f in findings]
+        return "\n".join(parts)
+    if agent.slug == "creative":
+        creatives = (
+            db.query(Creative)
+            .filter(Creative.company_id == company.id)
+            .order_by(Creative.id.desc())
+            .limit(8)
+            .all()
+        )
+        return "\n".join(f"BRIEF: {c.brief}\nCOPY PRODUCIDO: {c.copy_text}" for c in creatives)
+    if agent.slug == "visual":
+        creatives = (
+            db.query(Creative)
+            .filter(Creative.company_id == company.id)
+            .order_by(Creative.id.desc())
+            .limit(8)
+            .all()
+        )
+        return "\n".join(f"BRIEF: {c.brief}\nPROMPT DE IMAGEN: {c.image_prompt}" for c in creatives)
+    if agent.slug == "quant":
+        reports = (
+            db.query(Report)
+            .filter(Report.company_id == company.id, Report.kind == "weekly")
+            .order_by(Report.id.desc())
+            .limit(2)
+            .all()
+        )
+        return "\n".join(f"INFORME PRODUCIDO:\n{r.content[:1500]}" for r in reports)
+    return ""
+
+
+def _parse_suggestion(raw: str) -> dict | None:
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group())
+    except json.JSONDecodeError:
+        return None
+    improved = str(data.get("improved_prompt", "")).strip()
+    if len(improved) < 40:
+        return None
+    return {"improved_prompt": improved, "rationale": str(data.get("rationale", ""))[:1000]}
+
+
+async def run_prompt_optimization(db: Session, company: Company) -> list[PromptSuggestion]:
+    """El Optimizador propone mejoras de prompts basadas en salidas reales.
+
+    Nunca aplica cambios: crea sugerencias 'pending' que un humano aprueba.
+    No duplica: si un agente ya tiene una sugerencia pendiente, lo saltea.
+    """
+    optimizer = _agent(db, company, "optimizer")
+    if not optimizer:
+        return []
+    pending_agent_ids = {
+        s.agent_id
+        for s in db.query(PromptSuggestion)
+        .filter(PromptSuggestion.company_id == company.id, PromptSuggestion.status == "pending")
+        .all()
+    }
+    suggestions: list[PromptSuggestion] = []
+    agents = (
+        db.query(Agent)
+        .filter(Agent.company_id == company.id, Agent.active, Agent.slug != "optimizer")
+        .all()
+    )
+    for agent in agents:
+        if agent.id in pending_agent_ids:
+            continue
+        evidence = _gather_evidence(db, company, agent)
+        if len(evidence) < 100:
+            continue
+        prompt = (
+            f"{optimizer.system_prompt}\n\n"
+            f"Negocio: {company.name} ({company.industry or company.niche}).\n"
+            f"Agente auditado: {agent.name} ({agent.role}).\n\n"
+            f"SYSTEM PROMPT ACTUAL:\n{agent.system_prompt}\n\n"
+            f"SALIDAS REALES RECIENTES:\n{evidence[:6000]}\n\n"
+            "Si el prompt actual ya es óptimo, respondé {\"improved_prompt\": \"\"}. "
+            "Si podés mejorarlo, respondé ÚNICAMENTE un JSON: "
+            '{"improved_prompt": "prompt completo mejorado en español", '
+            '"rationale": "qué mejora y por qué, citando las salidas"}. '
+            "OBLIGATORIO: conservar todas las reglas de seguridad del prompt actual."
+        )
+        raw = await complete(
+            [{"role": "user", "content": prompt}],
+            model=optimizer.model,
+            temperature=optimizer.temperature,
+            max_tokens=1200,
+        )
+        parsed = _parse_suggestion(raw)
+        if not parsed or parsed["improved_prompt"] == agent.system_prompt:
+            continue
+        suggestion = PromptSuggestion(
+            company_id=company.id,
+            agent_id=agent.id,
+            old_prompt=agent.system_prompt,
+            suggested_prompt=parsed["improved_prompt"],
+            rationale=parsed["rationale"],
+        )
+        db.add(suggestion)
+        suggestions.append(suggestion)
+    db.commit()
+    return suggestions
 
 
 async def _fetch_page_text(url: str) -> str:

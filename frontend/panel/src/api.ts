@@ -1,10 +1,22 @@
 export interface Company {
   id: number;
   name: string;
-  vertical: "medical" | "ecommerce";
+  vertical: string;
   niche: string;
+  industry: string;
   wa_mode: "none" | "meta" | "qr";
   wa_phone_number_id: string;
+}
+
+export interface PromptSuggestion {
+  id: number;
+  agent_id: number;
+  agent_name: string;
+  old_prompt: string;
+  suggested_prompt: string;
+  rationale: string;
+  status: string;
+  created_at: string;
 }
 
 export interface WaStatus {
@@ -80,6 +92,11 @@ export const api = {
   listCompanies: () => request<Company[]>("/companies"),
   createCompany: (name: string, vertical: string) =>
     request<Company>("/companies", { method: "POST", body: JSON.stringify({ name, vertical }) }),
+  createCompanySmart: (name: string, description: string, website: string) =>
+    request<Company>("/companies/smart", {
+      method: "POST",
+      body: JSON.stringify({ name, description, website }),
+    }),
   dashboard: (companyId: number) => request<DashboardData>(`/companies/${companyId}/dashboard`),
   listAgents: (companyId: number) => request<AgentSummary[]>(`/companies/${companyId}/agents`),
   getAgent: (agentId: number) => request<AgentDetail>(`/agents/${agentId}`),
@@ -171,6 +188,14 @@ export const intelApi = {
     request<{ new_findings: number }>(`/companies/${companyId}/audits/run`, { method: "POST" }),
   listAudits: (companyId: number) => request<Finding[]>(`/companies/${companyId}/audits`),
   listCompetitors: (companyId: number) => request<Competitor[]>(`/companies/${companyId}/competitors`),
+  runOptimizer: (companyId: number) =>
+    request<{ new_suggestions: number }>(`/companies/${companyId}/prompt-suggestions/run`, { method: "POST" }),
+  listSuggestions: (companyId: number) =>
+    request<PromptSuggestion[]>(`/companies/${companyId}/prompt-suggestions`),
+  applySuggestion: (companyId: number, id: number) =>
+    request<{ applied: boolean }>(`/companies/${companyId}/prompt-suggestions/${id}/apply`, { method: "POST" }),
+  rejectSuggestion: (companyId: number, id: number) =>
+    request<{ rejected: boolean }>(`/companies/${companyId}/prompt-suggestions/${id}/reject`, { method: "POST" }),
   addCompetitor: (companyId: number, url: string, label: string) =>
     request<Competitor>(`/companies/${companyId}/competitors`, {
       method: "POST",

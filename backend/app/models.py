@@ -22,8 +22,12 @@ class Company(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    vertical: Mapped[str] = mapped_column(String(20))  # "medical" | "ecommerce"
+    # "medical" habilita el módulo de agenda; cualquier otro valor es un
+    # rubro genérico detectado por el onboarding inteligente
+    vertical: Mapped[str] = mapped_column(String(20))
     niche: Mapped[str] = mapped_column(String(200), default="")
+    industry: Mapped[str] = mapped_column(String(200), default="")
+    profile: Mapped[str] = mapped_column(Text, default="")  # JSON: productos, audiencia, tono
     # Canal de WhatsApp del tenant: "none" | "meta" (Cloud API) | "qr" (Baileys)
     wa_mode: Mapped[str] = mapped_column(String(10), default="none")
     # phone_number_id de WhatsApp Cloud API: identifica a qué tenant llega
@@ -167,6 +171,25 @@ class Creative(Base):
     image_prompt: Mapped[str] = mapped_column(Text, default="")
     image_path: Mapped[str] = mapped_column(String(300), default="")
     provider: Mapped[str] = mapped_column(String(30), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PromptSuggestion(Base):
+    """Mejora de prompt propuesta por el agente Optimizador.
+
+    Se aplica solo con aprobación humana (regla del proyecto: los cambios
+    de comportamiento de los bots no se auto-aplican en silencio).
+    """
+
+    __tablename__ = "prompt_suggestions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), index=True)
+    old_prompt: Mapped[str] = mapped_column(Text)
+    suggested_prompt: Mapped[str] = mapped_column(Text)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending|applied|rejected
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

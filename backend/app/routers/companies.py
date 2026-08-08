@@ -2,8 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from .. import onboarding
 from ..db import get_db
+from ..llm import LLMError
 from ..models import Agent, Company
+from ..swarm import _fetch_page_text
 from ..templates import TEMPLATES
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -12,6 +15,12 @@ router = APIRouter(prefix="/companies", tags=["companies"])
 class CompanyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     vertical: str = Field(pattern="^(medical|ecommerce)$")
+
+
+class SmartCompanyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=10, max_length=2000)
+    website: str = Field(default="", max_length=500)
 
 
 class AgentOut(BaseModel):
@@ -31,6 +40,7 @@ class CompanyOut(BaseModel):
     name: str
     vertical: str
     niche: str
+    industry: str
     wa_mode: str
     wa_phone_number_id: str
 
@@ -55,6 +65,23 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(company)
     return company
+
+
+@router.post("/smart", response_model=CompanyOut, status_code=201)
+async def create_company_smart(payload: SmartCompanyCreate, db: Session = Depends(get_db)):
+    """Arquitecto de Negocio: perfila cualquier rubro y arma el enjambre a medida."""
+    website_text = ""
+    if payload.website.startswith(("http://", "https://")):
+        try:
+            website_text = await _fetch_page_text(payload.website)
+        except Exception:
+            website_text = ""  # la web es opcional: si falla, se perfila sin ella
+    try:
+        return await onboarding.profile_and_create(db, payload.name, payload.description, website_text)
+    except LLMError as exc:
+        raise HTTPException(503, f"LLM no disponible: {exc}")
+    except ValueError as exc:
+        raise HTTPException(502, str(exc))
 
 
 @router.get("", response_model=list[CompanyOut])

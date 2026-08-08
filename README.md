@@ -84,6 +84,9 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 | 5 | Meta Marketing API (campañas) | ⬜ |
 | 6a | Estudio Visual: creativos (copy + imagen, NVIDIA→Pollinations) | ✅ |
 | 6b | Voz/jopara ASR + Bancar vPOS | ⬜ |
+| 7 | Onboarding inteligente: cualquier rubro, enjambre a medida | ✅ |
+| 8 | Optimizador de Prompts: 7º agente que mejora al resto (con aprobación) | ✅ |
+| 9 | Meta Marketing: carruseles, videos, campañas | ⬜ |
 
 ## Tareas autónomas (planificador, hora de Asunción)
 
