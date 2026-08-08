@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .imagegen import ImageGenError, generate_image
 from .llm import complete
-from .models import Agent, Campaign, Company
+from .models import Agent, Campaign, Company, Report
 
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "media"
 FORMATS = {"carousel", "single", "video_script"}
@@ -77,12 +77,26 @@ async def build_campaign(
     n_cards = max(2, min(n_cards, 8)) if format == "carousel" else (1 if format == "single" else max(3, min(n_cards, 8)))
     profile = company.profile or "{}"
 
+    # Si existe investigación de segmentos (scraping real), el CEO la usa
+    segments_report = (
+        db.query(Report)
+        .filter(Report.company_id == company.id, Report.kind == "segments")
+        .order_by(Report.id.desc())
+        .first()
+    )
+    segments_ctx = (
+        f"\nSegmentos investigados con datos reales del mercado:\n{segments_report.content[:2500]}\n"
+        if segments_report
+        else ""
+    )
+
     # 1) CEO: estrategia
     strategy_parsed = await _ask_json(
         db, company, "ceo",
-        f"Brief de campaña: {brief}\nPerfil del negocio: {profile}\n\n"
-        'Definí la estrategia. Respondé SOLO JSON: {"title": "nombre corto de la campaña", '
-        '"angle": "ángulo persuasivo elegido", "audience": "público objetivo concreto"}',
+        f"Brief de campaña: {brief}\nPerfil del negocio: {profile}\n{segments_ctx}\n"
+        'Definí la estrategia (si hay segmentos investigados, elegí el más apto para este brief). '
+        'Respondé SOLO JSON: {"title": "nombre corto de la campaña", '
+        '"angle": "ángulo persuasivo elegido", "audience": "público objetivo concreto (segmento elegido)"}',
         max_tokens=400,
     )
     strategy = strategy_parsed if isinstance(strategy_parsed, dict) else {}

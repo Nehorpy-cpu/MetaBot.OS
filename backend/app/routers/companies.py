@@ -77,7 +77,9 @@ async def create_company_smart(payload: SmartCompanyCreate, db: Session = Depend
         except Exception:
             website_text = ""  # la web es opcional: si falla, se perfila sin ella
     try:
-        return await onboarding.profile_and_create(db, payload.name, payload.description, website_text)
+        return await onboarding.profile_and_create(
+            db, payload.name, payload.description, website_text, website=payload.website
+        )
     except LLMError as exc:
         raise HTTPException(503, f"LLM no disponible: {exc}")
     except ValueError as exc:

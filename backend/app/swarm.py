@@ -301,6 +301,117 @@ async def _fetch_page_text(url: str) -> str:
     return text[:8000]
 
 
+async def _fetch_site(url: str, max_internal: int = 3) -> str:
+    """Portada + algunas páginas internas del mismo dominio (catálogo, etc.)."""
+    from urllib.parse import urljoin, urlparse
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (MetaBot.OS scanner)"})
+        resp.raise_for_status()
+        html = resp.text
+    base = urlparse(str(url))
+    links: list[str] = []
+    for href in re.findall(r'href=["\']([^"\'#]+)["\']', html):
+        full = urljoin(url, href)
+        parsed = urlparse(full)
+        if parsed.netloc == base.netloc and parsed.path not in ("", "/") and full not in links:
+            if not re.search(r"\.(css|js|png|jpe?g|svg|ico|webp|pdf)$", parsed.path, re.I):
+                links.append(full)
+    def _to_text(h: str) -> str:
+        t = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", h, flags=re.DOTALL | re.IGNORECASE)
+        t = re.sub(r"<[^>]+>", " ", t)
+        return re.sub(r"\s+", " ", t)
+    parts = [_to_text(html)[:5000]]
+    for link in links[:max_internal]:
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                sub = await client.get(link, headers={"User-Agent": "Mozilla/5.0 (MetaBot.OS scanner)"})
+                if sub.status_code == 200:
+                    parts.append(f"[{link}] " + _to_text(sub.text)[:2500])
+        except httpx.HTTPError:
+            continue
+    return "\n\n".join(parts)
+
+
+def _render_segments_report(data: dict) -> str:
+    lines = ["## Productos detectados", ""]
+    lines += [f"- {p}" for p in data.get("products", [])[:20]] or ["- (sin datos)"]
+    lines += ["", "## Segmentos de clientes", ""]
+    for s in data.get("segments", []):
+        lines += [
+            f"### {s.get('name', 'Segmento')}",
+            f"- Perfil: {s.get('perfil', '')}",
+            f"- Edad: {s.get('edad', '')}",
+            f"- Intereses: {s.get('intereses', '')}",
+            f"- Ángulo de venta: {s.get('angulo', '')}",
+            f"- Formato sugerido: {s.get('formato_sugerido', '')}",
+            "",
+        ]
+    if data.get("insights"):
+        lines += ["## Insights", "", str(data["insights"])]
+    return "\n".join(lines)
+
+
+async def run_segment_research(db: Session, company: Company, website: str = "") -> Report:
+    """Inteligencia de mercado con datos scrapeados reales: productos,
+    segmentos de clientes y ángulo de venta por segmento."""
+    if not website:
+        try:
+            website = json.loads(company.profile or "{}").get("website", "")
+        except json.JSONDecodeError:
+            website = ""
+    site_text = ""
+    if website:
+        try:
+            site_text = await _fetch_site(website)
+        except httpx.HTTPError as exc:
+            site_text = f"(sitio no accesible: {exc})"
+    comp_chunks = []
+    for s in db.query(CompetitorSource).filter(CompetitorSource.company_id == company.id).limit(3):
+        try:
+            comp_chunks.append(f"[{s.label or s.url}] " + await _fetch_page_text(s.url))
+        except httpx.HTTPError:
+            continue
+    if not site_text and not comp_chunks:
+        raise ValueError("No hay fuentes para investigar: pasá la web del negocio o cargá competidores.")
+
+    prompt = (
+        f"Sos investigador de mercado para {company.name} ({company.industry or company.niche}) "
+        "en Paraguay. Con el CONTENIDO REAL scrapeado de abajo (no inventes productos que no "
+        "aparezcan), definí los segmentos de clientes para campañas de Meta Ads.\n"
+        'Respondé SOLO JSON: {"products": ["producto/marca real detectada", ...], '
+        '"segments": [{"name": "nombre corto", "perfil": "quiénes son", "edad": "rango", '
+        '"intereses": "para segmentación de Meta", "angulo": "ángulo de venta para este segmento", '
+        '"formato_sugerido": "carousel|single|video"}], "insights": "2-3 hallazgos accionables"}. '
+        "Entre 3 y 5 segmentos.\n\n"
+        f"=== SITIO DEL NEGOCIO ===\n{site_text[:9000]}\n\n"
+        + (f"=== COMPETENCIA ===\n{chr(10).join(comp_chunks)[:4000]}" if comp_chunks else "")
+    )
+    raw = await complete([{"role": "user", "content": prompt}],
+                         model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                         temperature=0.3, max_tokens=2000)
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    data = {}
+    if match:
+        try:
+            data = json.loads(match.group())
+        except json.JSONDecodeError:
+            data = {}
+    if not data.get("segments"):
+        raise ValueError(f"La investigación no devolvió segmentos válidos: {raw[:200]}")
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    report = Report(
+        company_id=company.id,
+        kind="segments",
+        title=f"Segmentos y mercado — {now.strftime('%d/%m/%Y')}",
+        content=_render_segments_report(data),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return report
+
+
 async def run_competitive_scan(db: Session, company: Company) -> Report | None:
     """Inteligencia Web: lee las páginas de competidores y resume hallazgos."""
     sources = (

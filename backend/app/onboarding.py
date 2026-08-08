@@ -88,7 +88,7 @@ def _parse_profile(raw: str) -> tuple[dict | None, str]:
 
 
 async def profile_and_create(
-    db: Session, name: str, description: str, website_text: str = ""
+    db: Session, name: str, description: str, website_text: str = "", website: str = ""
 ) -> Company:
     website_context = f"Contenido de su web:\n{website_text[:3000]}" if website_text else ""
     base_prompt = PROFILE_PROMPT.format(
@@ -124,6 +124,7 @@ async def profile_and_create(
         profile=json.dumps(
             {
                 "description": description,
+                "website": website,
                 "products": profile.get("products", []),
                 "audience": profile.get("audience", ""),
                 "tone_notes": profile.get("tone_notes", ""),

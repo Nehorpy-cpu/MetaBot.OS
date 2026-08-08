@@ -97,6 +97,24 @@ def list_audits(company_id: int, db: Session = Depends(get_db)):
     ]
 
 
+class SegmentResearchIn(BaseModel):
+    website: str = Field(default="", max_length=500)
+
+
+@router.post("/companies/{company_id}/segments/research")
+async def segment_research(
+    company_id: int, payload: SegmentResearchIn, db: Session = Depends(get_db)
+):
+    """Investiga el mercado con scraping real y define segmentos de clientes."""
+    try:
+        report = await swarm.run_segment_research(db, _company(company_id, db), payload.website)
+    except LLMError as exc:
+        raise HTTPException(503, f"LLM no disponible: {exc}")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"id": report.id, "title": report.title, "content": report.content}
+
+
 # --- Optimizador de Prompts ---
 
 @router.post("/companies/{company_id}/prompt-suggestions/run")

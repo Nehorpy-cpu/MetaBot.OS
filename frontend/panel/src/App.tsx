@@ -668,6 +668,7 @@ function IntelligenceView({ companyId }: { companyId: number }) {
   const [error, setError] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  const [segWebsite, setSegWebsite] = useState("");
 
   const load = useCallback(() => {
     intelApi.listReports(companyId).then(setReports).catch(() => setReports([]));
@@ -715,6 +716,13 @@ function IntelligenceView({ companyId }: { companyId: number }) {
         <button disabled={!!busy} onClick={() => run("opt", () => intelApi.runOptimizer(companyId))} className={btnPrimary}>
           {busy === "opt" ? <RefreshCw className="animate-spin" size={15} /> : <Wand2 size={15} />} Optimizar prompts
         </button>
+        <div className="flex gap-2 items-center">
+          <input className={`${input} w-64`} placeholder="Web del negocio (para scraping)" value={segWebsite}
+            onChange={(e) => setSegWebsite(e.target.value)} />
+          <button disabled={!!busy} onClick={() => run("seg", () => intelApi.researchSegments(companyId, segWebsite.trim()))} className={btnPrimary}>
+            {busy === "seg" ? <RefreshCw className="animate-spin" size={15} /> : <Users size={15} />} Investigar segmentos
+          </button>
+        </div>
       </div>
       {error && <p className="text-red-400 text-xs">{error}</p>}
 

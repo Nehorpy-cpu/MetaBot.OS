@@ -188,6 +188,11 @@ export const intelApi = {
     request<{ new_findings: number }>(`/companies/${companyId}/audits/run`, { method: "POST" }),
   listAudits: (companyId: number) => request<Finding[]>(`/companies/${companyId}/audits`),
   listCompetitors: (companyId: number) => request<Competitor[]>(`/companies/${companyId}/competitors`),
+  researchSegments: (companyId: number, website: string) =>
+    request<Report>(`/companies/${companyId}/segments/research`, {
+      method: "POST",
+      body: JSON.stringify({ website }),
+    }),
   runOptimizer: (companyId: number) =>
     request<{ new_suggestions: number }>(`/companies/${companyId}/prompt-suggestions/run`, { method: "POST" }),
   listSuggestions: (companyId: number) =>
