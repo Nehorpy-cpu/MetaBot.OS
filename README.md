@@ -82,7 +82,8 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 | 3 | Módulo médico: recordatorios + export iCalendar | ✅ |
 | 4 | Enjambre autónomo: informes Quant, auditoría Guard, competencia, planificador | ✅ |
 | 5 | Meta Marketing API (campañas) | ⬜ |
-| 6 | Voz/jopara ASR + Estudio Visual + Bancar vPOS | ⬜ |
+| 6a | Estudio Visual: creativos (copy + imagen, NVIDIA→Pollinations) | ✅ |
+| 6b | Voz/jopara ASR + Bancar vPOS | ⬜ |
 
 ## Tareas autónomas (planificador, hora de Asunción)
 

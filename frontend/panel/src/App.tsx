@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity, BarChart3, Bot, Building2, Calendar, ChevronDown, Clock,
   Command, Globe2, LayoutDashboard, Link2, MessageSquare, PenTool, Plus, RefreshCw,
-  Send, ShieldCheck, Sliders, Smartphone, Stethoscope, Users, Video, X, Zap,
+  Send, ShieldCheck, Sliders, Smartphone, Stethoscope, Users, Video, Wand2, X, Zap,
 } from "lucide-react";
 import {
-  api, chatApi, intelApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
-  type ChatMessage, type Company, type Competitor, type Conversation, type DailySummary,
+  api, chatApi, creativeApi, intelApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
+  type ChatMessage, type Company, type Competitor, type Conversation, type Creative, type DailySummary,
   type DashboardData, type Doctor, type Finding, type Report, type WaStatus, STATUS_ES,
 } from "./api";
 
@@ -470,6 +470,74 @@ function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
   );
 }
 
+function StudioView({ companyId }: { companyId: number }) {
+  const [creatives, setCreatives] = useState<Creative[]>([]);
+  const [brief, setBrief] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(() => {
+    creativeApi.list(companyId).then(setCreatives).catch(() => setCreatives([]));
+  }, [companyId]);
+  useEffect(load, [load]);
+
+  const generate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (brief.trim().length < 5 || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await creativeApi.create(companyId, brief.trim());
+      setBrief("");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
+          <Video className="text-cyan-400" size={26} /> Estudio Visual
+        </h2>
+        <p className="text-zinc-400 text-sm mt-1">
+          El Director Creativo escribe el copy y el Estudio Visual genera la imagen. Un brief, un creativo listo.
+        </p>
+      </div>
+
+      <form onSubmit={generate} className={`${card} p-5 space-y-3`}>
+        <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Brief de la campaña</label>
+        <textarea className={`${input} min-h-20`} value={brief} onChange={(e) => setBrief(e.target.value)}
+          placeholder="Ej. Promo de blanqueamiento dental esta semana, 20% de descuento, público joven de Asunción" />
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+        <button type="submit" disabled={busy || brief.trim().length < 5} className={btnPrimary}>
+          {busy ? <><RefreshCw className="animate-spin" size={15} /> Generando (copy + imagen)…</> : <><Wand2 size={15} /> Generar creativo</>}
+        </button>
+      </form>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {creatives.map((c) => (
+          <div key={c.id} className={`${card} overflow-hidden flex flex-col`}>
+            <img src={c.image_path} alt={c.brief} className="w-full aspect-square object-cover" />
+            <div className="p-4 space-y-2 flex-1 flex flex-col">
+              <p className="text-sm text-zinc-100 whitespace-pre-wrap flex-1">{c.copy_text}</p>
+              <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                <span className="text-[9px] text-zinc-500 font-mono uppercase">{c.provider}</span>
+                <button onClick={() => creativeApi.remove(companyId, c.id).then(load)}
+                  className="text-zinc-500 hover:text-red-400 p-1"><X size={14} /></button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {!creatives.length && <p className="text-xs text-zinc-600 col-span-full">Sin creativos todavía. Escribí un brief y generá el primero.</p>}
+      </div>
+    </div>
+  );
+}
+
 const SEVERITY_STYLE: Record<string, string> = {
   critical: "bg-red-500/10 text-red-400 border-red-500/20",
   warning: "bg-amber-500/10 text-amber-400 border-amber-500/20",
@@ -833,7 +901,7 @@ function ChatView({ companyId }: { companyId: number }) {
 export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio">("dashboard");
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -894,6 +962,7 @@ export default function App() {
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
           {navBtn("intelligence", "Inteligencia (Informes)", Activity)}
+          {navBtn("studio", "Estudio Visual", Video)}
           {navBtn("agents", "Enjambre de Agentes", Bot)}
         </nav>
       </aside>
@@ -919,6 +988,7 @@ export default function App() {
           {active && view === "medical" && active.vertical === "medical" && <MedicalAgendaView companyId={active.id} />}
           {active && view === "chat" && <ChatView companyId={active.id} />}
           {active && view === "intelligence" && <IntelligenceView companyId={active.id} />}
+          {active && view === "studio" && <StudioView companyId={active.id} />}
           {active && view === "connections" && (
             <ConnectionsView
               company={active}

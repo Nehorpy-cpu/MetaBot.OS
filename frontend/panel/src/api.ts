@@ -180,6 +180,27 @@ export const intelApi = {
     request<void>(`/companies/${companyId}/competitors/${id}`, { method: "DELETE" }),
 };
 
+export interface Creative {
+  id: number;
+  brief: string;
+  copy_text: string;
+  image_prompt: string;
+  image_path: string;
+  provider: string;
+  created_at: string;
+}
+
+export const creativeApi = {
+  list: (companyId: number) => request<Creative[]>(`/companies/${companyId}/creatives`),
+  create: (companyId: number, brief: string) =>
+    request<Creative>(`/companies/${companyId}/creatives`, {
+      method: "POST",
+      body: JSON.stringify({ brief }),
+    }),
+  remove: (companyId: number, id: number) =>
+    request<void>(`/companies/${companyId}/creatives/${id}`, { method: "DELETE" }),
+};
+
 export const chatApi = {
   send: (companyId: number, contactPhone: string, contactName: string, text: string) =>
     request<ChatResponse>(`/companies/${companyId}/chat`, {

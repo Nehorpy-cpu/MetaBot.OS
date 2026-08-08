@@ -155,6 +155,21 @@ class CompetitorSource(Base):
     label: Mapped[str] = mapped_column(String(200), default="")
 
 
+class Creative(Base):
+    """Creativo publicitario: copy del Director Creativo + imagen del Estudio Visual."""
+
+    __tablename__ = "creatives"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    brief: Mapped[str] = mapped_column(Text)
+    copy_text: Mapped[str] = mapped_column(Text, default="")
+    image_prompt: Mapped[str] = mapped_column(Text, default="")
+    image_path: Mapped[str] = mapped_column(String(300), default="")
+    provider: Mapped[str] = mapped_column(String(30), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class GlossaryTerm(Base):
     """Glosario jopara/guaraní: correcciones human-in-the-loop para ASR y copys."""
 

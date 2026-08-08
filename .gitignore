@@ -29,6 +29,9 @@ dist/
 # Sesiones de WhatsApp (credenciales del bridge Baileys) — NUNCA versionar
 bridge/sessions/
 
+# Imágenes generadas
+backend/media/
+
 # SO / Editor
 .DS_Store
 Thumbs.db
