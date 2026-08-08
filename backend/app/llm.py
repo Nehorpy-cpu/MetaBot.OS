@@ -24,7 +24,9 @@ async def chat_raw(
     model: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 1024,
-    timeout: float = 60.0,
+    # 120s: los modelos serverless de NIM pueden tardar ~1 min en arrancar
+    # en frío; mejor esperar que caer en fallback innecesario.
+    timeout: float = 120.0,
 ) -> dict:
     """Devuelve el mensaje completo del asistente (puede incluir tool_calls)
     del primer proveedor que funcione."""
@@ -54,7 +56,9 @@ async def chat_raw(
                 resp.raise_for_status()
                 return resp.json()["choices"][0]["message"]
             except (httpx.HTTPError, KeyError, IndexError) as exc:
-                errors.append(f"{p['name']}: {exc}")
+                # type(exc) SIEMPRE visible: str(ReadTimeout) es vacío y
+                # ocultaba la causa real en producción.
+                errors.append(f"{p['name']}: {type(exc).__name__}: {exc}")
                 # Si el modelo pedido no existe en este proveedor, probar con
                 # su modelo por defecto antes de pasar al siguiente.
                 if model and model != p["default_model"]:
@@ -68,7 +72,7 @@ async def chat_raw(
                         resp.raise_for_status()
                         return resp.json()["choices"][0]["message"]
                     except (httpx.HTTPError, KeyError, IndexError) as exc2:
-                        errors.append(f"{p['name']} (default): {exc2}")
+                        errors.append(f"{p['name']} (default): {type(exc2).__name__}: {exc2}")
     raise LLMError("Todos los proveedores fallaron: " + "; ".join(errors))
 
 
