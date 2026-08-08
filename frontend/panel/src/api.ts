@@ -3,6 +3,15 @@ export interface Company {
   name: string;
   vertical: "medical" | "ecommerce";
   niche: string;
+  wa_mode: "none" | "meta" | "qr";
+  wa_phone_number_id: string;
+}
+
+export interface WaStatus {
+  mode: string;
+  status: string;
+  qr?: string | null;
+  phone?: string | null;
 }
 
 export interface AgentSummary {
@@ -121,6 +130,14 @@ export interface ChatResponse {
   actions?: { tool: string; args: Record<string, unknown>; result: Record<string, unknown> }[];
   error?: string;
 }
+
+export const waApi = {
+  updateCompany: (companyId: number, data: { wa_mode?: string; wa_phone_number_id?: string }) =>
+    request<Company>(`/companies/${companyId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  status: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/status`),
+  start: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/start`, { method: "POST" }),
+  logout: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/logout`, { method: "POST" }),
+};
 
 export const chatApi = {
   send: (companyId: number, contactPhone: string, contactName: string, text: string) =>

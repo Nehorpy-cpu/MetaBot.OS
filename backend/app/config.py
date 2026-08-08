@@ -21,6 +21,10 @@ WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
 WHATSAPP_APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET", "")
 WHATSAPP_API_BASE = "https://graph.facebook.com/v21.0"
 
+# Puente WhatsApp Web por QR (Baileys) para tenants sin Meta API
+BRIDGE_URL = os.environ.get("BRIDGE_URL", "http://localhost:3001")
+BRIDGE_SECRET = os.environ.get("BRIDGE_SECRET", "")
+
 # Proveedores LLM en orden de fallback. Todos exponen API OpenAI-compatible.
 LLM_PROVIDERS = [
     {

@@ -26,6 +26,9 @@ dist/
 *.db
 *.sqlite3
 
+# Sesiones de WhatsApp (credenciales del bridge Baileys) — NUNCA versionar
+bridge/sessions/
+
 # SO / Editor
 .DS_Store
 Thumbs.db

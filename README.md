@@ -12,7 +12,24 @@ Documentos de arquitectura en [docs/](docs/).
 backend/         API FastAPI (Python) — multi-tenant, enjambre de agentes, capa LLM
 frontend/panel/  Panel Admin (Vite + React + TS + Tailwind), proxy /api → backend
 frontend/reference/  Prototipo de UI original (solo referencia de diseño)
+bridge/          Puente WhatsApp Web por QR (Node + Baileys) para PyMEs sin Meta API
 docs/            PDFs de arquitectura
+```
+
+## Canales de WhatsApp (por empresa)
+
+| Modo | Para quién | Cómo |
+|---|---|---|
+| `qr` | PyMEs sin verificación de Meta | Escanean QR con su WhatsApp Business (bridge Baileys). Solo responde a quien escribe. ⚠️ Canal no oficial: riesgo de restricción del número. |
+| `meta` | Empresas con Meta Business verificado | WhatsApp Cloud API oficial (webhook + token) |
+| `none` | Pruebas | Solo simulador del panel |
+
+Bridge QR:
+
+```bash
+cd bridge
+npm install
+BRIDGE_SECRET=<mismo-del-.env> npm start   # escucha en :3001
 ```
 
 ## Setup frontend (panel)
@@ -61,6 +78,7 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 | 1 | Panel Admin / Super-Configurator | ✅ |
 | 2 | CX Bot: motor conversacional con herramientas + simulador | ✅ |
 | 2b | Webhook WhatsApp Cloud API multi-tenant (falta conectar credenciales) | ✅ |
+| 2c | Canal QR (Baileys) por empresa + Centro de Conexiones | ✅ |
 | 3 | Módulo médico: recordatorios + export iCalendar | ✅ |
 | 4 | Enjambre completo + Inteligencia Web | ⬜ |
 | 5 | Meta Marketing API (campañas) | ⬜ |

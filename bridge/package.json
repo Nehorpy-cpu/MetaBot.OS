@@ -1,0 +1,16 @@
+{
+  "name": "metabot-wa-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Puente WhatsApp Web (Baileys) por QR para tenants sin Meta API",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "baileys": "^6.7.23",
+    "express": "^4.21.2",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4"
+  }
+}

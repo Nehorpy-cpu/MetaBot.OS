@@ -2,12 +2,12 @@ from fastapi import FastAPI
 
 from .db import Base, engine
 from .llm import available_providers
-from .routers import agents, chat, companies, dashboard, glossary, medical, whatsapp_webhook
+from .routers import agents, bridge, chat, companies, dashboard, glossary, medical, whatsapp_webhook
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="MetaBot.OS", version="0.4.0")
-for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router):
+app = FastAPI(title="MetaBot.OS", version="0.5.0")
+for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router):
     app.include_router(router, prefix="/api")
 
 

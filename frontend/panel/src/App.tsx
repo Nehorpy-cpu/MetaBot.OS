@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity, BarChart3, Bot, Building2, Calendar, ChevronDown, Clock,
-  Command, LayoutDashboard, MessageSquare, PenTool, Plus, RefreshCw,
+  Command, LayoutDashboard, Link2, MessageSquare, PenTool, Plus, RefreshCw,
   Send, ShieldCheck, Sliders, Smartphone, Stethoscope, Users, Video, X, Zap,
 } from "lucide-react";
 import {
-  api, chatApi, type AgentDetail, type AgentSummary, type Appointment,
+  api, chatApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
   type ChatMessage, type Company, type Conversation, type DailySummary,
-  type DashboardData, type Doctor, STATUS_ES,
+  type DashboardData, type Doctor, type WaStatus, STATUS_ES,
 } from "./api";
 
 const AGENT_ICONS: Record<string, typeof Command> = {
@@ -470,6 +470,118 @@ function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
   );
 }
 
+function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCompanyUpdated: (c: Company) => void }) {
+  const [status, setStatus] = useState<WaStatus | null>(null);
+  const [pnid, setPnid] = useState(company.wa_phone_number_id);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => {
+    waApi.status(company.id).then((s) => { setStatus(s); setError(""); }).catch((e) => setError(e.message));
+  }, [company.id]);
+
+  useEffect(() => {
+    refresh();
+    if (company.wa_mode !== "qr") return;
+    const t = setInterval(refresh, 3000);
+    return () => clearInterval(t);
+  }, [company.wa_mode, refresh]);
+
+  const setMode = async (mode: "none" | "meta" | "qr") => {
+    setBusy(true);
+    setError("");
+    try {
+      onCompanyUpdated(await waApi.updateCompany(company.id, { wa_mode: mode }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const modes = [
+    { id: "none" as const, title: "Sin canal", desc: "Solo simulador interno." },
+    { id: "qr" as const, title: "QR — WhatsApp Web (Baileys)", desc: "Escaneás un QR con el WhatsApp Business existente. Sin verificación de Meta. Solo responde a clientes que escriben." },
+    { id: "meta" as const, title: "Meta Cloud API (oficial)", desc: "Para empresas con verificación de Meta. Requiere token en el servidor y phone_number_id." },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
+          <Link2 className="text-cyan-400" size={26} /> Centro de Conexiones — WhatsApp
+        </h2>
+        <p className="text-zinc-400 text-sm mt-1">Elegí cómo se conecta esta empresa a WhatsApp. El bot es el mismo en ambos canales.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {modes.map((m) => (
+          <button key={m.id} disabled={busy} onClick={() => setMode(m.id)}
+            className={`p-5 rounded-2xl border text-left transition-all ${company.wa_mode === m.id ? "bg-cyan-500/10 border-cyan-500/50 text-white" : "bg-white/[0.02] border-white/5 text-zinc-400 hover:bg-white/[0.04]"}`}>
+            <p className="font-bold text-sm">{m.title}</p>
+            <p className="text-[11px] text-zinc-500 mt-2">{m.desc}</p>
+          </button>
+        ))}
+      </div>
+
+      {company.wa_mode === "qr" && (
+        <div className={`${card} p-6 space-y-4`}>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">Sesión QR</h3>
+            <span className={`text-[10px] px-2.5 py-1 rounded-full border font-bold uppercase ${status?.status === "connected" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
+              {status?.status === "connected" ? `Conectado${status.phone ? ` (+${status.phone})` : ""}` : status?.status ?? "…"}
+            </span>
+          </div>
+          <p className="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
+            ⚠️ Canal no oficial: WhatsApp puede restringir números que automatizan respuestas.
+            Este modo solo responde a quien escribe primero (menor riesgo), pero para clínicas
+            con datos sensibles recomendamos la API oficial de Meta.
+          </p>
+          {status?.status === "qr" && status.qr && (
+            <div className="flex flex-col items-center gap-3">
+              <img src={status.qr} alt="QR de WhatsApp" className="rounded-xl border border-white/10 bg-white p-2 w-64" />
+              <p className="text-xs text-zinc-400">WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
+            </div>
+          )}
+          <div className="flex gap-3">
+            {status?.status !== "connected" && (
+              <button onClick={() => waApi.start(company.id).then(setStatus).catch((e) => setError(e.message))} className={btnPrimary}>
+                Conectar / Generar QR
+              </button>
+            )}
+            {(status?.status === "connected" || status?.status === "qr") && (
+              <button onClick={() => waApi.logout(company.id).then(setStatus).catch((e) => setError(e.message))}
+                className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 rounded-xl text-sm font-semibold">
+                Cerrar sesión
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {company.wa_mode === "meta" && (
+        <div className={`${card} p-6 space-y-4 max-w-xl`}>
+          <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">Meta Cloud API</h3>
+          <p className="text-xs text-zinc-400">
+            El token, verify token y app secret van en el <code className="text-cyan-300">.env</code> del servidor.
+            Acá solo se asigna el <b>phone_number_id</b> de esta empresa.
+          </p>
+          <div className="flex gap-2">
+            <input className={input} placeholder="phone_number_id" value={pnid} onChange={(e) => setPnid(e.target.value)} />
+            <button className={btnPrimary} disabled={busy}
+              onClick={() => waApi.updateCompany(company.id, { wa_phone_number_id: pnid }).then(onCompanyUpdated).catch((e) => setError(e.message))}>
+              Guardar
+            </button>
+          </div>
+          <p className="text-xs text-zinc-500">Webhook a configurar en Meta: <code className="text-cyan-300">https://TU-DOMINIO/api/webhooks/whatsapp</code></p>
+        </div>
+      )}
+
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+    </div>
+  );
+}
+
 function ChatView({ companyId }: { companyId: number }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<Conversation | null>(null);
@@ -597,7 +709,7 @@ function ChatView({ companyId }: { companyId: number }) {
 export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections">("dashboard");
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -656,6 +768,7 @@ export default function App() {
           {navBtn("dashboard", "Dashboard", LayoutDashboard)}
           {active?.vertical === "medical" && navBtn("medical", "Agenda de Doctores", Calendar)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
+          {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
           {navBtn("agents", "Enjambre de Agentes", Bot)}
         </nav>
       </aside>
@@ -680,6 +793,12 @@ export default function App() {
           {active && view === "agents" && <AgentsView companyId={active.id} />}
           {active && view === "medical" && active.vertical === "medical" && <MedicalAgendaView companyId={active.id} />}
           {active && view === "chat" && <ChatView companyId={active.id} />}
+          {active && view === "connections" && (
+            <ConnectionsView
+              company={active}
+              onCompanyUpdated={(c) => setCompanies((prev) => prev.map((x) => (x.id === c.id ? c : x)))}
+            />
+          )}
         </div>
       </main>
 
