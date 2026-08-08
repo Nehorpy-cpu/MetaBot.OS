@@ -93,6 +93,7 @@ class Conversation(Base):
     channel: Mapped[str] = mapped_column(String(20), default="whatsapp")
     contact_phone: Mapped[str] = mapped_column(String(50), index=True)
     contact_name: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open | needs_human
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     company: Mapped[Company] = relationship(back_populates="conversations")

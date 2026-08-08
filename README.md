@@ -59,7 +59,8 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 |---|---|---|
 | 0 | Fundaciones: repo, esquema multi-tenant, capa LLM | ✅ |
 | 1 | Panel Admin / Super-Configurator | ✅ |
-| 2 | CX Bot WhatsApp (Cloud API) | ⬜ |
+| 2 | CX Bot: motor conversacional con herramientas + simulador | ✅ |
+| 2b | Conexión WhatsApp Cloud API (webhook) | ⬜ |
 | 3 | Módulo médico: citas, resúmenes diarios | ⬜ |
 | 4 | Enjambre completo + Inteligencia Web | ⬜ |
 | 5 | Meta Marketing API (campañas) | ⬜ |

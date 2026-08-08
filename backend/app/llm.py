@@ -17,15 +17,17 @@ def available_providers() -> list[dict]:
     return [p for p in LLM_PROVIDERS if p["api_key"]]
 
 
-async def complete(
+async def chat_raw(
     messages: list[dict],
     *,
+    tools: list[dict] | None = None,
     model: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 1024,
     timeout: float = 60.0,
-) -> str:
-    """Devuelve el texto de respuesta del primer proveedor que funcione."""
+) -> dict:
+    """Devuelve el mensaje completo del asistente (puede incluir tool_calls)
+    del primer proveedor que funcione."""
     providers = available_providers()
     if not providers:
         raise LLMError(
@@ -35,19 +37,51 @@ async def complete(
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
         for p in providers:
+            payload: dict = {
+                "model": model or p["default_model"],
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if tools:
+                payload["tools"] = tools
             try:
                 resp = await client.post(
                     f"{p['base_url']}/chat/completions",
                     headers={"Authorization": f"Bearer {p['api_key']}"},
-                    json={
-                        "model": model or p["default_model"],
-                        "messages": messages,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                    },
+                    json=payload,
                 )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
+                return resp.json()["choices"][0]["message"]
             except (httpx.HTTPError, KeyError, IndexError) as exc:
                 errors.append(f"{p['name']}: {exc}")
+                # Si el modelo pedido no existe en este proveedor, probar con
+                # su modelo por defecto antes de pasar al siguiente.
+                if model and model != p["default_model"]:
+                    try:
+                        payload["model"] = p["default_model"]
+                        resp = await client.post(
+                            f"{p['base_url']}/chat/completions",
+                            headers={"Authorization": f"Bearer {p['api_key']}"},
+                            json=payload,
+                        )
+                        resp.raise_for_status()
+                        return resp.json()["choices"][0]["message"]
+                    except (httpx.HTTPError, KeyError, IndexError) as exc2:
+                        errors.append(f"{p['name']} (default): {exc2}")
     raise LLMError("Todos los proveedores fallaron: " + "; ".join(errors))
+
+
+async def complete(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    temperature: float = 0.3,
+    max_tokens: int = 1024,
+    timeout: float = 60.0,
+) -> str:
+    """Devuelve solo el texto de respuesta."""
+    message = await chat_raw(
+        messages, model=model, temperature=temperature, max_tokens=max_tokens, timeout=timeout
+    )
+    return message.get("content") or ""

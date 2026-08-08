@@ -99,6 +99,41 @@ export const api = {
     ),
 };
 
+export interface Conversation {
+  id: number;
+  channel: string;
+  contact_phone: string;
+  contact_name: string;
+  status: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  direction: "in" | "out";
+  body: string;
+  created_at: string;
+}
+
+export interface ChatResponse {
+  conversation_id: number;
+  reply: string | null;
+  status: string;
+  actions?: { tool: string; args: Record<string, unknown>; result: Record<string, unknown> }[];
+  error?: string;
+}
+
+export const chatApi = {
+  send: (companyId: number, contactPhone: string, contactName: string, text: string) =>
+    request<ChatResponse>(`/companies/${companyId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ contact_phone: contactPhone, contact_name: contactName, text }),
+    }),
+  listConversations: (companyId: number) =>
+    request<Conversation[]>(`/companies/${companyId}/conversations`),
+  listMessages: (companyId: number, convId: number) =>
+    request<ChatMessage[]>(`/companies/${companyId}/conversations/${convId}/messages`),
+};
+
 export const STATUS_ES: Record<string, string> = {
   pending: "Pendiente",
   confirmed: "Confirmado",
