@@ -1,0 +1,5 @@
+# Con DOMAIN=midominio.com en .env → HTTPS automático.
+# Sin DOMAIN → sirve en el puerto 80 por IP.
+{$DOMAIN} {
+	reverse_proxy backend:8000
+}

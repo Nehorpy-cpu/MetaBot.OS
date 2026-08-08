@@ -1,0 +1,12 @@
+.git
+.env
+*.env
+!.env.example
+backend/.venv
+backend/media
+backend/metabot.db
+frontend/panel/node_modules
+frontend/panel/dist
+bridge/node_modules
+bridge/sessions
+docs

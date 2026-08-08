@@ -1,0 +1,53 @@
+# MetaBot.OS — despliegue de producción (VPS)
+#
+#   cp .env.example .env   (completar API keys y BRIDGE_SECRET)
+#   docker compose up -d --build
+#
+# Con DOMAIN definido en .env, Caddy emite HTTPS automático (Let's Encrypt).
+# Sin DOMAIN, todo queda en http://IP (suficiente para probar; Meta exige
+# HTTPS para el webhook, así que para Meta hace falta dominio).
+
+services:
+  backend:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/metabot.db
+      BRIDGE_URL: http://bridge:3001
+    volumes:
+      - data:/data
+      - media:/app/media
+    expose:
+      - "8000"
+
+  bridge:
+    build: ./bridge
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:8000
+      BRIDGE_SECRET: ${BRIDGE_SECRET}
+    volumes:
+      - sessions:/bridge/sessions
+    expose:
+      - "3001"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  data:
+  media:
+  sessions:
+  caddy_data:
+  caddy_config:

@@ -99,6 +99,26 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 
 Desactivable con `SCHEDULER_ENABLED=0`.
 
+## Despliegue en VPS (Docker)
+
+En un VPS Ubuntu/Debian nuevo, como root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nehorpy-cpu/MetaBot.OS/main/deploy/setup-vps.sh | bash
+nano /opt/MetaBot.OS/.env        # completar API keys, BRIDGE_SECRET y DOMAIN
+cd /opt/MetaBot.OS && docker compose up -d --build
+```
+
+Levanta 3 contenedores: `backend` (API + panel + media), `bridge` (WhatsApp QR)
+y `caddy` (HTTPS automático con `DOMAIN`, o HTTP por IP sin él). Datos
+persistentes en volúmenes (`data`, `media`, `sessions`).
+
+Notas:
+- La sesión QR de WhatsApp NO se migra: tras desplegar, reconectar desde
+  el panel (Conexiones → Generar QR) y volver a escanear.
+- El webhook de Meta requiere `DOMAIN` con HTTPS.
+- Actualizar: `cd /opt/MetaBot.OS && git pull && docker compose up -d --build`.
+
 ## Reglas del proyecto
 
 - Secretos solo en `.env` (nunca en git, nunca hardcodeados).
