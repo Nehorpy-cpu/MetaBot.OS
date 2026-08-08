@@ -1,6 +1,7 @@
 # Secretos — NUNCA versionar
 .env
 .env.*
+*.env
 !.env.example
 *.pem
 *.key

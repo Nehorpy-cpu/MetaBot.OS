@@ -2,15 +2,16 @@ from fastapi import FastAPI
 
 from .db import Base, engine
 from .llm import available_providers
-from .routers import companies
+from .routers import agents, companies, dashboard, glossary, medical
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="MetaBot.OS", version="0.1.0")
-app.include_router(companies.router)
+app = FastAPI(title="MetaBot.OS", version="0.2.0")
+for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router):
+    app.include_router(router, prefix="/api")
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "ok",

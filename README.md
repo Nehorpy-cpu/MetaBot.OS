@@ -9,9 +9,18 @@ Documentos de arquitectura en [docs/](docs/).
 ## Estructura
 
 ```
-backend/    API FastAPI (Python) — multi-tenant, enjambre de agentes, capa LLM
-frontend/   Panel SPA (reference/ contiene el prototipo de UI original)
-docs/       PDFs de arquitectura
+backend/         API FastAPI (Python) — multi-tenant, enjambre de agentes, capa LLM
+frontend/panel/  Panel Admin (Vite + React + TS + Tailwind), proxy /api → backend
+frontend/reference/  Prototipo de UI original (solo referencia de diseño)
+docs/            PDFs de arquitectura
+```
+
+## Setup frontend (panel)
+
+```bash
+cd frontend/panel
+npm install
+npm run dev     # http://localhost:5173 (requiere backend en :8000)
 ```
 
 ## Setup backend
@@ -49,7 +58,7 @@ Se usa el primero configurado; si falla, se intenta el siguiente.
 | Fase | Entregable | Estado |
 |---|---|---|
 | 0 | Fundaciones: repo, esquema multi-tenant, capa LLM | ✅ |
-| 1 | Panel Admin / Super-Configurator | ⬜ |
+| 1 | Panel Admin / Super-Configurator | ✅ |
 | 2 | CX Bot WhatsApp (Cloud API) | ⬜ |
 | 3 | Módulo médico: citas, resúmenes diarios | ⬜ |
 | 4 | Enjambre completo + Inteligencia Web | ⬜ |
