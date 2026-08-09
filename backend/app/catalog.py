@@ -212,7 +212,12 @@ async def import_catalog(db: Session, company: Company, website: str) -> dict:
 
         folder = MEDIA_DIR / str(company.id) / "catalog"
         imported = updated = with_image = 0
+        processed: set[str] = set()  # los APIs reales traen nombres duplicados
         for item in items:
+            key = item["name"].lower()
+            if key in processed:
+                continue
+            processed.add(key)
             item.setdefault("notes", "")
             filename = await _download_image(client, website, item.pop("image", ""), folder)
             image_path = f"/media/{company.id}/catalog/{filename}" if filename else ""

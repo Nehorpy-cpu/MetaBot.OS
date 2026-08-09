@@ -70,6 +70,39 @@ def test_import_catalog_downloads_real_images(monkeypatch, tmp_path):
     assert resp2.json()["updated"] == 3
 
 
+def test_import_dedupes_names_within_batch(monkeypatch, tmp_path):
+    """Regresión de producción: el API de arfagi trae nombres duplicados
+    (kits distintos, mismo nombre) y rompía la restricción única."""
+    html = ARFAGI_HTML.replace(
+        "{id:'s3',name:'Asad'",
+        "{id:'s4',name:'Miss Dior',brand:'Dior',salePrice:900000,inStock:true,image:''},{id:'s3',name:'Asad'",
+    )
+    company = _create_company("ecommerce", "Perfumería Dup")
+    cid = company["id"]
+    monkeypatch.setattr(catalog_engine, "MEDIA_DIR", tmp_path)
+
+    async def fake_get(self, url, **kwargs):
+        class R:
+            status_code = 200
+            headers = {"content-type": "image/jpeg"}
+            content = b"img"
+            text = html
+
+            def raise_for_status(self):
+                pass
+
+        return R()
+
+    import httpx
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    resp = client.post(f"/api/companies/{cid}/catalog/import", json={"website": "https://x.com"})
+    assert resp.status_code == 200
+    products = client.get(f"/api/companies/{cid}/products").json()
+    names = [p["name"] for p in products]
+    assert names.count("Miss Dior") == 1  # se queda el primero, sin explotar
+
+
 def test_chat_search_catalog_attaches_real_photos(monkeypatch, tmp_path):
     company = _create_company("ecommerce", "Perfumería Fotos")
     cid = company["id"]
