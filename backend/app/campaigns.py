@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .imagegen import ImageGenError, generate_image
 from .llm import complete
-from .models import Agent, Campaign, Company, Report
+from .models import Agent, Campaign, Company, Product, Report
 
 MEDIA_DIR = Path(__file__).resolve().parents[1] / "media"
 FORMATS = {"carousel", "single", "video_script"}
@@ -152,8 +152,31 @@ async def build_campaign(
         for i, c in enumerate(cards_json[:n_cards])
     ]
 
-    # 3) Estudio Visual: una imagen por tarjeta (no aplica a guion de video)
-    if format != "video_script":
+    # 3) Imágenes. REGLA: si el negocio tiene catálogo con fotos reales,
+    # las tarjetas usan SOLO fotos reales (nunca se genera un producto).
+    products_with_photo = (
+        db.query(Product)
+        .filter(Product.company_id == company.id, Product.active, Product.image_path != "")
+        .all()
+    )
+    if format != "video_script" and products_with_photo:
+        def _match(card: dict) -> Product | None:
+            text = f"{card['headline']} {card['copy']}".lower()
+            for p in products_with_photo:
+                if p.name.lower() in text or (p.brand and len(p.brand) > 2 and p.brand.lower() in text):
+                    return p
+            return None
+
+        pool = [p for p in products_with_photo if p.in_stock] or products_with_photo
+        rotation = 0
+        for card in cards:
+            product = _match(card)
+            if not product:
+                product = pool[rotation % len(pool)]
+                rotation += 1
+            card["image_path"] = product.image_path
+            card["image_prompt"] = f"FOTO REAL del catálogo: {product.name} ({product.brand})"
+    elif format != "video_script":
         try:
             products = json.loads(company.profile or "{}").get("products") or []
         except json.JSONDecodeError:

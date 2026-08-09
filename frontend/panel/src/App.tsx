@@ -5,9 +5,10 @@ import {
   Send, ShieldCheck, Sliders, Smartphone, Sparkles, Stethoscope, Users, Video, Wand2, X, Zap,
 } from "lucide-react";
 import {
-  api, campaignApi, chatApi, creativeApi, intelApi, serviceApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
+  api, campaignApi, catalogApi, chatApi, creativeApi, intelApi, serviceApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
   type Campaign, type ChatMessage, type Company, type Competitor, type Conversation, type Creative, type DailySummary,
-  type DashboardData, type Doctor, type Finding, type PromptSuggestion, type Report, type Service, type WaStatus, STATUS_ES,
+  type DashboardData, type Doctor, type Finding, type Product, type PromptSuggestion, type Report, type Service,
+  type ServiceSuggestion, type WaStatus, STATUS_ES,
 } from "./api";
 
 const AGENT_ICONS: Record<string, typeof Command> = {
@@ -514,6 +515,11 @@ function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
 function ServicesView({ company }: { company: Company }) {
   const [services, setServices] = useState<Service[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [suggestions, setSuggestions] = useState<ServiceSuggestion[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [catalogUrl, setCatalogUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
   const [form, setForm] = useState({ name: "", category: "", price_gs: 0, duration_min: 30 });
   const [selDoctors, setSelDoctors] = useState<number[]>([]);
   const [error, setError] = useState("");
@@ -521,8 +527,36 @@ function ServicesView({ company }: { company: Company }) {
   const load = useCallback(() => {
     serviceApi.list(company.id).then(setServices).catch(() => setServices([]));
     api.listDoctors(company.id).then(setDoctors).catch(() => setDoctors([]));
+    serviceApi.suggestions(company.id).then(setSuggestions).catch(() => setSuggestions([]));
+    catalogApi.listProducts(company.id).then(setProducts).catch(() => setProducts([]));
   }, [company.id]);
   useEffect(load, [load]);
+
+  const acceptSuggestion = async (s: ServiceSuggestion) => {
+    try {
+      await serviceApi.create(company.id, {
+        name: s.name, category: s.category, price_gs: s.typical_price_gs,
+        duration_min: s.duration_min, doctor_ids: [],
+      });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    }
+  };
+
+  const importCatalog = async () => {
+    setImporting(true);
+    setImportMsg("");
+    try {
+      const r = await catalogApi.importFrom(company.id, catalogUrl.trim());
+      setImportMsg(`Importados ${r.imported} nuevos, ${r.updated} actualizados, ${r.with_image} con foto real (${r.method}).`);
+      load();
+    } catch (err) {
+      setImportMsg(err instanceof Error ? err.message : "Error");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -545,6 +579,22 @@ function ServicesView({ company }: { company: Company }) {
           El CX Bot usa esta base para responder precios exactos y derivar al profesional correcto. Precio 0 = "consultar".
         </p>
       </div>
+
+      {suggestions.length > 0 && (
+        <div className={`${card} p-4 space-y-2`}>
+          <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
+            Sugeridos para tu rubro (cargados por empresas similares — tocá para agregar)
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {suggestions.map((s) => (
+              <button key={s.name} onClick={() => acceptSuggestion(s)}
+                className="text-xs bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 px-3 py-1.5 rounded-lg">
+                + {s.name}{s.typical_price_gs ? ` (₲ ${s.typical_price_gs.toLocaleString("es-PY")} típico)` : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <form onSubmit={submit} className={`${card} p-5 grid grid-cols-1 md:grid-cols-5 gap-3 items-end`}>
         <div className="md:col-span-2">
@@ -611,6 +661,40 @@ function ServicesView({ company }: { company: Company }) {
             {!services.length && <tr><td colSpan={6} className="py-8 text-center text-zinc-600 text-xs">Sin servicios cargados.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div className={`${card} p-5 space-y-4`}>
+        <div>
+          <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">Catálogo real ({products.length} productos)</h3>
+          <p className="text-xs text-zinc-500 mt-1">
+            Importado de la web del negocio con FOTOS REALES. El bot las envía por WhatsApp y las campañas las usan en vez de generar imágenes.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <input className={input} placeholder="https://tu-tienda.com (vacío = web del perfil)" value={catalogUrl}
+            onChange={(e) => setCatalogUrl(e.target.value)} />
+          <button onClick={importCatalog} disabled={importing} className={btnPrimary}>
+            {importing ? <RefreshCw className="animate-spin" size={15} /> : <Globe2 size={15} />} Importar catálogo
+          </button>
+        </div>
+        {importMsg && <p className="text-xs text-cyan-300">{importMsg}</p>}
+        {products.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {products.slice(0, 18).map((p) => (
+              <div key={p.id} className="bg-white/[0.02] border border-white/5 rounded-xl overflow-hidden">
+                {p.image_path ? (
+                  <img src={p.image_path} alt={p.name} className="w-full aspect-square object-cover" />
+                ) : (
+                  <div className="w-full aspect-square flex items-center justify-center text-zinc-700 text-[10px]">sin foto</div>
+                )}
+                <div className="p-2">
+                  <p className="text-[11px] font-bold text-zinc-200 truncate">{p.name}</p>
+                  <p className="text-[10px] text-zinc-500">{p.brand} · {p.price_gs ? `₲ ${p.price_gs.toLocaleString("es-PY")}` : "consultar"}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

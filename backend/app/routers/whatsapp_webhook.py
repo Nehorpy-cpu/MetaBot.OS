@@ -91,6 +91,10 @@ async def receive(request: Request, db: Session = Depends(get_db)):
                     logger.error("LLM caído para company %s: %s", company.id, exc)
                     continue
                 reply = outcome.get("reply")
+                for item in (outcome.get("media") or [])[:5]:
+                    await whatsapp.send_image(
+                        phone_number_id, wa_from, item.get("path", ""), item.get("caption", "")
+                    )
                 if reply:
                     send_result = await whatsapp.send_text(phone_number_id, wa_from, reply)
                     results.append({"to": wa_from, "company_id": company.id, "send": send_result})

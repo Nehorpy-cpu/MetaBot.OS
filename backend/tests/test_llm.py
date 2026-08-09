@@ -15,4 +15,4 @@ def test_provider_order_is_fallback_chain():
     from app.config import LLM_PROVIDERS
 
     names = [p["name"] for p in LLM_PROVIDERS]
-    assert names == ["nvidia", "groq", "openrouter"]
+    assert names == ["nvidia", "groq", "openrouter", "gemini"]

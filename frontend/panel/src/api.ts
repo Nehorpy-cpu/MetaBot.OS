@@ -274,7 +274,38 @@ export interface Service {
   doctors: { id: number; name: string }[];
 }
 
+export interface Product {
+  id: number;
+  name: string;
+  brand: string;
+  category: string;
+  gender: string;
+  price_gs: number;
+  in_stock: boolean;
+  image_path: string;
+  active: boolean;
+}
+
+export interface ServiceSuggestion {
+  name: string;
+  category: string;
+  typical_price_gs: number;
+  duration_min: number;
+  used_by: number;
+}
+
+export const catalogApi = {
+  importFrom: (companyId: number, website: string) =>
+    request<{ method: string; imported: number; updated: number; with_image: number }>(
+      `/companies/${companyId}/catalog/import`,
+      { method: "POST", body: JSON.stringify({ website }) }
+    ),
+  listProducts: (companyId: number) => request<Product[]>(`/companies/${companyId}/products`),
+};
+
 export const serviceApi = {
+  suggestions: (companyId: number) =>
+    request<ServiceSuggestion[]>(`/companies/${companyId}/services/suggestions`),
   list: (companyId: number) => request<Service[]>(`/companies/${companyId}/services`),
   create: (companyId: number, data: { name: string; category: string; price_gs: number; duration_min: number; doctor_ids: number[] }) =>
     request<Service>(`/companies/${companyId}/services`, { method: "POST", body: JSON.stringify(data) }),

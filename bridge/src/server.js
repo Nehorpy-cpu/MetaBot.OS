@@ -132,15 +132,28 @@ async function handleIncoming(companyId, session, msg) {
     return;
   }
   const data = await resp.json();
-  if (!data.reply) return;
+  if (!data.reply && !(data.media || []).length) return;
 
   // Toque humano: presencia "escribiendo" proporcional al largo del texto
   await session.sock.presenceSubscribe(jid);
   await session.sock.sendPresenceUpdate("composing", jid);
-  const typingMs = Math.min(1200 + data.reply.length * 25, 6000);
+  const typingMs = Math.min(1200 + (data.reply || "").length * 25, 6000);
   await new Promise((r) => setTimeout(r, typingMs));
   await session.sock.sendPresenceUpdate("paused", jid);
-  await session.sock.sendMessage(jid, { text: data.reply });
+
+  // Fotos reales del catálogo (con precio en el caption), luego el texto
+  for (const item of (data.media || []).slice(0, 5)) {
+    try {
+      await session.sock.sendMessage(jid, {
+        image: { url: `${BACKEND_URL}${item.path}` },
+        caption: item.caption || "",
+      });
+      await new Promise((r) => setTimeout(r, 800));
+    } catch (err) {
+      logger.error({ err: String(err) }, "no se pudo enviar imagen de catálogo");
+    }
+  }
+  if (data.reply) await session.sock.sendMessage(jid, { text: data.reply });
 }
 
 // ---- API HTTP del bridge (la consume el backend) ----

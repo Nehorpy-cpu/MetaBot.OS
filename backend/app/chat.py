@@ -26,6 +26,7 @@ from .models import (
     DoctorService,
     GlossaryTerm,
     Message,
+    Product,
     Service,
 )
 
@@ -78,6 +79,21 @@ def _tools_for(company: Company) -> list[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {"category": {"type": "string", "description": "Filtrar por categoría (opcional)"}},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_catalog",
+                "description": "Busca productos REALES del catálogo (nombre, marca, categoría o género) con precio exacto y foto real. Al usarla, las fotos de los productos encontrados se envían automáticamente al cliente.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Qué busca el cliente (ej. 'perfume dulce mujer', 'Dior')"},
+                        "max_results": {"type": "integer", "description": "Máx resultados (default 3)"},
+                    },
+                    "required": ["query"],
                 },
             },
         },
@@ -142,8 +158,38 @@ def _tools_for(company: Company) -> list[dict]:
 
 
 def _execute_tool(
-    name: str, args: dict, db: Session, company: Company, conversation: Conversation
+    name: str, args: dict, db: Session, company: Company, conversation: Conversation,
+    media_out: list | None = None,
 ) -> dict:
+    if name == "search_catalog":
+        query = str(args.get("query", "")).strip().lower()
+        limit = min(int(args.get("max_results") or 3), 5)
+        words = [w for w in re.split(r"\W+", query) if len(w) > 2]
+        products = (
+            db.query(Product)
+            .filter(Product.company_id == company.id, Product.active)
+            .all()
+        )
+        def score(p: Product) -> int:
+            hay = f"{p.name} {p.brand} {p.category} {p.gender} {p.notes}".lower()
+            return sum(1 for w in words if w in hay)
+        ranked = sorted((p for p in products if score(p) > 0), key=score, reverse=True)[:limit]
+        if not ranked and products:
+            ranked = [p for p in products if p.in_stock][:limit]
+        out = []
+        for p in ranked:
+            out.append(
+                {
+                    "name": p.name,
+                    "brand": p.brand,
+                    "price": _fmt_gs(p.price_gs),
+                    "in_stock": p.in_stock,
+                    "photo_attached": bool(p.image_path),
+                }
+            )
+            if p.image_path and media_out is not None:
+                media_out.append({"path": p.image_path, "caption": f"{p.name} — {_fmt_gs(p.price_gs)}"})
+        return {"products": out} if out else {"products": [], "note": "Sin coincidencias en el catálogo."}
     if name == "escalate_to_human":
         conversation.status = "needs_human"
         db.commit()
@@ -370,6 +416,7 @@ async def handle_incoming(
 
     tools = _tools_for(company)
     actions: list[dict] = []
+    media: list[dict] = []  # fotos reales de catálogo a enviar al cliente
     reply_text = ""
     booking_blocked = False  # tras un choque de agenda, no se agenda más en este turno
     for _ in range(MAX_TOOL_ROUNDS):
@@ -401,7 +448,7 @@ async def handle_incoming(
                     )
                 }
             else:
-                result = _execute_tool(name, args, db, company, conversation)
+                result = _execute_tool(name, args, db, company, conversation, media_out=media)
                 if name == "book_appointment" and "ocupado" in result.get("error", ""):
                     booking_blocked = True
             actions.append({"tool": name, "args": args, "result": result})
@@ -438,4 +485,5 @@ async def handle_incoming(
         "reply": reply_text,
         "status": conversation.status,
         "actions": actions,
+        "media": media[:5],
     }

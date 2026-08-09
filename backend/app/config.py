@@ -45,4 +45,11 @@ LLM_PROVIDERS = [
         "api_key": os.environ.get("OPENROUTER_API_KEY", ""),
         "default_model": "meta-llama/llama-3.3-70b-instruct:free",
     },
+    {
+        # Google AI Studio (free tier) vía endpoint OpenAI-compatible
+        "name": "gemini",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "api_key": os.environ.get("GOOGLE_API_KEY", ""),
+        "default_model": "gemini-2.5-flash",
+    },
 ]

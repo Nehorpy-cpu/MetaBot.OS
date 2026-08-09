@@ -92,6 +92,32 @@ class Appointment(Base):
     doctor: Mapped[Doctor] = relationship(back_populates="appointments")
 
 
+class Product(Base):
+    """Producto del catálogo real, importado de la web del negocio.
+
+    La imagen es SIEMPRE una foto real descargada del sitio (o vacía):
+    los agentes nunca generan imágenes de producto.
+    """
+
+    __tablename__ = "products"
+    __table_args__ = (UniqueConstraint("company_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    brand: Mapped[str] = mapped_column(String(100), default="")
+    category: Mapped[str] = mapped_column(String(100), default="")
+    gender: Mapped[str] = mapped_column(String(30), default="")
+    price_gs: Mapped[int] = mapped_column(default=0)
+    in_stock: Mapped[bool] = mapped_column(default=True)
+    image_url: Mapped[str] = mapped_column(String(500), default="")   # origen
+    image_path: Mapped[str] = mapped_column(String(300), default="")  # copia local real
+    notes: Mapped[str] = mapped_column(Text, default="")  # notas olfativas / ficha
+    source_url: Mapped[str] = mapped_column(String(500), default="")
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class Service(Base):
     """Servicio, estudio o prestación que ofrece el negocio (ecografías,
     limpiezas dentales, o cualquier servicio de cualquier rubro).
