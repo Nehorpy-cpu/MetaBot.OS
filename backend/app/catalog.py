@@ -112,6 +112,66 @@ async def _llm_extract_products(text: str) -> list[dict]:
     ]
 
 
+def _strip_html(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text or "")).strip()
+
+
+def _map_api_item(item: dict) -> dict | None:
+    """Mapea un producto de un API JSON a nuestro esquema (solo campos reales)."""
+    name = str(item.get("name") or item.get("nombre") or item.get("title") or "").strip()
+    if not name:
+        return None
+    price_raw = item.get("salePrice") or item.get("price") or item.get("precio") or 0
+    try:
+        price = int(float(price_raw))
+    except (TypeError, ValueError):
+        price = 0
+    stock = item.get("inStock", item.get("in_stock", item.get("stock", True)))
+    notes = " | ".join(
+        _strip_html(str(item.get(k, ""))) for k in ("shortDescription", "description", "descripcion") if item.get(k)
+    )[:1500]
+    return {
+        "name": name[:200],
+        "brand": str(item.get("brand") or item.get("marca") or "")[:100],
+        "category": str(item.get("category") or item.get("categoria") or "")[:100],
+        "gender": str(item.get("gender") or item.get("genero") or "")[:30],
+        "price_gs": price,
+        "in_stock": bool(stock) if not isinstance(stock, (int, float)) or isinstance(stock, bool) else stock > 0,
+        "image": str(item.get("image") or item.get("imageUrl") or item.get("imagen") or ""),
+        "notes": notes,
+    }
+
+
+async def _discover_api_products(client: httpx.AsyncClient, html: str, base_url: str) -> list[dict]:
+    """Busca en el HTML endpoints JSON de catálogo (api/catalog, products…)
+    y devuelve los productos REALES que expongan."""
+    from urllib.parse import urljoin
+
+    candidates = []
+    for ref in re.findall(r'["\'](https?://[^"\'\s]+|/[^"\'\s]+)["\']', html):
+        if re.search(r"(catalog|products?)", ref, re.I) and not re.search(
+            r"\.(css|js|png|jpe?g|svg|webp|ico|html?)([?#]|$)", ref, re.I
+        ):
+            url = urljoin(base_url, ref)
+            if url not in candidates:
+                candidates.append(url)
+    for url in candidates[:5]:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200 or "json" not in resp.headers.get("content-type", ""):
+                continue
+            data = resp.json()
+            items = data if isinstance(data, list) else (
+                data.get("items") or data.get("products") or data.get("data") or []
+            )
+            mapped = [m for i in items if isinstance(i, dict) and (m := _map_api_item(i))]
+            if len(mapped) >= 3:
+                return mapped
+        except (httpx.HTTPError, ValueError):
+            continue
+    return []
+
+
 async def _download_image(client: httpx.AsyncClient, base_url: str, image_ref: str, folder: Path) -> str:
     if not image_ref:
         return ""
@@ -138,8 +198,11 @@ async def import_catalog(db: Session, company: Company, website: str) -> dict:
         resp.raise_for_status()
         html = resp.text
 
-        items = _parse_js_products(html)
-        method = "estructurado"
+        items = await _discover_api_products(client, html, website)
+        method = "api"
+        if not items:
+            items = _parse_js_products(html)
+            method = "estructurado"
         if len(items) < 3:
             text = re.sub(r"<[^>]+>", " ", re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I))
             items = await _llm_extract_products(re.sub(r"\s+", " ", text))
@@ -150,6 +213,7 @@ async def import_catalog(db: Session, company: Company, website: str) -> dict:
         folder = MEDIA_DIR / str(company.id) / "catalog"
         imported = updated = with_image = 0
         for item in items:
+            item.setdefault("notes", "")
             filename = await _download_image(client, website, item.pop("image", ""), folder)
             image_path = f"/media/{company.id}/catalog/{filename}" if filename else ""
             if image_path:
