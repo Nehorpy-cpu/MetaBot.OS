@@ -59,19 +59,29 @@ def upgrade() -> None:
     with op.batch_alter_table('channel_sessions', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_channel_sessions_company_id'), ['company_id'], unique=False)
 
+    # 1) Columnas nuevas. El backfill va ANTES de la clave foránea: con
+    # filas ya cargadas, company_id=0 no apunta a ninguna empresa y la FK
+    # fallaría (lo detectó producción).
     with op.batch_alter_table('messages', schema=None) as batch_op:
         batch_op.add_column(sa.Column('company_id', sa.Integer(), nullable=False, server_default='0'))
         batch_op.add_column(sa.Column('external_id', sa.String(length=120), nullable=True))
-        batch_op.create_index(batch_op.f('ix_messages_company_id'), ['company_id'], unique=False)
-        batch_op.create_unique_constraint('uq_message_external_id', ['company_id', 'external_id'])
-        batch_op.create_foreign_key('fk_messages_company', 'companies', ['company_id'], ['id'])
 
-    # Backfill: cada mensaje hereda el company_id de su conversación.
+    # 2) Cada mensaje hereda el company_id de su conversación.
     op.execute(
         "UPDATE messages SET company_id = ("
         "SELECT company_id FROM conversations WHERE conversations.id = messages.conversation_id"
         ") WHERE company_id = 0 OR company_id IS NULL"
     )
+    # Mensajes huérfanos (sin conversación): se eliminan, no se pueden atribuir.
+    op.execute(
+        "DELETE FROM messages WHERE conversation_id NOT IN (SELECT id FROM conversations)"
+    )
+
+    # 3) Recién ahora, índices y restricciones.
+    with op.batch_alter_table('messages', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_messages_company_id'), ['company_id'], unique=False)
+        batch_op.create_unique_constraint('uq_message_external_id', ['company_id', 'external_id'])
+        batch_op.create_foreign_key('fk_messages_company', 'companies', ['company_id'], ['id'])
     # ### end Alembic commands ###
 
 
