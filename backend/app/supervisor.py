@@ -242,15 +242,43 @@ def should_supervise(
     return True, efectivo, degradacion
 
 
-def _prompt(company: Company, trigger: Trigger, cliente: str, respuesta: str, actions: list[dict]) -> list[dict]:
+def _prompt(
+    company: Company, trigger: Trigger, cliente: str, respuesta: str,
+    actions: list[dict], modo: str = "inline",
+) -> list[dict]:
     resumen = "; ".join(
         f"{a.get('tool')}→{'ok' if (a.get('result') or {}).get('ok') else (a.get('result') or {}).get('error', 'sin datos')}"
         for a in actions
     ) or "no usó herramientas"
+    # En shadow el mensaje YA se envió. Pedirle una reescritura sería pedirle
+    # algo que vamos a tirar; lo único aprovechable es la directiva.
+    if modo == "inline":
+        acciones = (
+            '{"action": "keep|rewrite|directive|escalate", "reply": "...", "directive": "...", "reason": "..."}\n'
+            "- keep: la respuesta está bien, no la toques.\n"
+            "- rewrite: devolvé en 'reply' el mensaje mejorado, listo para enviar tal cual.\n"
+            "- directive: la respuesta se envía igual, pero en 'directive' dejás una "
+            "instrucción breve para que el agente maneje mejor el PRÓXIMO mensaje.\n"
+            "- escalate: esto necesita una persona; en 'reply' va qué se le dice al cliente mientras espera.\n"
+        )
+        contexto = "Estás a tiempo de cambiar la respuesta antes de que salga."
+    else:
+        acciones = (
+            '{"action": "keep|directive", "directive": "...", "reason": "..."}\n'
+            "- keep: no hay nada accionable para el próximo mensaje.\n"
+            "- directive: en 'directive' dejás UNA instrucción breve y concreta para que "
+            "el agente maneje mejor el próximo mensaje de este mismo cliente.\n"
+        )
+        contexto = (
+            "IMPORTANTE: el mensaje YA SE ENVIÓ al cliente. No podés reescribirlo ni "
+            "retirarlo. Lo único que sirve es dejar una instrucción para el próximo "
+            "mensaje de esta conversación; si no se te ocurre ninguna útil, poné keep."
+        )
     sistema = (
         f"Sos el supervisor de calidad de {company.name} ({company.industry or company.niche}). "
         "Un agente de atención ya le respondió a un cliente por WhatsApp y detectamos "
         f"un problema: {trigger.reason}\n\n"
+        f"{contexto}\n\n"
         "Tu trabajo es decidir qué hacer, con criterio comercial y humano. "
         "NO tenés herramientas: no podés consultar el catálogo, la agenda ni la base. "
         "Solo podés trabajar con lo que ves acá.\n\n"
@@ -258,13 +286,8 @@ def _prompt(company: Company, trigger: Trigger, cliente: str, respuesta: str, ac
         "estén literalmente en la respuesta del agente o en el resultado de las herramientas. "
         "Si te falta un dato, no lo supongas: pedí que lo pregunte o escalá.\n\n"
         "Respondé SOLO un JSON con esta forma:\n"
-        '{"action": "keep|rewrite|directive|escalate", "reply": "...", "directive": "...", "reason": "..."}\n'
-        "- keep: la respuesta está bien, no la toques.\n"
-        "- rewrite: devolvé en 'reply' el mensaje mejorado, listo para enviar tal cual.\n"
-        "- directive: la respuesta se envía igual, pero en 'directive' dejás una "
-        "instrucción breve para que el agente maneje mejor el PRÓXIMO mensaje.\n"
-        "- escalate: esto necesita una persona; en 'reply' va qué se le dice al cliente mientras espera.\n"
-        "'reason' es para nosotros, no para el cliente: una frase."
+        + acciones
+        + "'reason' es para nosotros, no para el cliente: una frase."
     )
     usuario = (
         f"Último mensaje del cliente:\n{cliente[:1500]}\n\n"
@@ -392,7 +415,7 @@ async def ejecutar(
     fuentes = json.dumps([a.get("result") for a in actions], ensure_ascii=False)
     empezo = time.monotonic()
     salida = await chat_raw(
-        _prompt(company, trigger, cliente, respuesta, actions),
+        _prompt(company, trigger, cliente, respuesta, actions, modo),
         tools=None,  # asesor sin herramientas: no puede reentrar al motor
         model=modelo_para(company, agentes.get(trigger.agent_slug), agentes.get("cx")),
         temperature=0.2,

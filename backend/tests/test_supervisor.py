@@ -502,6 +502,20 @@ async def test_el_trabajo_encolado_deja_la_directiva(monkeypatch):
         db.close()
 
 
+def test_en_shadow_no_se_le_pide_una_reescritura_que_se_va_a_tirar():
+    """Observado en producción: en shadow proponía `rewrite` —que shadow
+    descarta— y no dejaba directiva, que era lo único aprovechable."""
+    trigger = supervisor._POR_KEY["catalog_miss"]
+    empresa = _empresa(industry="perfumería")
+
+    shadow = supervisor._prompt(empresa, trigger, "hola", "no hay", [], "shadow")[0]["content"]
+    assert "rewrite" not in shadow
+    assert "YA SE ENVIÓ" in shadow
+
+    inline = supervisor._prompt(empresa, trigger, "hola", "no hay", [], "inline")[0]["content"]
+    assert "rewrite" in inline
+
+
 def test_el_modo_del_disparador_es_un_techo():
     """Una empresa en `inline` no vuelve inline a todos los disparadores.
 
