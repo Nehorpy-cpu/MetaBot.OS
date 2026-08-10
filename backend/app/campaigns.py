@@ -58,6 +58,21 @@ def _json_of(raw: str) -> dict | list | None:
         return None
 
 
+def _as_list(parsed, *keys: str) -> list:
+    """Normaliza la salida JSON a lista. El modo json_object fuerza objeto en
+    la raíz, así que los modelos devuelven {"cards": [...]} o un item suelto."""
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        for key in keys:
+            if isinstance(parsed.get(key), list):
+                return parsed[key]
+        if len(parsed) == 1 and isinstance(next(iter(parsed.values())), list):
+            return next(iter(parsed.values()))
+        return [parsed]  # un solo item como objeto suelto
+    return []
+
+
 async def _ask(
     db: Session, company: Company, slug: str, prompt: str, max_tokens: int = 1200,
     json_mode: bool = False,
@@ -145,8 +160,9 @@ async def build_campaign(
             max_tokens=1600,
             json_mode=True,
         )
-    cards_json = _json_of(creative_raw)
-    if not isinstance(cards_json, list) or not cards_json:
+    cards_json = _as_list(_json_of(creative_raw), "cards", "tarjetas", "escenas", "items")
+    cards_json = [c for c in cards_json if isinstance(c, dict) and (c.get("headline") or c.get("copy"))]
+    if not cards_json:
         raise ValueError(f"El Creativo no devolvió tarjetas válidas: {creative_raw[:200]}")
     cards = [
         {
@@ -208,8 +224,9 @@ async def build_campaign(
             max_tokens=800,
             json_mode=True,
         )
-        prompts = _json_of(prompts_raw)
-        if isinstance(prompts, list):
+        prompts = _as_list(_json_of(prompts_raw), "prompts", "images", "items")
+        prompts = [p for p in prompts if isinstance(p, str) and p.strip()]
+        if prompts:
             folder = MEDIA_DIR / str(company.id)
             folder.mkdir(parents=True, exist_ok=True)
             for card, img_prompt in zip(cards, prompts):

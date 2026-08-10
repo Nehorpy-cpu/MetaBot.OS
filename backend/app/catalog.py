@@ -14,6 +14,8 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import httpx
+
+from .netguard import safe_client
 from sqlalchemy.orm import Session
 
 from .llm import complete
@@ -190,8 +192,8 @@ async def _download_image(client: httpx.AsyncClient, base_url: str, image_ref: s
 
 
 async def import_catalog(db: Session, company: Company, website: str) -> dict:
-    async with httpx.AsyncClient(
-        timeout=40, follow_redirects=True,
+    async with safe_client(
+        timeout=40,
         headers={"User-Agent": "Mozilla/5.0 (MetaBot.OS catalog)"},
     ) as client:
         resp = await client.get(website)

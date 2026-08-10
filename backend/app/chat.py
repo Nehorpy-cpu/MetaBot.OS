@@ -10,8 +10,10 @@ Diseño:
 """
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solapes
 
 from sqlalchemy.orm import Session
 
@@ -268,17 +270,28 @@ def _execute_tool(
                     f"Hoy es {now_local.strftime('%d/%m/%Y')}; usá el año correcto y reintentá."
                 )
             }
+        # Choque por SOLAPAMIENTO (citas de 30 min), no solo igualdad exacta:
+        # una cita nueva [when, when+30) no debe pisar a otra existente.
+        slot = timedelta(minutes=DEFAULT_SLOT_MIN)
+        window_lo = when - slot
+        window_hi = when + slot
         clash = (
             db.query(Appointment)
             .filter(
                 Appointment.doctor_id == doctor.id,
-                Appointment.scheduled_at == when,
                 Appointment.status.notin_(["cancelled"]),
+                Appointment.scheduled_at > window_lo,
+                Appointment.scheduled_at < window_hi,
             )
             .first()
         )
         if clash:
-            return {"error": f"Ese horario ya está ocupado ({when.strftime('%H:%M')}). Ofrecé otro."}
+            return {
+                "error": (
+                    f"Ese horario se solapa con otra cita ({clash.scheduled_at.strftime('%H:%M')}). "
+                    "Ofrecé un horario que no choque."
+                )
+            }
         # El teléfono debe ser real: si el modelo manda placeholders
         # ("null", "your phone number", etc.) usamos el de la conversación.
         phone = str(args.get("patient_phone") or "").strip()
@@ -449,7 +462,7 @@ async def handle_incoming(
                 }
             else:
                 result = _execute_tool(name, args, db, company, conversation, media_out=media)
-                if name == "book_appointment" and "ocupado" in result.get("error", ""):
+                if name == "book_appointment" and "solapa" in result.get("error", ""):
                     booking_blocked = True
             actions.append({"tool": name, "args": args, "result": result})
             messages.append(

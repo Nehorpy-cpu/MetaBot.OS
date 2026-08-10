@@ -4,7 +4,7 @@ Todo se calcula acá de forma determinística (SQL); el LLM solo redacta.
 Así los números del informe nunca son inventados.
 """
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,9 @@ from .models import Appointment, Company, Conversation, Doctor, Message
 
 
 def compute_stats(db: Session, company: Company, days: int = 7) -> dict:
-    since = datetime.now() - timedelta(days=days)
+    # created_at se persiste como UTC (utcnow). Comparar en UTC naive, no en
+    # hora local, o la ventana queda corrida por el offset (Asunción = UTC-3).
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     appts = (
         db.query(Appointment)

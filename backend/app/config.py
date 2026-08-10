@@ -14,6 +14,11 @@ if _env_file.exists():
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./metabot.db")
 TIMEZONE = os.environ.get("TIMEZONE", "America/Asuncion")
 
+# Token de acceso al panel/API. Sin él, /api queda protegido y nadie entra.
+# En producción DEBE estar definido; si falta, el backend arranca en modo
+# "cerrado" (rechaza todo /api salvo health y webhooks) para no exponer datos.
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+
 # WhatsApp Cloud API (una app de Meta puede servir varios números;
 # cada número/tenant se identifica por su phone_number_id)
 WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")

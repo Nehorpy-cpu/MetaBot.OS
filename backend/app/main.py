@@ -1,9 +1,12 @@
+import hmac
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .config import ADMIN_TOKEN
 from .db import Base, engine
 from .llm import available_providers
 from .routers import agents, bridge, campaigns, catalog, chat, companies, creatives, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
@@ -14,6 +17,28 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="MetaBot.OS", version="0.11.0")
 for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router):
     app.include_router(router, prefix="/api")
+
+
+# Rutas /api que NO requieren token de admin: salud y webhooks entrantes
+# (estos validan su propia firma/secreto de Meta o del bridge).
+_PUBLIC_API_PREFIXES = ("/api/health", "/api/webhooks/")
+
+
+@app.middleware("http")
+async def require_admin_token(request: Request, call_next):
+    """Autenticación transversal: todo /api exige Authorization: Bearer <ADMIN_TOKEN>,
+    salvo salud y webhooks. Cierra el acceso público multi-tenant (BOLA/IDOR)."""
+    path = request.url.path
+    if path.startswith("/api") and not path.startswith(_PUBLIC_API_PREFIXES):
+        if not ADMIN_TOKEN:
+            return JSONResponse(
+                {"detail": "Servidor sin ADMIN_TOKEN configurado: API cerrada."}, status_code=503
+            )
+        header = request.headers.get("Authorization", "")
+        token = header[7:] if header.startswith("Bearer ") else ""
+        if not token or not hmac.compare_digest(token, ADMIN_TOKEN):
+            return JSONResponse({"detail": "No autorizado"}, status_code=401)
+    return await call_next(request)
 
 
 @app.on_event("startup")

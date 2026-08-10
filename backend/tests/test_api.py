@@ -1,6 +1,7 @@
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["ADMIN_TOKEN"] = "test-token-secreto"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import StaticPool, create_engine  # noqa: E402
@@ -19,7 +20,8 @@ db_module.SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_co
 from app.main import app  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
-client = TestClient(app)
+# Todos los tests van autenticados por defecto (el token va en cada request).
+client = TestClient(app, headers={"Authorization": "Bearer test-token-secreto"})
 
 
 def _create_company(vertical="medical", name="Clínica Test"):
@@ -32,6 +34,28 @@ def test_health():
     resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+def test_health_is_public():
+    """Health y webhooks no requieren token."""
+    resp = client.get("/api/health", headers={"Authorization": ""})
+    assert resp.status_code == 200
+
+
+def test_api_requires_token():
+    """Sin token, cualquier endpoint de datos responde 401 (cierra BOLA/IDOR)."""
+    noauth = TestClient(app)
+    assert noauth.get("/api/companies").status_code == 401
+    assert noauth.post("/api/companies", json={"name": "X", "vertical": "medical"}).status_code == 401
+    assert noauth.get("/api/companies/1/conversations").status_code == 401
+    # con token correcto, pasa
+    ok = noauth.get("/api/companies", headers={"Authorization": "Bearer test-token-secreto"})
+    assert ok.status_code == 200
+
+
+def test_api_rejects_wrong_token():
+    noauth = TestClient(app, headers={"Authorization": "Bearer token-equivocado"})
+    assert noauth.get("/api/companies").status_code == 401
 
 
 SWARM_SLUGS = {"ceo", "quant", "guard", "creative", "visual", "cx", "optimizer"}

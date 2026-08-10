@@ -7,10 +7,12 @@ a fallos y valores por defecto seguros.
 """
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
+
+from .netguard import safe_client
 from sqlalchemy.orm import Session
 
 from .analytics import compute_stats
@@ -99,7 +101,8 @@ async def run_guard_audit(
     Solo audita conversaciones sin hallazgo previo (no duplica trabajo).
     """
     guard = _agent(db, company, "guard")
-    since = datetime.now() - timedelta(days=days)
+    # created_at está en UTC: comparar en UTC naive, no en hora local.
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     audited_ids = {
         f.conversation_id
         for f in db.query(AuditFinding).filter(AuditFinding.company_id == company.id).all()
@@ -293,7 +296,7 @@ async def run_prompt_optimization(db: Session, company: Company) -> list[PromptS
 
 
 async def _fetch_page_text(url: str) -> str:
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with safe_client(timeout=30) as client:
         resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (MetaBot.OS scanner)"})
         resp.raise_for_status()
         html = resp.text
@@ -307,7 +310,7 @@ async def _fetch_site(url: str, max_internal: int = 3) -> str:
     """Portada + algunas páginas internas del mismo dominio (catálogo, etc.)."""
     from urllib.parse import urljoin, urlparse
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with safe_client(timeout=30) as client:
         resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (MetaBot.OS scanner)"})
         resp.raise_for_status()
         html = resp.text
@@ -326,7 +329,7 @@ async def _fetch_site(url: str, max_internal: int = 3) -> str:
     parts = [_to_text(html)[:5000]]
     for link in links[:max_internal]:
         try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            async with safe_client(timeout=20) as client:
                 sub = await client.get(link, headers={"User-Agent": "Mozilla/5.0 (MetaBot.OS scanner)"})
                 if sub.status_code == 200:
                     parts.append(f"[{link}] " + _to_text(sub.text)[:2500])

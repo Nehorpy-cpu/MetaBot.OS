@@ -77,16 +77,47 @@ export interface DailySummary {
   text: string;
 }
 
+const TOKEN_KEY = "metabot_token";
+
+export const auth = {
+  get: () => localStorage.getItem(TOKEN_KEY) ?? "",
+  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
+  clear: () => localStorage.removeItem(TOKEN_KEY),
+};
+
+// Callback que el App registra para reaccionar a un 401 (token inválido).
+let onUnauthorized: (() => void) | null = null;
+export const setUnauthorizedHandler = (fn: () => void) => {
+  onUnauthorized = fn;
+};
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = auth.get();
   const resp = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...options,
   });
+  if (resp.status === 401) {
+    auth.clear();
+    onUnauthorized?.();
+    throw new Error("Sesión no autorizada. Ingresá el token de acceso.");
+  }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail ?? `Error ${resp.status}`);
   }
   return resp.status === 204 ? (undefined as T) : resp.json();
+}
+
+/** Valida un token contra el backend (health está abierto; probamos /companies). */
+export async function validateToken(token: string): Promise<boolean> {
+  const resp = await fetch("/api/companies", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return resp.ok;
 }
 
 export const api = {

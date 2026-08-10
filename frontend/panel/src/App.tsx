@@ -5,7 +5,8 @@ import {
   Send, ShieldCheck, Sliders, Smartphone, Sparkles, Stethoscope, Users, Video, Wand2, X, Zap,
 } from "lucide-react";
 import {
-  api, campaignApi, catalogApi, chatApi, creativeApi, intelApi, serviceApi, waApi, type AgentDetail, type AgentSummary, type Appointment,
+  api, auth, campaignApi, catalogApi, chatApi, creativeApi, intelApi, serviceApi, setUnauthorizedHandler,
+  validateToken, waApi, type AgentDetail, type AgentSummary, type Appointment,
   type Campaign, type ChatMessage, type Company, type Competitor, type Conversation, type Creative, type DailySummary,
   type DashboardData, type Doctor, type Finding, type Product, type PromptSuggestion, type Report, type Service,
   type ServiceSuggestion, type WaStatus, STATUS_ES,
@@ -1269,7 +1270,52 @@ function ChatView({ companyId }: { companyId: number }) {
   );
 }
 
+function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChecking(true);
+    setError("");
+    try {
+      if (await validateToken(token.trim())) {
+        auth.set(token.trim());
+        onAuthed();
+      } else {
+        setError("Token incorrecto.");
+      }
+    } catch {
+      setError("No se pudo conectar con el servidor.");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#040609] flex items-center justify-center p-4 font-sans">
+      <form onSubmit={submit} className={`${card} p-8 w-full max-w-sm space-y-5`}>
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-500 flex items-center justify-center">
+            <Zap size={18} className="text-white fill-current" />
+          </div>
+          <span className="font-extrabold text-lg text-white">MetaBot<span className="text-cyan-400">.OS</span></span>
+        </div>
+        <p className="text-sm text-zinc-400">Ingresá el token de acceso al panel.</p>
+        <input type="password" className={input} placeholder="Token de acceso" value={token}
+          onChange={(e) => setToken(e.target.value)} autoFocus />
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+        <button type="submit" disabled={checking || !token.trim()} className={`${btnPrimary} w-full justify-center`}>
+          {checking ? "Verificando…" : "Entrar"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
+  const [authed, setAuthed] = useState(() => !!auth.get());
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services">("dashboard");
@@ -1277,6 +1323,11 @@ export default function App() {
   const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
+    setUnauthorizedHandler(() => setAuthed(false));
+  }, []);
+
+  useEffect(() => {
+    if (!authed) return;
     api.listCompanies()
       .then((list) => {
         setCompanies(list);
@@ -1284,7 +1335,9 @@ export default function App() {
       })
       .catch(() => setLoadError("No se pudo conectar con el backend (¿está corriendo uvicorn?)"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authed]);
+
+  if (!authed) return <LoginScreen onAuthed={() => setAuthed(true)} />;
 
   const active = companies.find((c) => c.id === activeId) ?? null;
 
@@ -1337,6 +1390,10 @@ export default function App() {
           {navBtn("studio", "Estudio Visual", Video)}
           {navBtn("agents", "Enjambre de Agentes", Bot)}
         </nav>
+        <div className="p-4 border-t border-white/5">
+          <button onClick={() => { auth.clear(); setAuthed(false); }}
+            className="w-full text-xs text-zinc-500 hover:text-zinc-300 py-2">Cerrar sesión</button>
+        </div>
       </aside>
 
       <main className="flex-1 h-screen overflow-y-auto">
