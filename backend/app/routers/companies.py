@@ -41,6 +41,7 @@ class CompanyOut(BaseModel):
     vertical: str
     niche: str
     industry: str
+    address: str
     wa_mode: str
     wa_phone_number_id: str
 
@@ -49,6 +50,7 @@ class CompanyOut(BaseModel):
 
 class CompanyUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    address: str | None = Field(default=None, max_length=300)
     wa_mode: str | None = Field(default=None, pattern="^(none|meta|qr)$")
     wa_phone_number_id: str | None = Field(default=None, max_length=50)
 

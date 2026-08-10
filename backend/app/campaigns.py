@@ -58,7 +58,10 @@ def _json_of(raw: str) -> dict | list | None:
         return None
 
 
-async def _ask(db: Session, company: Company, slug: str, prompt: str, max_tokens: int = 1200) -> str:
+async def _ask(
+    db: Session, company: Company, slug: str, prompt: str, max_tokens: int = 1200,
+    json_mode: bool = False,
+) -> str:
     agent = _agent(db, company, slug)
     system = agent.system_prompt if agent else ""
     return await complete(
@@ -66,14 +69,15 @@ async def _ask(db: Session, company: Company, slug: str, prompt: str, max_tokens
         model=agent.model if agent else None,
         temperature=agent.temperature if agent else 0.4,
         max_tokens=max_tokens,
+        json_mode=json_mode,
     )
 
 
 async def _ask_json(
     db: Session, company: Company, slug: str, prompt: str, max_tokens: int = 1200
 ) -> dict | list | None:
-    """Pide JSON con un reintento correctivo si el modelo no lo respeta."""
-    raw = await _ask(db, company, slug, prompt, max_tokens)
+    """Pide JSON en modo estructurado, con reintento correctivo si aún falla."""
+    raw = await _ask(db, company, slug, prompt, max_tokens, json_mode=True)
     parsed = _json_of(raw)
     if parsed is not None:
         return parsed
@@ -81,6 +85,7 @@ async def _ask_json(
         db, company, slug,
         prompt + "\n\nTU RESPUESTA ANTERIOR NO FUE JSON VÁLIDO. Respondé ÚNICAMENTE el JSON pedido, sin ningún texto adicional.",
         max_tokens,
+        json_mode=True,
     )
     return _json_of(raw)
 
@@ -128,6 +133,7 @@ async def build_campaign(
             '[{"headline": "ESCENA n — duración", "copy": "voz en off / texto en pantalla", '
             '"visual": "qué se ve en la escena"}]',
             max_tokens=1600,
+            json_mode=True,
         )
     else:
         creative_raw = await _ask(
@@ -137,6 +143,7 @@ async def build_campaign(
             'Respondé SOLO JSON: [{"headline": "título corto de la tarjeta", "copy": "texto '
             'persuasivo de máx 30 palabras, voseo"}]',
             max_tokens=1600,
+            json_mode=True,
         )
     cards_json = _json_of(creative_raw)
     if not isinstance(cards_json, list) or not cards_json:
@@ -199,6 +206,7 @@ async def build_campaign(
             "al tema de la campaña). "
             'Respondé SOLO JSON: ["prompt tarjeta 1", "prompt tarjeta 2", ...]',
             max_tokens=800,
+            json_mode=True,
         )
         prompts = _json_of(prompts_raw)
         if isinstance(prompts, list):

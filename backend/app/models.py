@@ -27,6 +27,7 @@ class Company(Base):
     vertical: Mapped[str] = mapped_column(String(20))
     niche: Mapped[str] = mapped_column(String(200), default="")
     industry: Mapped[str] = mapped_column(String(200), default="")
+    address: Mapped[str] = mapped_column(String(300), default="")  # para recordatorios de citas
     profile: Mapped[str] = mapped_column(Text, default="")  # JSON: productos, audiencia, tono
     # Canal de WhatsApp del tenant: "none" | "meta" (Cloud API) | "qr" (Baileys)
     wa_mode: Mapped[str] = mapped_column(String(10), default="none")

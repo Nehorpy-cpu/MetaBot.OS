@@ -27,6 +27,7 @@ async def chat_raw(
     # 120s: los modelos serverless de NIM pueden tardar ~1 min en arrancar
     # en frío; mejor esperar que caer en fallback innecesario.
     timeout: float = 120.0,
+    json_mode: bool = False,
 ) -> dict:
     """Devuelve el mensaje completo del asistente (puede incluir tool_calls)
     del primer proveedor que funcione."""
@@ -47,12 +48,23 @@ async def chat_raw(
             }
             if tools:
                 payload["tools"] = tools
+            if json_mode:
+                # Salida JSON forzada (OpenAI-compatible). Si el proveedor no
+                # lo soporta, se reintenta sin el parámetro más abajo.
+                payload["response_format"] = {"type": "json_object"}
             try:
                 resp = await client.post(
                     f"{p['base_url']}/chat/completions",
                     headers={"Authorization": f"Bearer {p['api_key']}"},
                     json=payload,
                 )
+                if json_mode and resp.status_code in (400, 422):
+                    payload.pop("response_format", None)
+                    resp = await client.post(
+                        f"{p['base_url']}/chat/completions",
+                        headers={"Authorization": f"Bearer {p['api_key']}"},
+                        json=payload,
+                    )
                 resp.raise_for_status()
                 return resp.json()["choices"][0]["message"]
             except (httpx.HTTPError, KeyError, IndexError) as exc:
@@ -83,9 +95,11 @@ async def complete(
     temperature: float = 0.3,
     max_tokens: int = 1024,
     timeout: float = 60.0,
+    json_mode: bool = False,
 ) -> str:
     """Devuelve solo el texto de respuesta."""
     message = await chat_raw(
-        messages, model=model, temperature=temperature, max_tokens=max_tokens, timeout=timeout
+        messages, model=model, temperature=temperature, max_tokens=max_tokens,
+        timeout=timeout, json_mode=json_mode,
     )
     return message.get("content") or ""

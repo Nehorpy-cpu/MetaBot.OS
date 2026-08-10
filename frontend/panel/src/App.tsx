@@ -1021,6 +1021,7 @@ function IntelligenceView({ companyId }: { companyId: number }) {
 
 function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCompanyUpdated: (c: Company) => void }) {
   const [status, setStatus] = useState<WaStatus | null>(null);
+  const [address, setAddress] = useState(company.address);
   const [pnid, setPnid] = useState(company.wa_phone_number_id);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1125,6 +1126,19 @@ function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCo
           <p className="text-xs text-zinc-500">Webhook a configurar en Meta: <code className="text-cyan-300">https://TU-DOMINIO/api/webhooks/whatsapp</code></p>
         </div>
       )}
+
+      <div className={`${card} p-6 space-y-3 max-w-xl`}>
+        <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">Datos del negocio</h3>
+        <p className="text-xs text-zinc-400">La dirección se incluye en los recordatorios de citas que reciben los clientes.</p>
+        <div className="flex gap-2">
+          <input className={input} placeholder="Ej. Av. España 1234 c/ Brasil, Asunción" value={address}
+            onChange={(e) => setAddress(e.target.value)} />
+          <button className={btnPrimary} disabled={busy}
+            onClick={() => waApi.updateCompany(company.id, { address }).then(onCompanyUpdated).catch((e) => setError(e.message))}>
+            Guardar
+          </button>
+        </div>
+      </div>
 
       {error && <p className="text-red-400 text-xs">{error}</p>}
     </div>

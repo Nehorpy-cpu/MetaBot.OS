@@ -4,6 +4,7 @@ export interface Company {
   vertical: string;
   niche: string;
   industry: string;
+  address: string;
   wa_mode: "none" | "meta" | "qr";
   wa_phone_number_id: string;
 }
@@ -149,7 +150,7 @@ export interface ChatResponse {
 }
 
 export const waApi = {
-  updateCompany: (companyId: number, data: { wa_mode?: string; wa_phone_number_id?: string }) =>
+  updateCompany: (companyId: number, data: { wa_mode?: string; wa_phone_number_id?: string; address?: string }) =>
     request<Company>(`/companies/${companyId}`, { method: "PATCH", body: JSON.stringify(data) }),
   status: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/status`),
   start: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/start`, { method: "POST" }),

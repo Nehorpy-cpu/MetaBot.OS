@@ -141,12 +141,21 @@ def update_appointment_status(
 # --- Recordatorios de citas (día siguiente por defecto) ---
 
 def _reminder_text(appt: Appointment, doctor: Doctor, company: Company) -> str:
-    return (
-        f"¡Hola {appt.patient_name}! Te recordamos tu cita en {company.name} "
-        f"con {doctor.name} ({doctor.specialty or 'consulta'}) mañana "
-        f"{appt.scheduled_at.strftime('%d/%m')} a las {appt.scheduled_at.strftime('%H:%M')} hs. "
-        f"Si no podés venir, avisanos por acá así reprogramamos. ¡Te esperamos!"
-    )
+    lines = [
+        f"¡Hola {appt.patient_name}! 😊 Te escribimos de {company.name} para recordarte tu cita de mañana:",
+        "",
+        f"🗓 {appt.scheduled_at.strftime('%d/%m/%Y')} a las {appt.scheduled_at.strftime('%H:%M')} hs",
+        f"👩‍⚕️ Te atiende: {doctor.name}" + (f" ({doctor.specialty})" if doctor.specialty else ""),
+    ]
+    if company.address:
+        lines.append(f"📍 Dirección: {company.address}")
+    if appt.notes:
+        lines.append(f"📝 Motivo: {appt.notes}")
+    lines += [
+        "",
+        "Si no podés venir, avisanos por acá nomás y lo reprogramamos sin problema. ¡Te esperamos! 🙌",
+    ]
+    return "\n".join(lines)
 
 
 @router.get("/companies/{company_id}/reminders")

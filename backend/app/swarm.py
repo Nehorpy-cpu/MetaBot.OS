@@ -145,6 +145,7 @@ async def run_guard_audit(
             model=guard.model if guard else None,
             temperature=guard.temperature if guard else 0.1,
             max_tokens=400,
+            json_mode=True,
         )
         verdict = _parse_verdict(raw)
         if verdict["severity"] not in VALID_SEVERITIES:
@@ -273,6 +274,7 @@ async def run_prompt_optimization(db: Session, company: Company) -> list[PromptS
             model=optimizer.model,
             temperature=optimizer.temperature,
             max_tokens=1200,
+            json_mode=True,
         )
         parsed = _parse_suggestion(raw)
         if not parsed or parsed["improved_prompt"] == agent.system_prompt:
@@ -389,7 +391,7 @@ async def run_segment_research(db: Session, company: Company, website: str = "")
     )
     raw = await complete([{"role": "user", "content": prompt}],
                          model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
-                         temperature=0.3, max_tokens=2000)
+                         temperature=0.3, max_tokens=2000, json_mode=True)
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     data = {}
     if match:

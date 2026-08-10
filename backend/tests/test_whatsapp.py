@@ -169,6 +169,73 @@ def test_send_reminders_dry_run(monkeypatch):
     assert sent == ["+595971777888"]
 
 
+def test_reminder_includes_address_doctor_and_kind_tone():
+    """El recordatorio del día anterior lleva fecha, hora, doctor, dirección
+    y tono amable, como pidió el cliente."""
+    company = _create_company(name="Clínica Dirección")
+    cid = company["id"]
+    client.patch(f"/api/companies/{cid}", json={"address": "Av. España 1234 c/ Brasil, Asunción"})
+    doc = client.post(
+        f"/api/companies/{cid}/doctors", json={"name": "Dra. Amable", "specialty": "Clínica médica"}
+    ).json()
+    client.post(
+        f"/api/companies/{cid}/appointments",
+        json={
+            "doctor_id": doc["id"],
+            "patient_name": "Don Recordado",
+            "patient_phone": "+595971999000",
+            "scheduled_at": "2030-07-15T09:30:00",
+            "notes": "Chequeo anual",
+        },
+    )
+    data = client.get(f"/api/companies/{cid}/reminders", params={"on_date": "2030-07-15"}).json()
+    text = data["reminders"][0]["text"]
+    assert "Don Recordado" in text
+    assert "15/07/2030" in text and "09:30" in text
+    assert "Dra. Amable (Clínica médica)" in text
+    assert "Av. España 1234" in text
+    assert "Chequeo anual" in text
+    assert "reprogramamos" in text  # tono amable con salida fácil
+
+
+def test_bot_booking_fills_complete_doctor_template(monkeypatch):
+    """Verificación de plantilla: una cita agendada POR EL BOT llega completa
+    al resumen del doctor (paciente, teléfono, motivo, hora)."""
+    import json as _json
+
+    from app import chat as chat_engine
+
+    company = _create_company(name="Clínica Plantilla")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Plantilla"}).json()
+
+    async def fake_chat(messages, tools=None, **kwargs):
+        if not any(m.get("role") == "tool" for m in messages):
+            return {"content": None, "tool_calls": [{
+                "id": "c1",
+                "function": {"name": "book_appointment", "arguments": _json.dumps({
+                    "doctor_id": doc["id"], "patient_name": "María Bot",
+                    "datetime_iso": "2030-09-10T11:00", "notes": "Dolor de muela",
+                })},
+            }]}
+        return {"content": "¡Listo María! Quedó agendado."}
+
+    monkeypatch.setattr(chat_engine, "chat_raw", fake_chat)
+    client.post(
+        f"/api/companies/{cid}/chat",
+        json={"contact_phone": "+595961888777", "contact_name": "María Bot", "text": "Agendame"},
+    )
+    summary = client.get(
+        f"/api/companies/{cid}/doctors/{doc['id']}/daily-summary",
+        params={"on_date": "2030-09-10"},
+    ).json()
+    assert summary["count"] == 1
+    assert "María Bot" in summary["text"]
+    assert "+595961888777" in summary["text"]  # teléfono tomado de la conversación
+    assert "11:00" in summary["text"]
+    assert "Dolor de muela" in summary["text"]
+
+
 def test_doctor_calendar_ics():
     company = _create_company(name="Clínica ICS")
     cid = company["id"]
