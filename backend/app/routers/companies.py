@@ -6,7 +6,8 @@ from .. import onboarding
 from ..auth import Identity, allowed_company_ids, get_identity
 from ..db import get_db
 from ..llm import LLMError
-from ..models import Agent, Company
+from ..models import Agent, Company, Membership
+from ..permissions import Role
 from ..swarm import _fetch_page_text
 from ..packs import suggested_for
 from ..templates import TEMPLATES
@@ -57,9 +58,25 @@ class CompanyUpdate(BaseModel):
     wa_phone_number_id: str | None = Field(default=None, max_length=50)
 
 
+def _grant_owner(db: Session, identity: Identity, company_id: int) -> None:
+    """Quien crea una empresa queda como owner (si es un usuario, no el token)."""
+    if identity.user_id:
+        db.add(Membership(user_id=identity.user_id, company_id=company_id, role=Role.OWNER.value))
+
+
 @router.post("", response_model=CompanyOut, status_code=201)
-def create_company(payload: CompanyCreate, db: Session = Depends(get_db)):
-    """Crea el tenant y siembra su enjambre de 6 agentes según la vertical."""
+def create_company(
+    payload: CompanyCreate,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Crea el tenant y siembra su enjambre de agentes según la vertical.
+
+    Solo el operador de la plataforma da de alta empresas: si no, cualquier
+    usuario autenticado podría crear tenants ilimitados.
+    """
+    if not identity.is_platform:
+        raise HTTPException(403, "Solo el operador de la plataforma puede crear empresas")
     template = TEMPLATES[payload.vertical]
     company = Company(
         name=payload.name,
@@ -71,14 +88,21 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db)):
     db.flush()
     for spec in template["agents"]:
         db.add(Agent(company_id=company.id, **spec))
+    _grant_owner(db, identity, company.id)
     db.commit()
     db.refresh(company)
     return company
 
 
 @router.post("/smart", response_model=CompanyOut, status_code=201)
-async def create_company_smart(payload: SmartCompanyCreate, db: Session = Depends(get_db)):
+async def create_company_smart(
+    payload: SmartCompanyCreate,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
     """Arquitecto de Negocio: perfila cualquier rubro y arma el enjambre a medida."""
+    if not identity.is_platform:
+        raise HTTPException(403, "Solo el operador de la plataforma puede crear empresas")
     website_text = ""
     if payload.website.startswith(("http://", "https://")):
         try:
@@ -86,9 +110,12 @@ async def create_company_smart(payload: SmartCompanyCreate, db: Session = Depend
         except Exception:
             website_text = ""  # la web es opcional: si falla, se perfila sin ella
     try:
-        return await onboarding.profile_and_create(
+        company = await onboarding.profile_and_create(
             db, payload.name, payload.description, website_text, website=payload.website
         )
+        _grant_owner(db, identity, company.id)
+        db.commit()
+        return company
     except LLMError as exc:
         raise HTTPException(503, f"LLM no disponible: {exc}")
     except ValueError as exc:

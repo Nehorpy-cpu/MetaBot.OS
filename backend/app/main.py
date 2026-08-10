@@ -8,10 +8,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as db_module
-from .auth import SESSION_COOKIE, _token_hash
+from .auth import resolve_identity
 from .config import ADMIN_TOKEN
 from .llm import available_providers
-from .models import AuthSession, Membership, User
+from .models import Membership
 from .routers import agents, auth, bridge, campaigns, catalog, chat, companies, creatives, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
 from .scheduler import start_scheduler
 
@@ -30,35 +30,12 @@ _PUBLIC_API_PREFIXES = ("/api/health", "/api/webhooks/", "/api/auth/login")
 # Toda ruta de datos de un tenant tiene esta forma. El aislamiento se aplica
 # acá, en UN solo lugar: un endpoint nuevo queda protegido sin que nadie
 # tenga que acordarse de nada.
-_TENANT_PATH = re.compile(r"^/api/companies/(\d+)(?:/|$)")
-
-
-def _resolve_identity(request: Request) -> tuple[bool, int | None, str]:
-    """(autenticado, user_id, motivo). user_id None = token de plataforma."""
-    token = request.cookies.get(SESSION_COOKIE, "")
-    if token:
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        db = db_module.SessionLocal()
-        try:
-            session = (
-                db.query(AuthSession)
-                .filter(AuthSession.token_hash == _token_hash(token), AuthSession.revoked_at.is_(None))
-                .first()
-            )
-            if session and session.expires_at > now:
-                user = db.get(User, session.user_id)
-                if user and user.status == "active":
-                    return True, (None if user.is_platform_admin else user.id), ""
-        finally:
-            db.close()
-
-    header = request.headers.get("Authorization", "")
-    bearer = header[7:] if header.startswith("Bearer ") else ""
-    if ADMIN_TOKEN and bearer and hmac.compare_digest(bearer, ADMIN_TOKEN):
-        return True, None, ""
-    return False, None, "No autorizado"
+# Captura el segmento CRUDO, no solo dígitos: FastAPI acepta como int cosas
+# como "+7", " 7" o "007", y un regex de \d+ las dejaba pasar sin verificar
+# la membresía. Acá se exige forma canónica y, si no lo es, se rechaza.
+_TENANT_PATH = re.compile(r"^/api/companies/([^/]+)(?:/|$)")
+# Rutas de /api/companies que NO son un id de empresa
+_NON_TENANT_SEGMENTS = {"smart"}
 
 
 def _can_access_company(user_id: int, company_id: int) -> bool:
@@ -86,6 +63,9 @@ async def enforce_auth_and_tenant(request: Request, call_next):
        salvo salud, login y webhooks.
     2. Si la ruta apunta a una empresa concreta, se exige membresía activa.
        El tenant se valida contra la identidad, nunca se confía en el path.
+
+    Fail-closed: un segmento de empresa que no sea un entero canónico se
+    rechaza en vez de saltear la verificación.
     """
     path = request.url.path
     if not path.startswith("/api") or path.startswith(_PUBLIC_API_PREFIXES):
@@ -96,15 +76,24 @@ async def enforce_auth_and_tenant(request: Request, call_next):
             {"detail": "Servidor sin ADMIN_TOKEN configurado: API cerrada."}, status_code=503
         )
 
-    authenticated, user_id, reason = _resolve_identity(request)
-    if not authenticated:
-        return JSONResponse({"detail": reason}, status_code=401)
+    db = db_module.SessionLocal()
+    try:
+        identity = resolve_identity(request, db)
+    finally:
+        db.close()
+    if not identity:
+        return JSONResponse({"detail": "No autorizado"}, status_code=401)
 
-    if user_id is not None:  # usuario normal: se valida la empresa del path
+    if not identity.is_platform:  # usuario normal: se valida la empresa del path
         match = _TENANT_PATH.match(path)
-        if match and not _can_access_company(user_id, int(match.group(1))):
-            # 404 y no 403: no se confirma que la empresa exista.
-            return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
+        if match:
+            raw = match.group(1)
+            if raw not in _NON_TENANT_SEGMENTS:
+                # Forma canónica obligatoria: "7" sí, "+7"/" 7"/"007" no.
+                if not raw.isdigit() or str(int(raw)) != raw:
+                    return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
+                if not _can_access_company(identity.user_id, int(raw)):
+                    return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
 
     return await call_next(request)
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Company, Doctor, DoctorService, Service
+from ..packs import industry_services
 
 router = APIRouter(tags=["services"])
 
@@ -115,41 +116,23 @@ def update_service(company_id: int, service_id: int, payload: ServiceUpdate, db:
 
 @router.get("/companies/{company_id}/services/suggestions")
 def suggest_services(company_id: int, db: Session = Depends(get_db)):
-    """Memoria colectiva por rubro: servicios que otras empresas del mismo
-    rubro ya cargaron y esta aún no tiene. El cliente decide agregar o no."""
+    """Servicios típicos del rubro que esta empresa aún no tiene cargados.
+
+    Sale de un catálogo curado por rubro (conocimiento público del sector),
+    NO de los datos de otras empresas: sugerir a partir de lo que cargó otro
+    tenant filtraría su oferta y sus precios. Sin precio sugerido, por lo
+    mismo: cada negocio pone el suyo.
+    """
     company = _company(company_id, db)
     own = {
         s.name.lower()
         for s in db.query(Service).filter(Service.company_id == company_id).all()
     }
-    peers = (
-        db.query(Company)
-        .filter(Company.id != company_id, Company.vertical == company.vertical)
-        .all()
-    )
-    peer_ids = [p.id for p in peers]
-    if not peer_ids:
-        return []
-    from collections import defaultdict
-
-    grouped: dict[str, list[Service]] = defaultdict(list)
-    for s in db.query(Service).filter(Service.company_id.in_(peer_ids), Service.active).all():
-        if s.name.lower() not in own:
-            grouped[s.name.lower()].append(s)
-    suggestions = []
-    for _key, group in sorted(grouped.items(), key=lambda kv: -len(kv[1]))[:12]:
-        sample = group[0]
-        prices = [s.price_gs for s in group if s.price_gs]
-        suggestions.append(
-            {
-                "name": sample.name,
-                "category": sample.category,
-                "typical_price_gs": sorted(prices)[len(prices) // 2] if prices else 0,
-                "duration_min": sample.duration_min,
-                "used_by": len(group),
-            }
-        )
-    return suggestions
+    return [
+        {**item, "typical_price_gs": 0}
+        for item in industry_services(company.vertical)
+        if item["name"].lower() not in own
+    ]
 
 
 @router.delete("/companies/{company_id}/services/{service_id}", status_code=204)

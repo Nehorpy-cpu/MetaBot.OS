@@ -17,7 +17,7 @@ import { ChatView } from "./views/ChatView";
 import { LoginScreen } from "./views/LoginScreen";
 
 export default function App() {
-  const [authed, setAuthed] = useState(() => !!auth.get());
+  const [authed, setAuthed] = useState<boolean | null>(null); // null = verificando
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services">("dashboard");
@@ -26,6 +26,8 @@ export default function App() {
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAuthed(false));
+    // La sesión vive en cookie HttpOnly: se le pregunta al backend si sigue viva.
+    auth.me().then(() => setAuthed(true)).catch(() => setAuthed(false));
   }, []);
 
   useEffect(() => {
@@ -39,6 +41,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
+  if (authed === null) {
+    return <div className="min-h-screen bg-[#040609] flex items-center justify-center text-zinc-500 text-sm">Cargando…</div>;
+  }
   if (!authed) return <LoginScreen onAuthed={() => setAuthed(true)} />;
 
   const active = companies.find((c) => c.id === activeId) ?? null;
@@ -93,7 +98,7 @@ export default function App() {
           {navBtn("agents", "Enjambre de Agentes", Bot)}
         </nav>
         <div className="p-4 border-t border-white/5">
-          <button onClick={() => { auth.clear(); setAuthed(false); }}
+          <button onClick={() => { auth.logout().finally(() => setAuthed(false)); }}
             className="w-full text-xs text-zinc-500 hover:text-zinc-300 py-2">Cerrar sesión</button>
         </div>
       </aside>

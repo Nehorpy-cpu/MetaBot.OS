@@ -102,33 +102,22 @@ export interface DailySummary {
   text: string;
 }
 
-const TOKEN_KEY = "metabot_token";
-
-export const auth = {
-  get: () => localStorage.getItem(TOKEN_KEY) ?? "",
-  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
-};
-
-// Callback que el App registra para reaccionar a un 401 (token inválido).
+// La sesión vive en una cookie HttpOnly puesta por el backend: el token
+// nunca es accesible desde JavaScript (un XSS ya no se lo lleva).
 let onUnauthorized: (() => void) | null = null;
 export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = auth.get();
   const resp = await fetch(`/api${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
     ...options,
   });
   if (resp.status === 401) {
-    auth.clear();
     onUnauthorized?.();
-    throw new Error("Sesión no autorizada. Ingresá el token de acceso.");
+    throw new Error("Sesión expirada. Ingresá de nuevo.");
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
@@ -137,13 +126,19 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return resp.status === 204 ? (undefined as T) : resp.json();
 }
 
-/** Valida un token contra el backend (health está abierto; probamos /companies). */
-export async function validateToken(token: string): Promise<boolean> {
-  const resp = await fetch("/api/companies", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return resp.ok;
+export interface Me {
+  user: { id: number | null; email: string; full_name: string };
+  is_platform_admin: boolean;
+  memberships: { company_id: number; name: string; role: string }[];
 }
+
+export const auth = {
+  login: (email: string, password: string) =>
+    request<Me>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  me: () => request<Me>("/auth/me"),
+};
+
 
 export const api = {
   listCompanies: () => request<Company[]>("/companies"),

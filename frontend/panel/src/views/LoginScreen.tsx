@@ -1,11 +1,11 @@
-import React from "react";
 import { useState } from "react";
 import { Zap } from "lucide-react";
-import { auth, validateToken } from "../api";
-import { card, input, btnPrimary } from "../ui";
+import { auth } from "../api";
+import { btnPrimary, card, input } from "../ui";
 
 export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
-  const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
 
@@ -14,14 +14,10 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
     setChecking(true);
     setError("");
     try {
-      if (await validateToken(token.trim())) {
-        auth.set(token.trim());
-        onAuthed();
-      } else {
-        setError("Token incorrecto.");
-      }
-    } catch {
-      setError("No se pudo conectar con el servidor.");
+      await auth.login(email.trim().toLowerCase(), password);
+      onAuthed();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo iniciar sesión.");
     } finally {
       setChecking(false);
     }
@@ -36,11 +32,16 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
           </div>
           <span className="font-extrabold text-lg text-white">MetaBot<span className="text-cyan-400">.OS</span></span>
         </div>
-        <p className="text-sm text-zinc-400">Ingresá el token de acceso al panel.</p>
-        <input type="password" className={input} placeholder="Token de acceso" value={token}
-          onChange={(e) => setToken(e.target.value)} autoFocus />
+        <p className="text-sm text-zinc-400">Ingresá con tu correo y contraseña.</p>
+        <div className="space-y-3">
+          <input type="email" autoComplete="username" className={input} placeholder="tu@correo.com"
+            value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+          <input type="password" autoComplete="current-password" className={input} placeholder="Contraseña"
+            value={password} onChange={(e) => setPassword(e.target.value)} required />
+        </div>
         {error && <p className="text-red-400 text-xs">{error}</p>}
-        <button type="submit" disabled={checking || !token.trim()} className={`${btnPrimary} w-full justify-center`}>
+        <button type="submit" disabled={checking || !email.trim() || !password}
+          className={`${btnPrimary} w-full justify-center`}>
           {checking ? "Verificando…" : "Entrar"}
         </button>
       </form>

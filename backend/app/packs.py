@@ -103,6 +103,47 @@ VERTICAL_PACKS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Catálogo curado de servicios típicos por rubro (IndustryKnowledge).
+# Es conocimiento público del sector, NO datos de otros tenants: sugerir a
+# partir de lo que cargó otra empresa filtraría sus precios y su oferta.
+INDUSTRY_SERVICES: dict[str, list[dict]] = {
+    "medical": [
+        {"name": "Consulta clínica", "category": "Consultas", "duration_min": 30},
+        {"name": "Consulta de urgencia", "category": "Consultas", "duration_min": 20},
+        {"name": "Electrocardiograma", "category": "Estudios", "duration_min": 20},
+        {"name": "Ecografía abdominal", "category": "Estudios", "duration_min": 40},
+        {"name": "Laboratorio: análisis de sangre", "category": "Estudios", "duration_min": 15},
+        {"name": "Control de presión arterial", "category": "Controles", "duration_min": 15},
+    ],
+    "dental": [
+        {"name": "Consulta odontológica", "category": "Consultas", "duration_min": 30},
+        {"name": "Limpieza dental", "category": "Tratamientos", "duration_min": 45},
+        {"name": "Blanqueamiento", "category": "Estética", "duration_min": 60},
+        {"name": "Extracción simple", "category": "Tratamientos", "duration_min": 45},
+        {"name": "Radiografía panorámica", "category": "Estudios", "duration_min": 20},
+    ],
+    "beauty": [
+        {"name": "Corte de cabello", "category": "Peluquería", "duration_min": 45},
+        {"name": "Coloración", "category": "Peluquería", "duration_min": 120},
+        {"name": "Manicura", "category": "Manos y pies", "duration_min": 45},
+        {"name": "Depilación", "category": "Estética", "duration_min": 30},
+    ],
+    "services": [
+        {"name": "Consulta inicial", "category": "Consultas", "duration_min": 45},
+        {"name": "Presupuesto a domicilio", "category": "Visitas", "duration_min": 60},
+    ],
+    "education": [
+        {"name": "Clase particular", "category": "Clases", "duration_min": 60},
+        {"name": "Evaluación de nivel", "category": "Evaluaciones", "duration_min": 30},
+    ],
+}
+
+
+def industry_services(vertical: str) -> list[dict]:
+    """Servicios típicos del rubro, de conocimiento público del sector."""
+    return INDUSTRY_SERVICES.get(vertical, [])
+
+
 def suggested_for(vertical: str) -> list[str]:
     """Packs propuestos para un rubro. Genéricos por defecto: comercio."""
     return list(VERTICAL_PACKS.get(vertical, ("commerce",)))

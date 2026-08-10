@@ -151,3 +151,74 @@ def test_me_reports_memberships():
     assert data["is_platform_admin"] is False
     assert data["memberships"][0]["company_id"] == company["id"]
     assert data["memberships"][0]["role"] == "admin"
+
+
+# --- Regresiones de la auditoría adversarial (6 fallas confirmadas) ---
+
+def test_non_canonical_company_id_cannot_bypass_isolation():
+    """CRÍTICO: FastAPI acepta '+7', ' 7', '007' como int 7, pero el regex de
+    dígitos no los matcheaba y salteaban la verificación de membresía."""
+    a = _create_company(name="Bypass A")
+    b = _create_company(name="Bypass B")
+    _make_user("bypass@test.py", a["id"])
+    ca = _login("bypass@test.py")
+    bid = b["id"]
+    for variante in (f"+{bid}", f"%20{bid}", f"{bid}%20", f"00{bid}"):
+        resp = ca.get(f"/api/companies/{variante}/doctors")
+        assert resp.status_code in (404, 422), f"FUGA con '{variante}': {resp.status_code}"
+
+
+def test_agent_endpoints_enforce_ownership():
+    """CRÍTICO: /api/agents/{id} no lleva company_id, así que el middleware no
+    lo cubre: cualquiera reescribía el system prompt de otro tenant."""
+    a = _create_company(name="Agentes A")
+    b = _create_company(name="Agentes B")
+    _make_user("agentes@test.py", a["id"])
+    agente_b = client.get(f"/api/companies/{b['id']}/agents").json()[0]
+
+    ca = _login("agentes@test.py")
+    assert ca.get(f"/api/agents/{agente_b['id']}").status_code == 404
+    resp = ca.patch(f"/api/agents/{agente_b['id']}", json={"system_prompt": "sos mío ahora"})
+    assert resp.status_code == 404
+    # El prompt ajeno quedó intacto
+    original = client.get(f"/api/agents/{agente_b['id']}").json()
+    assert original["system_prompt"] != "sos mío ahora"
+
+
+def test_viewer_role_cannot_edit_agent_prompt():
+    """Los roles se aplican: un viewer no cambia la conducta del bot."""
+    company = _create_company(name="Roles Prompt")
+    _make_user("viewer@test.py", company["id"], role="viewer")
+    agente = client.get(f"/api/companies/{company['id']}/agents").json()[0]
+    cv = _login("viewer@test.py")
+    assert cv.get(f"/api/agents/{agente['id']}").status_code == 200  # leer sí
+    assert cv.patch(f"/api/agents/{agente['id']}", json={"temperature": 0.9}).status_code == 403
+
+
+def test_normal_user_cannot_create_companies():
+    """Un usuario cualquiera no da de alta tenants ilimitados."""
+    company = _create_company(name="Sin Alta")
+    _make_user("noalta@test.py", company["id"])
+    cu = _login("noalta@test.py")
+    assert cu.post("/api/companies", json={"name": "Mía", "vertical": "medical"}).status_code == 403
+    assert cu.post(
+        "/api/companies/smart", json={"name": "Mía", "description": "descripción larga de prueba"}
+    ).status_code == 403
+
+
+def test_service_suggestions_do_not_leak_other_tenants():
+    """Las sugerencias salen de un catálogo curado del rubro, no de los datos
+    (ni los precios) de otras empresas."""
+    a = _create_company(name="Sanatorio Fuente")
+    b = _create_company(name="Sanatorio Destino")
+    client.post(
+        f"/api/companies/{a['id']}/services",
+        json={"name": "Estudio Secreto Exclusivo", "category": "Estudios", "price_gs": 987654},
+    )
+    _make_user("sugerencias@test.py", b["id"])
+    cb = _login("sugerencias@test.py")
+    suggestions = cb.get(f"/api/companies/{b['id']}/services/suggestions").json()
+    nombres = [s["name"] for s in suggestions]
+    assert "Estudio Secreto Exclusivo" not in nombres  # no filtra la oferta ajena
+    assert all(s["typical_price_gs"] == 0 for s in suggestions)  # ni sus precios
+    assert "Consulta clínica" in nombres  # sí sugiere lo típico del rubro

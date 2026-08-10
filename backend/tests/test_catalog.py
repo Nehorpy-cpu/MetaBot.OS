@@ -163,19 +163,22 @@ def test_campaign_uses_real_catalog_photos(monkeypatch, tmp_path):
     assert generated == []  # con catálogo real, JAMÁS se genera una imagen
 
 
-def test_service_suggestions_cross_tenant():
+def test_service_suggestions_come_from_industry_catalog_not_peers():
+    """Antes las sugerencias salían de los servicios de OTRAS empresas, lo que
+    filtraba su oferta y sus precios. Ahora salen de un catálogo curado del
+    rubro (conocimiento público del sector)."""
     a = _create_company(name="Sanatorio A")
     b = _create_company(name="Sanatorio B")
-    client.post(f"/api/companies/{a['id']}/services", json={"name": "Ecografía 4D", "category": "Estudios", "price_gs": 400000})
-    client.post(f"/api/companies/{a['id']}/services", json={"name": "Holter 24h", "category": "Estudios", "price_gs": 350000})
+    client.post(f"/api/companies/{a['id']}/services",
+                json={"name": "Ecografía 4D Exclusiva", "category": "Estudios", "price_gs": 400000})
 
     suggestions = client.get(f"/api/companies/{b['id']}/services/suggestions").json()
     names = [s["name"] for s in suggestions]
-    assert "Ecografía 4D" in names and "Holter 24h" in names
-    eco = next(s for s in suggestions if s["name"] == "Ecografía 4D")
-    assert eco["typical_price_gs"] == 400000
+    assert "Ecografía 4D Exclusiva" not in names  # no filtra la oferta ajena
+    assert all(s["typical_price_gs"] == 0 for s in suggestions)  # ni sus precios
+    assert "Consulta clínica" in names  # sí propone lo típico del rubro
 
-    # B agrega una y desaparece de sus sugerencias
-    client.post(f"/api/companies/{b['id']}/services", json={"name": "Ecografía 4D", "price_gs": 380000})
+    # Lo que la empresa ya tiene deja de sugerirse
+    client.post(f"/api/companies/{b['id']}/services", json={"name": "Consulta clínica"})
     again = [s["name"] for s in client.get(f"/api/companies/{b['id']}/services/suggestions").json()]
-    assert "Ecografía 4D" not in again
+    assert "Consulta clínica" not in again

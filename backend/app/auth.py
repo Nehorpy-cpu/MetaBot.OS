@@ -120,8 +120,13 @@ class Identity:
         return "token-de-plataforma"
 
 
-def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
-    """Resuelve la identidad: cookie de sesión, o token de plataforma."""
+def resolve_identity(request: Request, db: Session) -> Identity | None:
+    """ÚNICA resolución de identidad: la usan el middleware y las dependencias.
+
+    Aplica revocación, expiración absoluta y expiración por inactividad.
+    Tener una sola implementación evita que middleware y endpoints difieran
+    (el middleware ignoraba el idle y una cookie robada valía 30 días).
+    """
     token = request.cookies.get(SESSION_COOKIE, "")
     if token:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -131,12 +136,13 @@ def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
             .first()
         )
         if session and session.expires_at > now:
-            idle_limit = session.last_seen_at + timedelta(hours=SESSION_IDLE_HOURS)
-            if idle_limit > now:
+            if session.last_seen_at + timedelta(hours=SESSION_IDLE_HOURS) > now:
                 user = db.get(User, session.user_id)
                 if user and user.status == "active":
-                    session.last_seen_at = now
-                    db.commit()
+                    # Throttle: no escribir en cada request
+                    if (now - session.last_seen_at) > timedelta(minutes=5):
+                        session.last_seen_at = now
+                        db.commit()
                     return Identity(user, user.is_platform_admin)
 
     # Token de plataforma (Authorization: Bearer): acceso de operador.
@@ -144,8 +150,25 @@ def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
     bearer = header[7:] if header.startswith("Bearer ") else ""
     if ADMIN_TOKEN and bearer and hmac.compare_digest(bearer, ADMIN_TOKEN):
         return Identity(None, True)
+    return None
 
-    raise HTTPException(401, "No autorizado")
+
+def get_identity(request: Request, db: Session = Depends(get_db)) -> Identity:
+    identity = resolve_identity(request, db)
+    if not identity:
+        raise HTTPException(401, "No autorizado")
+    return identity
+
+
+def assert_company_access(db: Session, identity: Identity, company_id: int, perm: Perm = Perm.READ) -> None:
+    """Valida acceso al tenant. 404 (no 403) para no revelar su existencia."""
+    if identity.is_platform:
+        return
+    membership = _membership(db, identity.user_id, company_id)
+    if not membership:
+        raise HTTPException(404, "Empresa no encontrada")
+    if not role_has(membership.role, perm):
+        raise HTTPException(403, f"Tu rol ({membership.role}) no permite esta acción")
 
 
 def _membership(db: Session, user_id: int, company_id: int) -> Membership | None:
