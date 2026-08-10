@@ -318,6 +318,39 @@ def test_el_brazo_es_estable_y_reproducible():
 def test_veredicto_sin_json_no_toca_nada():
     v = supervisor._parse_veredicto("me parece que está bien", "respuesta cx", "{}")
     assert v["action"] == "keep"
+    # El motivo guarda lo que el modelo sí dijo: si no, el fallo es invisible.
+    assert "me parece que está bien" in v["reason"]
+
+
+def test_ignora_el_razonamiento_en_voz_alta():
+    """Regresión de producción: el CEO corría con un modelo de razonamiento y
+    su bloque <think> tapaba el veredicto."""
+    crudo = (
+        "<think>El cliente pidió algo fuera de presupuesto. Podría {sugerir} otra "
+        "cosa. Veamos {opciones}.</think>\n"
+        '{"action": "directive", "directive": "Ofrecé una alternativa concreta.", "reason": "x"}'
+    )
+    v = supervisor._parse_veredicto(crudo, "cx", "{}")
+    assert v["action"] == "directive"
+    assert v["directive"] == "Ofrecé una alternativa concreta."
+
+
+def test_razonamiento_sin_cerrar_no_rompe():
+    v = supervisor._parse_veredicto("<think>pensando {algo} y me quedé sin tokens", "cx", "{}")
+    assert v["action"] == "keep"
+
+
+def test_el_supervisor_no_usa_el_modelo_del_agente_que_supervisa():
+    """El auditor con el mismo modelo que el productor se auto-aprueba."""
+    cx = Agent(slug="cx", name="CX", role="r", model="modelo-a", system_prompt="p")
+    mismo = Agent(slug="ceo", name="CEO", role="r", model="modelo-a", system_prompt="p")
+    distinto = Agent(slug="ceo", name="CEO", role="r", model="modelo-b", system_prompt="p")
+    empresa = _empresa()
+
+    assert supervisor.modelo_para(empresa, mismo, cx) != "modelo-a"
+    assert supervisor.modelo_para(empresa, distinto, cx) == "modelo-b"
+    # Sin agente configurado también hay que elegir alguno.
+    assert supervisor.modelo_para(empresa, None, cx)
 
 
 def test_accion_desconocida_no_toca_nada():

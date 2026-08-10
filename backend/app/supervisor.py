@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from . import packs
-from .llm import chat_raw
+from .llm import chat_raw, model_for
 from .models import Agent, Company, Conversation, Supervision
 
 logger = logging.getLogger("metabot.supervisor")
@@ -99,6 +99,7 @@ _SIN_CONTENIDO_RE = re.compile(
 )
 
 _CIFRA_RE = re.compile(r"\d[\d.,]*")
+_THINK_RE = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL | re.IGNORECASE)
 # Sintaxis de herramienta que el modelo a veces escribe como texto plano.
 _TOOL_TEXT_RE = re.compile(
     r"<\/?\s*(?:escalate_to_human|book_appointment|check_agenda|list_doctors|"
@@ -277,6 +278,21 @@ def _sanear(texto: str) -> str:
     return _TOOL_TEXT_RE.sub("", texto or "").strip()
 
 
+def modelo_para(company: Company, agente: Agent | None, agente_cx: Agent | None) -> str | None:
+    """Modelo del supervisor, distinto al del agente que supervisa.
+
+    Regla del proyecto: el auditor nunca usa el modelo del productor, o se
+    auto-aprueba. Además, en producción el CEO venía configurado con el mismo
+    modelo de razonamiento que el CX: gastaba su presupuesto de tokens
+    pensando en voz alta y nunca llegaba a emitir el JSON del veredicto.
+    """
+    propio = agente.model if agente else ""
+    del_cx = agente_cx.model if agente_cx else ""
+    if propio and propio != del_cx:
+        return propio
+    return model_for("audit")
+
+
 def _cifras_inventadas(propuesta: str, fuentes: str) -> list[str]:
     """Números en la reescritura que no aparecen en el material de origen.
 
@@ -301,9 +317,15 @@ def _parse_veredicto(crudo: str, respuesta_cx: str, fuentes: str) -> dict:
     Todo lo que no se pueda validar termina en `keep`: ante la duda, se envía
     lo que el CX ya había producido, que es lo que pasaría sin supervisión.
     """
-    match = re.search(r"\{.*\}", crudo or "", re.DOTALL)
+    # Los modelos de razonamiento piensan en voz alta antes de responder; ese
+    # bloque puede contener llaves que no son el veredicto.
+    limpio = _THINK_RE.sub("", crudo or "")
+    match = re.search(r"\{.*\}", limpio, re.DOTALL)
     if not match:
-        return {"action": "keep", "reason": "el supervisor no devolvió JSON"}
+        # Se guarda un pedazo de lo que sí dijo: si no, este fallo es invisible
+        # y no hay forma de saber si el modelo elegido sirve.
+        muestra = " ".join((limpio or crudo or "").split())[:120]
+        return {"action": "keep", "reason": f"el supervisor no devolvió JSON: {muestra}"}
     try:
         datos = json.loads(match.group())
     except json.JSONDecodeError:
@@ -361,19 +383,21 @@ async def ejecutar(
     Devuelve `{"reply", "escalate", "trigger", "action"}`. En modo shadow el
     `reply` siempre es None: la respuesta de ese turno ya se envió.
     """
-    agente = (
-        db.query(Agent)
-        .filter(Agent.company_id == company.id, Agent.slug == trigger.agent_slug)
-        .first()
-    )
+    agentes = {
+        a.slug: a
+        for a in db.query(Agent)
+        .filter(Agent.company_id == company.id, Agent.slug.in_([trigger.agent_slug, "cx"]))
+        .all()
+    }
     fuentes = json.dumps([a.get("result") for a in actions], ensure_ascii=False)
     empezo = time.monotonic()
     salida = await chat_raw(
         _prompt(company, trigger, cliente, respuesta, actions),
         tools=None,  # asesor sin herramientas: no puede reentrar al motor
-        model=(agente.model if agente else None),
+        model=modelo_para(company, agentes.get(trigger.agent_slug), agentes.get("cx")),
         temperature=0.2,
-        max_tokens=700,
+        max_tokens=900,
+        json_mode=True,
     )
     veredicto = _parse_veredicto(salida.get("content") or "", respuesta, fuentes)
     latencia = int((time.monotonic() - empezo) * 1000)
