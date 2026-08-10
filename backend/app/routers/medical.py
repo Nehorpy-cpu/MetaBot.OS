@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels, whatsapp
+from .. import channels, job_handlers, whatsapp
 from ..config import TIMEZONE
 from ..db import get_db
 from ..models import Appointment, Company, Doctor
@@ -103,6 +103,7 @@ def create_appointment(company_id: int, payload: AppointmentIn, db: Session = De
     db.add(appt)
     db.commit()
     db.refresh(appt)
+    job_handlers.schedule_appointment_reminder(db, appt)
     return appt
 
 
@@ -134,6 +135,8 @@ def update_appointment_status(
         raise HTTPException(404, "Cita no encontrada")
     appt.status = payload.status
     db.commit()
+    if payload.status == "cancelled":
+        job_handlers.cancel_appointment_reminder(db, appt.id)
     db.refresh(appt)
     return appt
 

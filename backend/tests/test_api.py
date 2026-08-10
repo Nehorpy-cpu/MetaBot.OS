@@ -2,6 +2,7 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["ADMIN_TOKEN"] = "test-token-secreto"
+os.environ["SCHEDULER_ENABLED"] = "0"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import StaticPool, create_engine  # noqa: E402

@@ -18,7 +18,7 @@ DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solape
 
 from sqlalchemy.orm import Session
 
-from . import packs
+from . import job_handlers, packs
 from .config import TIMEZONE
 from .llm import chat_raw
 from .models import (
@@ -362,6 +362,9 @@ def _execute_tool(
         )
         db.add(appt)
         db.commit()
+        # El recordatorio T-24h queda programado de forma durable: sobrevive
+        # a un reinicio del servidor y se reintenta si el envío falla.
+        job_handlers.schedule_appointment_reminder(db, appt)
         return {
             "ok": True,
             "appointment_id": appt.id,

@@ -13,7 +13,7 @@ from .config import ADMIN_TOKEN
 from .llm import available_providers
 from .models import Membership
 from .routers import agents, auth, bridge, campaigns, catalog, chat, companies, creatives, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
-from .scheduler import start_scheduler
+from .scheduler import _start_job_worker, start_scheduler
 
 # El esquema lo gestiona Alembic (entrypoint.sh corre `alembic upgrade head`).
 # Una sola fuente de verdad para la estructura de la base.
@@ -99,8 +99,11 @@ async def enforce_auth_and_tenant(request: Request, call_next):
 
 
 @app.on_event("startup")
-def _startup():
+async def _startup():
     start_scheduler()
+    # Trabajos durables: al arrancar retoma lo que quedó pendiente (un
+    # recordatorio no se pierde porque el servidor se haya reiniciado).
+    await _start_job_worker()
 
 
 @app.get("/api/health")

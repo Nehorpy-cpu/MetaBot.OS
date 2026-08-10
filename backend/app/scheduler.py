@@ -17,7 +17,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from . import swarm, whatsapp
 from .config import TIMEZONE
-from .db import SessionLocal
+from . import db as db_module
 from .llm import LLMError
 from .models import Company
 
@@ -28,7 +28,7 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 async def _for_each_company(task_name: str, coro_factory):
-    db = SessionLocal()
+    db = db_module.SessionLocal()
     try:
         for company in db.query(Company).all():
             try:
@@ -62,7 +62,7 @@ async def job_send_reminders():
 
     from . import channels
 
-    db = SessionLocal()
+    db = db_module.SessionLocal()
     try:
         for company in db.query(Company).filter(Company.wa_mode != "none").all():
             # Solo canales con capability de mensaje proactivo (Cloud API).
@@ -81,6 +81,24 @@ async def job_send_reminders():
         db.close()
 
 
+async def _start_job_worker() -> None:
+    """Worker de trabajos durables: al arrancar recupera lo pendiente.
+
+    Se desactiva con SCHEDULER_ENABLED=0 (tests: un worker de fondo compite
+    por los mismos trabajos que la prueba quiere ejecutar).
+    """
+    import asyncio
+
+    if not SCHEDULER_ENABLED:
+        return
+
+    from . import job_handlers  # noqa: F401  — registra los handlers
+    from . import jobs
+
+    worker_id = f"backend-{os.getpid()}"
+    asyncio.create_task(jobs.worker_loop(worker_id))
+
+
 def start_scheduler() -> AsyncIOScheduler | None:
     global _scheduler
     if not SCHEDULER_ENABLED or _scheduler:
@@ -88,7 +106,6 @@ def start_scheduler() -> AsyncIOScheduler | None:
     _scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     _scheduler.add_job(job_weekly_reports, CronTrigger(day_of_week="mon", hour=7, minute=0))
     _scheduler.add_job(job_guard_audits, CronTrigger(hour=20, minute=0))
-    _scheduler.add_job(job_send_reminders, CronTrigger(hour=18, minute=0))
     _scheduler.add_job(job_competitive_scans, CronTrigger(day_of_week="sun", hour=6, minute=0))
     _scheduler.add_job(job_prompt_optimization, CronTrigger(day_of_week="sat", hour=7, minute=0))
     _scheduler.start()

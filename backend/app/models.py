@@ -155,6 +155,7 @@ class Appointment(Base):
     patient_phone: Mapped[str] = mapped_column(String(50), default="")
     scheduled_at: Mapped[datetime] = mapped_column(index=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|confirmed|cancelled|attended|no_show
+    reminder_status: Mapped[str] = mapped_column(String(15), default="scheduled")
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -267,6 +268,34 @@ class ChannelSession(Base):
     last_heartbeat: Mapped[datetime] = mapped_column(default=utcnow)
     status: Mapped[str] = mapped_column(String(20), default="disconnected")
     phone: Mapped[str] = mapped_column(String(40), default="")
+
+
+class Job(Base):
+    """Trabajo durable: lo que NO se puede perder.
+
+    Un recordatorio, un cobro o un webhook pendiente no viven en memoria: si
+    el servidor reinicia, el trabajo sigue acá y se ejecuta igual. Con
+    reintentos, backoff y lease para que dos workers no lo corran a la vez.
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (UniqueConstraint("dedup_key", name="uq_job_dedup_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(50), index=True)
+    payload: Mapped[str] = mapped_column(Text, default="{}")  # JSON
+    # Idempotencia: encolar dos veces el mismo recordatorio no lo duplica.
+    dedup_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(15), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    max_attempts: Mapped[int] = mapped_column(default=5)
+    last_error: Mapped[str] = mapped_column(String(500), default="")
+    locked_by: Mapped[str] = mapped_column(String(64), default="")
+    locked_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class AgentRun(Base):
