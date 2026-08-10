@@ -85,6 +85,14 @@ export interface DashboardData {
   doctors: number;
   appointments_today: number;
   conversations: number;
+  products?: number;
+  services?: number;
+}
+
+export interface DashboardSeries {
+  activity: { date: string; count: number }[];
+  appointments_by_status: Record<string, number>;
+  has_booking: boolean;
 }
 
 export interface DailySummary {
@@ -147,6 +155,8 @@ export const api = {
       body: JSON.stringify({ name, description, website }),
     }),
   dashboard: (companyId: number) => request<DashboardData>(`/companies/${companyId}/dashboard`),
+  dashboardSeries: (companyId: number) =>
+    request<DashboardSeries>(`/companies/${companyId}/dashboard/series`),
   listAgents: (companyId: number) => request<AgentSummary[]>(`/companies/${companyId}/agents`),
   getAgent: (agentId: number) => request<AgentDetail>(`/agents/${agentId}`),
   updateAgent: (agentId: number, data: Partial<AgentDetail>) =>
