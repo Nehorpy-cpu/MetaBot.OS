@@ -1,20 +1,37 @@
 # MetaBot.OS — despliegue de producción (VPS)
 #
-#   cp .env.example .env   (completar API keys y BRIDGE_SECRET)
+#   cp .env.example .env   (completar API keys, BRIDGE_SECRET, ADMIN_TOKEN)
 #   docker compose up -d --build
 #
 # Con DOMAIN definido en .env, Caddy emite HTTPS automático (Let's Encrypt).
-# Sin DOMAIN, todo queda en http://IP (suficiente para probar; Meta exige
-# HTTPS para el webhook, así que para Meta hace falta dominio).
+# Sin DOMAIN, todo queda en http://IP (Meta exige HTTPS para su webhook).
 
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: metabot
+      POSTGRES_USER: metabot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definí POSTGRES_PASSWORD en .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metabot -d metabot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: .
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: sqlite:////data/metabot.db
+      DATABASE_URL: postgresql+psycopg://metabot:${POSTGRES_PASSWORD}@db:5432/metabot
       BRIDGE_URL: http://bridge:3001
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
       - data:/data
       - media:/app/media
@@ -46,7 +63,8 @@ services:
       - caddy_config:/config
 
 volumes:
-  data:
+  pgdata:
+  data:      # legado SQLite (se conserva para respaldo tras la migración)
   media:
   sessions:
   caddy_data:

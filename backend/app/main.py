@@ -7,14 +7,14 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import ADMIN_TOKEN
-from .db import Base, engine
 from .llm import available_providers
 from .routers import agents, bridge, campaigns, catalog, chat, companies, creatives, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
 from .scheduler import start_scheduler
 
-Base.metadata.create_all(bind=engine)
+# El esquema lo gestiona Alembic (entrypoint.sh corre `alembic upgrade head`).
+# Una sola fuente de verdad para la estructura de la base.
 
-app = FastAPI(title="MetaBot.OS", version="0.11.0")
+app = FastAPI(title="MetaBot.OS", version="0.12.0")
 for router in (companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router):
     app.include_router(router, prefix="/api")
 

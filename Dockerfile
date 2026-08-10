@@ -15,11 +15,16 @@ ENV PYTHONUNBUFFERED=1
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
+COPY backend/migrations ./migrations
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/scripts ./scripts
+COPY backend/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 COPY --from=panel /panel/dist ./panel-dist
 ENV PANEL_DIST=/app/panel-dist
-# La base y las imágenes viven en /data (volumen)
+# La base por defecto es SQLite (desarrollo); en compose se pasa PostgreSQL.
 ENV DATABASE_URL=sqlite:////data/metabot.db
 RUN mkdir -p /data /app/media
 VOLUME ["/data", "/app/media"]
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./entrypoint.sh"]
