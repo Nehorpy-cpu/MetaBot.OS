@@ -11,9 +11,10 @@ import pytest
 from tests.test_api import _create_company, client, db_module
 
 from app import chat as chat_engine
+from app import job_handlers, jobs
 from app import packs as packs_module
 from app import supervisor
-from app.models import Agent, Company, Conversation, Supervision
+from app.models import Agent, Company, Conversation, Job, Supervision
 
 
 def _mock_llm(responses):
@@ -24,17 +25,6 @@ def _mock_llm(responses):
         return responses[min(len(calls) - 1, len(responses) - 1)]
 
     return fake_chat_raw, calls
-
-
-def _set_supervision(company_id: int, modo: str, pct: int = 100) -> None:
-    db = db_module.SessionLocal()
-    try:
-        company = db.get(Company, company_id)
-        company.supervision = modo
-        company.supervision_pct = pct
-        db.commit()
-    finally:
-        db.close()
 
 
 def _empresa(**kwargs) -> Company:
@@ -391,7 +381,13 @@ def test_respuesta_larguisima_se_recorta():
 # --------------------------------------------------------------------------
 
 @pytest.mark.anyio
-async def test_shadow_no_cambia_la_respuesta_pero_deja_directiva(monkeypatch):
+async def test_shadow_no_hace_esperar_al_cliente(monkeypatch):
+    """El modo shadow ENCOLA: no llama al modelo dentro del turno.
+
+    Regresión de producción: revisando en línea, shadow le agregaba ~36 s a
+    una respuesta que —por definición— la revisión no puede cambiar, porque
+    ya se envió.
+    """
     db = db_module.SessionLocal()
     try:
         company = Company(name="Shadow SA", vertical="retail", packs="commerce",
@@ -402,6 +398,50 @@ async def test_shadow_no_cambia_la_respuesta_pero_deja_directiva(monkeypatch):
         db.add(conv)
         db.commit()
 
+        async def explota(*args, **kwargs):
+            raise AssertionError("shadow no puede llamar al modelo dentro del turno")
+
+        monkeypatch.setattr(supervisor, "chat_raw", explota)
+        r = await supervisor.review(
+            db, company, conv,
+            cliente="busco un perfume", respuesta="No encontré nada.",
+            actions=[{"tool": "search_catalog", "result": {"products": []}}],
+            turnos_cliente=1, rondas_agotadas=False,
+        )
+        assert r["reply"] is None and r["escalate"] is False
+        assert r["action"] == "encolada"
+
+        encolado = db.query(Job).filter(Job.kind == job_handlers.SUPERVISION_KIND).one()
+        assert encolado.status == "pending"
+        assert json.loads(encolado.payload)["conversation_id"] == conv.id
+    finally:
+        db.close()
+
+
+@pytest.mark.anyio
+async def test_el_trabajo_encolado_deja_la_directiva(monkeypatch):
+    """Y cuando el trabajo corre —ya fuera del turno— sí produce el análisis."""
+    db = db_module.SessionLocal()
+    try:
+        company = Company(name="Shadow Cola SA", vertical="retail", packs="commerce",
+                          supervision="shadow", supervision_pct=100)
+        db.add(company)
+        db.flush()
+        conv = Conversation(company_id=company.id, contact_phone="+595971000019")
+        db.add(conv)
+        db.commit()
+
+        async def nada(*args, **kwargs):
+            return {"content": "{}"}
+
+        monkeypatch.setattr(supervisor, "chat_raw", nada)
+        await supervisor.review(
+            db, company, conv,
+            cliente="busco un perfume", respuesta="No encontré nada.",
+            actions=[{"tool": "search_catalog", "result": {"products": []}}],
+            turnos_cliente=1, rondas_agotadas=False,
+        )
+
         fake, _ = _mock_llm([{"content": json.dumps({
             "action": "rewrite",
             "reply": "TEXTO NUEVO DEL SUPERVISOR",
@@ -410,20 +450,20 @@ async def test_shadow_no_cambia_la_respuesta_pero_deja_directiva(monkeypatch):
         })}])
         monkeypatch.setattr(supervisor, "chat_raw", fake)
 
-        r = await supervisor.review(
-            db, company, conv,
-            cliente="busco un perfume", respuesta="No encontré nada.",
-            actions=[{"tool": "search_catalog", "result": {"products": []}}],
-            turnos_cliente=1, rondas_agotadas=False,
+        trabajo = (
+            db.query(Job)
+            .filter(Job.kind == job_handlers.SUPERVISION_KIND, Job.company_id == company.id)
+            .one()
         )
-        assert r["reply"] is None, "shadow no puede tocar la respuesta de este turno"
-        assert r["escalate"] is False
-        assert r["action"] == "keep"
+        await jobs.run_job(db, trabajo)
+        assert trabajo.status == "done"
+
         db.refresh(conv)
         assert conv.pending_directive.startswith("Preguntá el presupuesto")
-
         registro = db.query(Supervision).filter(Supervision.conversation_id == conv.id).one()
         assert registro.arm == "supervised"
+        # Propuso reescribir, pero en shadow la respuesta ya se envió.
+        assert registro.action == "keep"
         assert "shadow" in registro.downgraded
     finally:
         db.close()
@@ -513,10 +553,12 @@ async def test_si_el_supervisor_falla_el_cliente_igual_recibe_respuesta(monkeypa
             raise RuntimeError("proveedor caído")
 
         monkeypatch.setattr(supervisor, "chat_raw", revienta)
+        # Disparador inline (se ejecuta dentro del turno): es el caso donde un
+        # fallo del supervisor podría dejar al cliente sin respuesta.
         r = await supervisor.review(
             db, company, conv,
-            cliente="hola", respuesta="Respuesta del CX.",
-            actions=[{"tool": "search_catalog", "result": {"products": []}}],
+            cliente="quiero hablar con alguien", respuesta="Respuesta del CX.",
+            actions=[{"tool": "escalate_to_human", "result": {"ok": True}}],
             turnos_cliente=1, rondas_agotadas=False,
         )
         assert r["reply"] is None and r["escalate"] is False

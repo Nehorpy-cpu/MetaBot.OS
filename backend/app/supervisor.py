@@ -344,6 +344,78 @@ def _parse_veredicto(crudo: str, respuesta_cx: str, fuentes: str) -> dict:
     return veredicto
 
 
+async def ejecutar(
+    db: Session,
+    company: Company,
+    conversation: Conversation,
+    trigger: Trigger,
+    *,
+    cliente: str,
+    respuesta: str,
+    actions: list[dict],
+    modo: str,
+    degradacion: str = "",
+) -> dict:
+    """Llama al supervisor, valida el veredicto y lo registra.
+
+    Devuelve `{"reply", "escalate", "trigger", "action"}`. En modo shadow el
+    `reply` siempre es None: la respuesta de ese turno ya se envió.
+    """
+    agente = (
+        db.query(Agent)
+        .filter(Agent.company_id == company.id, Agent.slug == trigger.agent_slug)
+        .first()
+    )
+    fuentes = json.dumps([a.get("result") for a in actions], ensure_ascii=False)
+    empezo = time.monotonic()
+    salida = await chat_raw(
+        _prompt(company, trigger, cliente, respuesta, actions),
+        tools=None,  # asesor sin herramientas: no puede reentrar al motor
+        model=(agente.model if agente else None),
+        temperature=0.2,
+        max_tokens=700,
+    )
+    veredicto = _parse_veredicto(salida.get("content") or "", respuesta, fuentes)
+    latencia = int((time.monotonic() - empezo) * 1000)
+
+    aplicado = veredicto["action"]
+    nueva_respuesta = None
+    escalar = False
+    if modo == "inline":
+        if veredicto["action"] == "rewrite":
+            nueva_respuesta = veredicto.get("reply")
+        elif veredicto["action"] == "escalate":
+            escalar = True
+            nueva_respuesta = veredicto.get("reply")
+    elif veredicto["action"] in ("rewrite", "escalate"):
+        # En shadow nada toca al cliente en ese turno: solo se registra.
+        aplicado = "keep"
+        degradacion = (degradacion or "modo shadow") + f" (propuso {veredicto['action']})"
+
+    # La directiva sí vale en ambos modos: mejora el PRÓXIMO turno, que es
+    # exactamente lo que shadow puede aportar sin arriesgar nada.
+    if veredicto.get("directive"):
+        conversation.pending_directive = veredicto["directive"][:MAX_DIRECTIVA_CHARS]
+
+    db.add(Supervision(
+        company_id=company.id, conversation_id=conversation.id,
+        trigger_key=trigger.key, agent_slug=trigger.agent_slug, mode=modo,
+        arm="supervised", action=aplicado, reason=veredicto.get("reason", "")[:500],
+        downgraded=degradacion[:120], latency_ms=latencia,
+    ))
+    db.commit()
+    logger.info(
+        "supervisión %s/%s: %s → %s (%sms)",
+        company.id, trigger.key, veredicto["action"], aplicado, latencia,
+    )
+    return {
+        "reply": nueva_respuesta,
+        "escalate": escalar,
+        "trigger": trigger.key,
+        "action": aplicado,
+    }
+
+
 async def review(
     db: Session,
     company: Company,
@@ -356,6 +428,15 @@ async def review(
     rondas_agotadas: bool,
 ) -> dict:
     """Punto de entrada único. Devuelve qué cambia (si algo) en este turno.
+
+    Reparto según el modo efectivo:
+
+    - **inline**: se espera al supervisor, porque puede reescribir lo que se
+      va a enviar. Ese costo es deliberado y se paga solo en los disparadores
+      graves.
+    - **shadow**: se ENCOLA como trabajo durable y se vuelve enseguida. El
+      cliente no espera un análisis que —por definición— no puede cambiar lo
+      que ya recibió. La directiva llega para el turno siguiente.
 
     Contrato con el motor: `{"reply": str|None, "escalate": bool,
     "trigger": str, "action": str}`. `reply=None` significa "no toques nada".
@@ -393,59 +474,21 @@ async def review(
             db.commit()
             return vacio
 
-        agente = (
-            db.query(Agent)
-            .filter(Agent.company_id == company.id, Agent.slug == trigger.agent_slug)
-            .first()
-        )
-        fuentes = json.dumps([a.get("result") for a in actions], ensure_ascii=False)
-        empezo = time.monotonic()
-        salida = await chat_raw(
-            _prompt(company, trigger, cliente, respuesta, actions),
-            tools=None,  # asesor sin herramientas: no puede reentrar al motor
-            model=(agente.model if agente else None),
-            temperature=0.2,
-            max_tokens=700,
-        )
-        veredicto = _parse_veredicto(salida.get("content") or "", respuesta, fuentes)
-        latencia = int((time.monotonic() - empezo) * 1000)
+        if modo != "inline":
+            from . import job_handlers  # tardío: job_handlers importa este módulo
 
-        aplicado = veredicto["action"]
-        nueva_respuesta = None
-        escalar = False
-        if modo == "inline":
-            if veredicto["action"] == "rewrite":
-                nueva_respuesta = veredicto.get("reply")
-            elif veredicto["action"] == "escalate":
-                escalar = True
-                nueva_respuesta = veredicto.get("reply")
-        elif veredicto["action"] in ("rewrite", "escalate"):
-            # En shadow nada toca al cliente en este turno: solo se registra.
-            aplicado = "keep"
-            degradacion = (degradacion or "modo shadow") + f" (propuso {veredicto['action']})"
+            job_handlers.schedule_supervision(
+                db, company, conversation, trigger,
+                cliente=cliente, respuesta=respuesta, actions=actions,
+                turno=turnos_cliente, degradacion=degradacion,
+            )
+            return {**vacio, "trigger": trigger.key, "action": "encolada"}
 
-        # La directiva sí vale en ambos modos: mejora el PRÓXIMO turno, que es
-        # exactamente lo que shadow puede aportar sin arriesgar nada.
-        if veredicto.get("directive"):
-            conversation.pending_directive = veredicto["directive"][:MAX_DIRECTIVA_CHARS]
-
-        db.add(Supervision(
-            company_id=company.id, conversation_id=conversation.id,
-            trigger_key=trigger.key, agent_slug=trigger.agent_slug, mode=modo,
-            arm="supervised", action=aplicado, reason=veredicto.get("reason", "")[:500],
-            downgraded=degradacion[:120], latency_ms=latencia,
-        ))
-        db.commit()
-        logger.info(
-            "supervisión %s/%s: %s → %s (%sms)",
-            company.id, trigger.key, veredicto["action"], aplicado, latencia,
+        return await ejecutar(
+            db, company, conversation, trigger,
+            cliente=cliente, respuesta=respuesta, actions=actions,
+            modo=modo, degradacion=degradacion,
         )
-        return {
-            "reply": nueva_respuesta,
-            "escalate": escalar,
-            "trigger": trigger.key,
-            "action": aplicado,
-        }
     except Exception:
         # Supervisar es una mejora, no un requisito: si falla, el cliente
         # recibe igual la respuesta del CX.

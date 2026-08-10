@@ -123,8 +123,14 @@ gratis: se lee de variables que el motor ya tiene resueltas.
 | Modo | Qué hace |
 |---|---|
 | `off` | Default de toda empresa. Comportamiento byte a byte el de hoy: los disparadores ni se evalúan. |
-| `shadow` | Analiza fuera del camino del cliente. Nunca toca la respuesta de este turno ni escala. Deja una directiva para el turno siguiente. |
-| `inline` | Además puede reescribir la respuesta antes de enviarla y escalar. |
+| `shadow` | Se **encola** como trabajo durable y corre después de que el cliente ya recibió su respuesta. Nunca toca ese turno ni escala. Deja una directiva para el siguiente. |
+| `inline` | Se espera al supervisor dentro del turno, porque puede reescribir lo que se va a enviar. Ese costo es deliberado y solo lo pagan los disparadores graves. |
+
+> Lección cara: la primera versión de `shadow` esperaba al supervisor dentro
+> del turno. Medido en producción, le agregó **36,5 segundos** a una
+> respuesta que —por definición— la revisión no podía cambiar, porque ya se
+> había enviado. "Fuera del camino del cliente" no es una intención: es
+> `jobs.enqueue`.
 
 **Disparadores** — expresados sobre HERRAMIENTAS y PACKS, nunca sobre
 `company.vertical`. Se dispara como mucho uno por turno (el de mayor

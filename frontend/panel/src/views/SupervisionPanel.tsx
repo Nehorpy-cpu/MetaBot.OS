@@ -31,7 +31,7 @@ const MODOS = [
     valor: "shadow" as const,
     titulo: "Observando",
     detalle:
-      "El CEO revisa los turnos que salieron mal, pero nunca toca lo que ya se envió. Deja instrucciones para el mensaje siguiente.",
+      "El CEO revisa los turnos que salieron mal después de que el cliente ya recibió su respuesta, así no lo hace esperar. Deja instrucciones para el mensaje siguiente.",
     icono: Eye,
   },
   {
@@ -120,7 +120,7 @@ export function SupervisionPanel({ company, onChanged }: { company: Company; onC
             <Metrica
               etiqueta="Tarda en revisar"
               valor={report.latencia_media_ms ? `${(report.latencia_media_ms / 1000).toFixed(1)} s` : "—"}
-              nota="Fuera del tiempo de espera del cliente"
+              nota="En modo Observando no lo espera el cliente"
             />
           </div>
 
