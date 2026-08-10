@@ -146,6 +146,8 @@ def test_reminders_for_date():
 def test_send_reminders_dry_run(monkeypatch):
     company = _create_company(name="Clínica Envíos")
     cid = company["id"]
+    # Los recordatorios son mensajes proactivos: solo salen por Cloud API.
+    client.patch(f"/api/companies/{cid}", json={"wa_mode": "meta"})
     doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Envío"}).json()
     client.post(
         f"/api/companies/{cid}/appointments",
@@ -234,6 +236,67 @@ def test_bot_booking_fills_complete_doctor_template(monkeypatch):
     assert "+595961888777" in summary["text"]  # teléfono tomado de la conversación
     assert "11:00" in summary["text"]
     assert "Dolor de muela" in summary["text"]
+
+
+def test_reminders_blocked_on_community_qr_channel(monkeypatch):
+    """El conector QR (comunidad) no envía mensajes proactivos: mandar
+    recordatorios no solicitados por WhatsApp Web es lo que hace que
+    restrinjan el número."""
+    company = _create_company(name="Clínica QR")
+    cid = company["id"]
+    client.patch(f"/api/companies/{cid}", json={"wa_mode": "qr"})
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. QR"}).json()
+    client.post(
+        f"/api/companies/{cid}/appointments",
+        json={
+            "doctor_id": doc["id"],
+            "patient_name": "Paciente QR",
+            "patient_phone": "+595971222333",
+            "scheduled_at": "2030-05-05T09:00:00",
+        },
+    )
+
+    sent = []
+
+    async def fake_send(pnid, to, text):
+        sent.append(to)
+        return {"sent": True}
+
+    monkeypatch.setattr(medical_router.whatsapp, "send_text", fake_send)
+    resp = client.post(f"/api/companies/{cid}/reminders/send", params={"on_date": "2030-05-05"})
+    data = resp.json()
+    assert data["skipped"] is True
+    assert "proactivos" in data["reason"]
+    assert sent == []  # NADA se envió por el canal de comunidad
+
+
+def test_channel_profiles_declare_honest_capabilities():
+    from app import channels
+
+    qr = channels.profile_for("qr")
+    cloud = channels.profile_for("meta")
+    # El conector de comunidad no se presenta como oficial
+    assert qr.official is False
+    assert "no es una integración oficial" in qr.warning.lower()
+    assert cloud.official is True
+    # Ambos responden y mandan fotos; solo el oficial manda proactivos/plantillas
+    assert qr.can(channels.Capability.REPLY)
+    assert qr.can(channels.Capability.SEND_MEDIA)
+    assert not qr.can(channels.Capability.SEND_PROACTIVE)
+    assert not qr.can(channels.Capability.SEND_TEMPLATE)
+    assert cloud.can(channels.Capability.SEND_PROACTIVE)
+    assert cloud.can(channels.Capability.SEND_TEMPLATE)
+    assert channels.can_send_proactive("meta") is True
+    assert channels.can_send_proactive("qr") is False
+
+
+def test_model_router_uses_different_model_for_audit():
+    """Quien audita no debe ser el mismo modelo que produjo la salida."""
+    from app.llm import model_for
+
+    assert model_for("cx") != model_for("audit")
+    assert model_for("cx", override="modelo/propio") == "modelo/propio"
+    assert model_for("tarea-inexistente") is None
 
 
 def test_doctor_calendar_ics():

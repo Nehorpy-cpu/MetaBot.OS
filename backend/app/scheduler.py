@@ -60,9 +60,14 @@ async def job_prompt_optimization():
 async def job_send_reminders():
     from .routers.medical import list_reminders  # import tardío: evita ciclo
 
+    from . import channels
+
     db = SessionLocal()
     try:
         for company in db.query(Company).filter(Company.wa_mode != "none").all():
+            # Solo canales con capability de mensaje proactivo (Cloud API).
+            if not channels.can_send_proactive(company.wa_mode):
+                continue
             try:
                 data = list_reminders(company.id, None, db)
                 for r in data["reminders"]:

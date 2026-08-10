@@ -25,7 +25,24 @@ export interface WaStatus {
   status: string;
   qr?: string | null;
   phone?: string | null;
+  channel_name?: string;
+  official?: boolean;
+  warning?: string;
+  capabilities?: string[];
 }
+
+export const CAPABILITY_ES: Record<string, string> = {
+  can_reply: "Responder mensajes",
+  can_send_media: "Enviar fotos y archivos",
+  can_send_catalog: "Enviar catálogo",
+  can_send_template: "Plantillas aprobadas",
+  can_send_proactive: "Escribir primero (recordatorios y campañas)",
+  can_receive_voice: "Recibir audios",
+  can_receive_images: "Recibir imágenes",
+  can_receive_location: "Recibir ubicación",
+};
+
+export const ALL_CAPABILITIES = Object.keys(CAPABILITY_ES);
 
 export interface AgentSummary {
   id: number;

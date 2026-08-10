@@ -13,6 +13,30 @@ class LLMError(Exception):
     pass
 
 
+# --- Model Router: se elige modelo por TAREA, no por marca ---
+#
+# Regla explícita del proyecto: quien audita no debe ser el mismo modelo que
+# produjo la salida. Un proveedor entra o sale según resultados, cambiando
+# solo esta tabla.
+TASK_MODELS: dict[str, str] = {
+    # Conversación con cliente: baja latencia + buen tool-calling
+    "cx": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    # Razonamiento/planificación
+    "reasoning": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    # Auditoría: modelo DISTINTO al que produce, para no auto-aprobarse
+    "audit": "meta/llama-3.3-70b-instruct",
+    # Redacción creativa
+    "creative": "mistralai/mistral-large-2-instruct",
+    # Extracción estructurada de datos (catálogo, perfiles)
+    "extraction": "meta/llama-3.3-70b-instruct",
+}
+
+
+def model_for(task: str, override: str | None = None) -> str | None:
+    """Modelo a usar para una tarea. `override` (config del agente) gana."""
+    return override or TASK_MODELS.get(task)
+
+
 def available_providers() -> list[dict]:
     return [p for p in LLM_PROVIDERS if p["api_key"]]
 

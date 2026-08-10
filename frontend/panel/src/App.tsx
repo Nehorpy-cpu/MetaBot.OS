@@ -9,7 +9,7 @@ import {
   validateToken, waApi, type AgentDetail, type AgentSummary, type Appointment,
   type Campaign, type ChatMessage, type Company, type Competitor, type Conversation, type Creative, type DailySummary,
   type DashboardData, type Doctor, type Finding, type Product, type PromptSuggestion, type Report, type Service,
-  type ServiceSuggestion, type WaStatus, STATUS_ES,
+  type ServiceSuggestion, type WaStatus, ALL_CAPABILITIES, CAPABILITY_ES, STATUS_ES,
 } from "./api";
 
 const AGENT_ICONS: Record<string, typeof Command> = {
@@ -1074,6 +1074,30 @@ function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCo
           </button>
         ))}
       </div>
+
+      {status?.capabilities && (
+        <div className={`${card} p-5 space-y-3`}>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">
+              {status.channel_name ?? "Canal"}
+            </h3>
+            <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase ${status.official ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
+              {status.official ? "Oficial" : "Comunidad"}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5">
+            {ALL_CAPABILITIES.map((cap) => {
+              const has = status.capabilities?.includes(cap);
+              return (
+                <div key={cap} className={`text-xs flex items-center gap-2 ${has ? "text-zinc-300" : "text-zinc-600"}`}>
+                  <span className={has ? "text-emerald-400" : "text-zinc-700"}>{has ? "✓" : "✕"}</span>
+                  {CAPABILITY_ES[cap]}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {company.wa_mode === "qr" && (
         <div className={`${card} p-6 space-y-4`}>

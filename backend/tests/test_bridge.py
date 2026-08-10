@@ -72,4 +72,9 @@ def test_wa_status_mode_none():
     company = _create_company(name="Empresa Sin Canal")
     resp = client.get(f"/api/companies/{company['id']}/wa/status")
     assert resp.status_code == 200
-    assert resp.json() == {"mode": "none", "status": "n/a"}
+    data = resp.json()
+    assert data["mode"] == "none"
+    assert data["status"] == "n/a"
+    # El estado del canal informa siempre qué puede hacer (capabilities)
+    assert data["capabilities"] == ["can_reply", "can_send_media"]
+    assert data["official"] is True

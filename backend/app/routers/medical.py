@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import whatsapp
+from .. import channels, whatsapp
 from ..config import TIMEZONE
 from ..db import get_db
 from ..models import Appointment, Company, Doctor
@@ -192,9 +192,26 @@ def list_reminders(company_id: int, on_date: date | None = None, db: Session = D
 
 @router.post("/companies/{company_id}/reminders/send")
 async def send_reminders(company_id: int, on_date: date | None = None, db: Session = Depends(get_db)):
-    """Envía los recordatorios por WhatsApp (dry-run si no hay token)."""
+    """Envía los recordatorios por WhatsApp (dry-run si no hay token).
+
+    Un recordatorio es un mensaje PROACTIVO (le escribimos primero al
+    cliente). Solo se envía por canales que declaran esa capability: por el
+    conector de comunidad (QR) no se manda, porque es justamente lo que hace
+    que WhatsApp restrinja el número.
+    """
     company = _get_company(company_id, db)
     data = list_reminders(company_id, on_date, db)
+    profile = channels.profile_for(company.wa_mode)
+    if not profile.can(channels.Capability.SEND_PROACTIVE):
+        return {
+            "date": data["date"],
+            "skipped": True,
+            "reason": (
+                f"El canal actual ({profile.name}) no admite mensajes proactivos. "
+                "Los recordatorios quedan listos para enviarse a mano o al activar Cloud API."
+            ),
+            "results": [{**r, "send": {"skipped": True}} for r in data["reminders"]],
+        }
     results = []
     for r in data["reminders"]:
         if not r["phone"]:

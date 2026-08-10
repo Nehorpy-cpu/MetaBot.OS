@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from .. import channels
 from .. import chat as chat_engine
 from ..config import BRIDGE_SECRET, BRIDGE_URL
 from ..db import get_db
@@ -87,10 +88,17 @@ def _qr_company(company_id: int, db: Session) -> Company:
 @router.get("/companies/{company_id}/wa/status")
 async def wa_status(company_id: int, db: Session = Depends(get_db)):
     company = _qr_company(company_id, db)
+    profile = channels.profile_for(company.wa_mode)
+    meta = {
+        "channel_name": profile.name,
+        "official": profile.official,
+        "warning": profile.warning,
+        "capabilities": sorted(c.value for c in profile.capabilities),
+    }
     if company.wa_mode != "qr":
-        return {"mode": company.wa_mode, "status": "n/a"}
+        return {"mode": company.wa_mode, "status": "n/a", **meta}
     info = await _bridge_call("GET", f"/sessions/{company_id}/status")
-    return {"mode": "qr", **info}
+    return {"mode": "qr", **info, **meta}
 
 
 @router.post("/companies/{company_id}/wa/start")
