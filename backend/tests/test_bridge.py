@@ -19,7 +19,7 @@ def test_bridge_incoming_replies_for_qr_company(monkeypatch):
     cid = company["id"]
     client.patch(f"/api/companies/{cid}", json={"wa_mode": "qr"})
 
-    async def fake_handle(db, company_obj, phone, text, contact_name="", channel="whatsapp"):
+    async def fake_handle(db, company_obj, phone, text, contact_name="", channel="whatsapp", external_id=""):
         assert company_obj.id == cid
         assert phone == "+595971999888"
         assert contact_name == "Doña Rosa"

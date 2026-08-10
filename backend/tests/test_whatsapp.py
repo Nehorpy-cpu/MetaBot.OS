@@ -66,7 +66,7 @@ def test_webhook_routes_message_to_tenant_and_replies(monkeypatch):
     cid = company["id"]
     client.patch(f"/api/companies/{cid}", json={"wa_phone_number_id": "PNID-777"})
 
-    async def fake_handle(db, company_obj, phone, text, contact_name="", channel="whatsapp"):
+    async def fake_handle(db, company_obj, phone, text, contact_name="", channel="whatsapp", external_id=""):
         assert company_obj.id == cid
         assert phone == "+595971234567"
         assert text == "Hola, quiero un turno"

@@ -86,9 +86,16 @@ async def receive(request: Request, db: Session = Depends(get_db)):
                     outcome = await chat_engine.handle_incoming(
                         db, company, f"+{wa_from}", text,
                         contact_name=contacts.get(wa_from, ""),
+                        # Meta reenvía el webhook si no recibe 200 a tiempo:
+                        # el id del mensaje evita procesarlo dos veces.
+                        external_id=msg.get("id", ""),
                     )
                 except LLMError as exc:
                     logger.error("LLM caído para company %s: %s", company.id, exc)
+                    continue
+                if outcome.get("duplicate"):
+                    # Reentrega de Meta: ya se respondió, no se manda de nuevo.
+                    logger.info("mensaje %s ya procesado; se omite reenvío", msg.get("id"))
                     continue
                 reply = outcome.get("reply")
                 for item in (outcome.get("media") or [])[:5]:

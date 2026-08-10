@@ -10,6 +10,7 @@ Diseño:
 """
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,7 @@ from .config import TIMEZONE
 from .llm import chat_raw
 from .models import (
     Agent,
+    AgentRun,
     Appointment,
     Company,
     Conversation,
@@ -430,7 +432,40 @@ async def handle_incoming(
     text: str,
     contact_name: str = "",
     channel: str = "whatsapp",
+    external_id: str = "",
 ) -> dict:
+    """Procesa un mensaje entrante.
+
+    Idempotente por `external_id`: WhatsApp reentrega mensajes al reconectar
+    y una reentrega no debe generar otra respuesta ni otra cita.
+    """
+    started = time.monotonic()
+    if external_id:
+        ya_procesado = (
+            db.query(Message)
+            .filter(Message.company_id == company.id, Message.external_id == external_id)
+            .first()
+        )
+        if ya_procesado:
+            # Ya se respondió a este mensaje: no se vuelve a procesar.
+            previa = (
+                db.query(Message)
+                .filter(
+                    Message.conversation_id == ya_procesado.conversation_id,
+                    Message.direction == "out",
+                    Message.id > ya_procesado.id,
+                )
+                .order_by(Message.id)
+                .first()
+            )
+            return {
+                "conversation_id": ya_procesado.conversation_id,
+                "reply": previa.body if previa else None,
+                "status": "duplicate",
+                "duplicate": True,
+                "actions": [],
+                "media": [],
+            }
     conversation = (
         db.query(Conversation)
         .filter(
@@ -452,7 +487,8 @@ async def handle_incoming(
     elif contact_name and not conversation.contact_name:
         conversation.contact_name = contact_name
 
-    db.add(Message(conversation_id=conversation.id, direction="in", body=text))
+    db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="in",
+                   body=text, external_id=external_id or None))
     db.commit()
 
     agent = (
@@ -543,7 +579,21 @@ async def handle_incoming(
     if not reply_text:
         reply_text = "Perdoná, ¿me repetís eso último?"
 
-    db.add(Message(conversation_id=conversation.id, direction="out", body=reply_text))
+    db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="out", body=reply_text))
+    tools_used = [a["tool"] for a in actions]
+    db.add(AgentRun(
+        company_id=company.id,
+        agent_slug="cx",
+        conversation_id=conversation.id,
+        model=agent.model,
+        question=text[:2000],
+        answer=reply_text[:2000],
+        tools_used=",".join(tools_used)[:300],
+        latency_ms=int((time.monotonic() - started) * 1000),
+        tool_rounds=len(actions),
+        escalated="escalate_to_human" in tools_used,
+        booked=any(a["tool"] == "book_appointment" and a["result"].get("ok") for a in actions),
+    ))
     db.commit()
     return {
         "conversation_id": conversation.id,

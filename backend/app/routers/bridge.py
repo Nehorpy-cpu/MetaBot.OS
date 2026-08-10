@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels
+from .. import channels, sessions
 from .. import chat as chat_engine
 from ..config import BRIDGE_SECRET, BRIDGE_URL
 from ..db import get_db
@@ -32,8 +32,17 @@ class BridgeMessage(BaseModel):
     from_: str = Field(alias="from", min_length=3, max_length=50)
     name: str = ""
     text: str = Field(min_length=1, max_length=4000)
+    # id del mensaje en WhatsApp: permite deduplicar reentregas
+    external_id: str = Field(default="", max_length=120)
 
     model_config = {"populate_by_name": True}
+
+
+class HeartbeatIn(BaseModel):
+    company_id: int
+    worker_id: str = Field(min_length=1, max_length=64)
+    status: str = ""
+    phone: str = ""
 
 
 @router.post("/webhooks/bridge")
@@ -52,11 +61,38 @@ async def bridge_incoming(
         outcome = await chat_engine.handle_incoming(
             db, company, payload.from_, payload.text,
             contact_name=payload.name, channel="whatsapp",
+            external_id=payload.external_id,
         )
     except LLMError as exc:
         # El bridge no reintenta: registrar y no responder nada al cliente
         raise HTTPException(503, f"LLM no disponible: {exc}")
-    return {"reply": outcome.get("reply"), "status": outcome.get("status")}
+    return {
+        "reply": outcome.get("reply"),
+        "status": outcome.get("status"),
+        "media": outcome.get("media", []),
+        "duplicate": outcome.get("duplicate", False),
+    }
+
+
+@router.post("/webhooks/bridge/lease")
+def bridge_lease(payload: HeartbeatIn, db: Session = Depends(get_db),
+                 x_bridge_secret: str | None = Header(default=None)):
+    """El worker pide el lease de la sesión. Si otro worker vivo lo tiene,
+    responde granted=false y ese worker NO debe abrir la sesión."""
+    _check_secret(x_bridge_secret)
+    granted = sessions.acquire(db, payload.company_id, payload.worker_id)
+    return {"granted": granted}
+
+
+@router.post("/webhooks/bridge/heartbeat")
+def bridge_heartbeat(payload: HeartbeatIn, db: Session = Depends(get_db),
+                     x_bridge_secret: str | None = Header(default=None)):
+    """Latido: renueva el lease y reporta estado. Si devuelve held=false, el
+    worker perdió el lease y debe cerrar su sesión."""
+    _check_secret(x_bridge_secret)
+    held = sessions.heartbeat(db, payload.company_id, payload.worker_id,
+                              status=payload.status, phone=payload.phone)
+    return {"held": held}
 
 
 # ---- Proxy de gestión de sesión QR para el panel ----

@@ -236,14 +236,63 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    # Deduplicación: WhatsApp reentrega mensajes al reconectar. El id del
+    # mensaje en el canal es único por empresa, así una reentrega no genera
+    # otra respuesta (ni otra cita).
+    __table_args__ = (UniqueConstraint("company_id", "external_id", name="uq_message_external_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True, default=0)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
     direction: Mapped[str] = mapped_column(String(10))  # "in" | "out"
     body: Mapped[str] = mapped_column(Text)
+    external_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+class ChannelSession(Base):
+    """Lease de sesión de canal: impide que dos workers usen la misma sesión
+    de WhatsApp (que la corrompe) y da visibilidad de latido."""
+
+    __tablename__ = "channel_sessions"
+    __table_args__ = (UniqueConstraint("company_id", "channel"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(20), default="whatsapp")
+    worker_id: Mapped[str] = mapped_column(String(64), default="")
+    lease_until: Mapped[datetime] = mapped_column(default=utcnow)
+    last_heartbeat: Mapped[datetime] = mapped_column(default=utcnow)
+    status: Mapped[str] = mapped_column(String(20), default="disconnected")
+    phone: Mapped[str] = mapped_column(String(40), default="")
+
+
+class AgentRun(Base):
+    """Una ejecución de agente: la unidad de medida del Evaluator.
+
+    Sin esto, 'el bot mejoró' es una opinión. Con esto se decide qué modelo
+    entra por métricas y no por marca.
+    """
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    agent_slug: Mapped[str] = mapped_column(String(30), index=True)
+    conversation_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    model: Mapped[str] = mapped_column(String(120), default="")
+    question: Mapped[str] = mapped_column(Text, default="")
+    answer: Mapped[str] = mapped_column(Text, default="")
+    tools_used: Mapped[str] = mapped_column(String(300), default="")  # coma-separado
+    latency_ms: Mapped[int] = mapped_column(default=0)
+    tool_rounds: Mapped[int] = mapped_column(default=0)
+    escalated: Mapped[bool] = mapped_column(default=False)
+    booked: Mapped[bool] = mapped_column(default=False)   # cita concretada
+    ok: Mapped[bool] = mapped_column(default=True)
+    error: Mapped[str] = mapped_column(String(300), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
 
 
 class Report(Base):

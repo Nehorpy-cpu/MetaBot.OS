@@ -14,6 +14,8 @@ class ChatIn(BaseModel):
     contact_phone: str = Field(min_length=3, max_length=50)
     contact_name: str = ""
     text: str = Field(min_length=1, max_length=4000)
+    # id del mensaje en el canal: si viene, se deduplican reentregas
+    external_id: str = Field(default="", max_length=120)
 
 
 class ConversationOut(BaseModel):
@@ -42,7 +44,8 @@ async def send_chat(company_id: int, payload: ChatIn, db: Session = Depends(get_
         raise HTTPException(404, "Empresa no encontrada")
     try:
         return await chat_engine.handle_incoming(
-            db, company, payload.contact_phone, payload.text, payload.contact_name
+            db, company, payload.contact_phone, payload.text, payload.contact_name,
+            external_id=payload.external_id,
         )
     except LLMError as exc:
         raise HTTPException(503, f"LLM no disponible: {exc}")

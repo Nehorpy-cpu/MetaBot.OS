@@ -30,6 +30,19 @@ const BRIDGE_SECRET = process.env.BRIDGE_SECRET || "";
 const SESSIONS_DIR = path.resolve("sessions");
 
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
+// Identidad de este proceso: la usa el lease para impedir que dos workers
+// abran la MISMA sesión de WhatsApp (eso corrompe las credenciales).
+const WORKER_ID = `${process.pid}-${Date.now().toString(36)}`;
+
+async function backend(path, body) {
+  const resp = await fetch(`${BACKEND_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Bridge-Secret": BRIDGE_SECRET },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`backend ${path}: ${resp.status}`);
+  return resp.json();
+}
 const sessions = new Map(); // companyId -> { sock, status, qrDataUrl, phone }
 
 if (!BRIDGE_SECRET) {
@@ -47,6 +60,20 @@ async function startSession(companyId) {
   if (existing && ["connected", "connecting", "qr"].includes(existing.status)) {
     return sessionInfo(companyId);
   }
+  // Lease: si otro worker vivo tiene esta sesión, no se abre.
+  try {
+    const { granted } = await backend("/api/webhooks/bridge/lease", {
+      company_id: Number(companyId), worker_id: WORKER_ID,
+    });
+    if (!granted) {
+      logger.warn({ companyId }, "otro worker tiene el lease de esta sesión; no se abre");
+      return { status: "locked_by_other_worker" };
+    }
+  } catch (err) {
+    logger.error({ err: String(err) }, "no se pudo obtener el lease");
+    return { status: "lease_error" };
+  }
+
   const dir = path.join(SESSIONS_DIR, String(companyId));
   fs.mkdirSync(dir, { recursive: true });
   const { state, saveCreds } = await useMultiFileAuthState(dir);
@@ -65,6 +92,25 @@ async function startSession(companyId) {
 
   sock.ev.on("creds.update", saveCreds);
 
+  // Latido: renueva el lease y reporta estado. Si se pierde el lease (otro
+  // worker lo tomó), esta sesión se cierra para no corromper credenciales.
+  session.heartbeat = setInterval(async () => {
+    try {
+      const { held } = await backend("/api/webhooks/bridge/heartbeat", {
+        company_id: Number(companyId), worker_id: WORKER_ID,
+        status: session.status, phone: session.phone || "",
+      });
+      if (!held) {
+        logger.warn({ companyId }, "lease perdido: cerrando sesión local");
+        clearInterval(session.heartbeat);
+        try { session.sock.end(); } catch { /* ya cerrado */ }
+        sessions.delete(companyId);
+      }
+    } catch (err) {
+      logger.error({ err: String(err) }, "heartbeat falló");
+    }
+  }, 45000);
+
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
@@ -79,6 +125,7 @@ async function startSession(companyId) {
     }
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
+      if (session.heartbeat) clearInterval(session.heartbeat);
       if (code === DisconnectReason.loggedOut) {
         logger.warn({ companyId }, "sesión cerrada desde el teléfono; limpiando credenciales");
         sessions.delete(companyId);
@@ -125,13 +172,21 @@ async function handleIncoming(companyId, session, msg) {
       "Content-Type": "application/json",
       "X-Bridge-Secret": BRIDGE_SECRET,
     },
-    body: JSON.stringify({ company_id: companyId, from, name, text }),
+    body: JSON.stringify({
+      company_id: Number(companyId), from, name, text,
+      // id del mensaje en WhatsApp: el backend deduplica reentregas
+      external_id: msg.key?.id || "",
+    }),
   });
   if (!resp.ok) {
     logger.error({ status: resp.status }, "backend rechazó el mensaje");
     return;
   }
   const data = await resp.json();
+  if (data.duplicate) {
+    logger.info({ companyId, from }, "mensaje ya procesado (reentrega): no se responde de nuevo");
+    return;
+  }
   if (!data.reply && !(data.media || []).length) return;
 
   // Toque humano: presencia "escribiendo" proporcional al largo del texto
