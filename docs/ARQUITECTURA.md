@@ -106,6 +106,56 @@ Healthcare, Travel…).
   profesional. Triaje administrativo, agenda, preparación de estudios y
   derivación. Ante lo que excede su autoridad → escalamiento a humano.
 
+## Supervisión del CEO (`app/supervisor.py`)
+
+El CEO **nunca corre antes del CX**. Corre después, y solo si el propio
+resultado del CX muestra que el turno salió mal. La ruta rápida —la del
+cliente esperando en WhatsApp— no paga nada.
+
+Esto contradice el diseño intuitivo (clasificar la intención y rutear), y
+la razón es medible: la línea base de una respuesta con herramientas es de
+**~61 segundos**. Cualquier llamada al modelo *antes* de responder la
+duplica. Detectar que un turno salió mal, en cambio, es determinístico y
+gratis: se lee de variables que el motor ya tiene resueltas.
+
+**Tres modos por empresa** (`Company.supervision`):
+
+| Modo | Qué hace |
+|---|---|
+| `off` | Default de toda empresa. Comportamiento byte a byte el de hoy: los disparadores ni se evalúan. |
+| `shadow` | Analiza fuera del camino del cliente. Nunca toca la respuesta de este turno ni escala. Deja una directiva para el turno siguiente. |
+| `inline` | Además puede reescribir la respuesta antes de enviarla y escalar. |
+
+**Disparadores** — expresados sobre HERRAMIENTAS y PACKS, nunca sobre
+`company.vertical`. Se dispara como mucho uno por turno (el de mayor
+prioridad), porque supervisar dos cosas gasta el doble sin valer el doble.
+El modo de cada disparador es un **techo**: `catalog_miss` se analiza en
+shadow aunque la empresa esté en inline. Perder una venta no justifica el
+riesgo de reescribirle el mensaje al cliente; una indicación clínica sí.
+
+**Anti-bucle, por construcción y no por promesa**: el supervisor es un
+asesor sin herramientas (`tools=None`), así que estructuralmente no puede
+reentrar al motor; corre una vez por turno; hay presupuesto por
+conversación (3/24h) y por empresa (200/día); pausar el agente en el panel
+lo apaga; y `off` lo apaga entero.
+
+**El veredicto pasa por guardias determinísticas** antes de tocar nada:
+acción dentro del enum, largo acotado, sintaxis de herramienta saneada y
+—lo más importante— ninguna cifra que no esté en la respuesta del CX o en
+el resultado de las herramientas. Todo lo que no se puede validar termina
+en `keep`: ante la duda se envía lo que el CX ya había producido, que es
+exactamente lo que pasaría sin supervisión.
+
+**Brazo de control**: `supervision_pct` deja a propósito un porcentaje de
+conversaciones sin supervisar, con el disparo igual registrado. Sin eso no
+hay forma de responder la única pregunta que importa antes de activar
+`inline`: ¿supervisar mejora las respuestas o solo agrega costo?
+
+> Nota: `app/intents.py` (taxonomía de intención) **no** participa de este
+> camino. Se construyó pensando en rutear por intención y el análisis
+> mostró que rutear así es justamente lo que duplica la latencia. Queda
+> disponible para analítica e informes, no para decidir.
+
 ## Métricas que definen el éxito
 
 No "cantidad de agentes" ni "cantidad de modelos": conversaciones

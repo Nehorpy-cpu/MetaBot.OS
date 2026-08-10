@@ -7,6 +7,34 @@ export interface Company {
   address: string;
   wa_mode: "none" | "meta" | "qr";
   wa_phone_number_id: string;
+  supervision: "off" | "shadow" | "inline";
+  supervision_pct: number;
+}
+
+export interface SupervisionEvent {
+  id: number;
+  conversation_id: number;
+  trigger: string;
+  agente: string;
+  modo: string;
+  brazo: string;
+  accion: string;
+  motivo: string;
+  degradado: string;
+  latencia_ms: number;
+  creado: string;
+}
+
+export interface SupervisionReport {
+  supervision: "off" | "shadow" | "inline";
+  supervision_pct: number;
+  total: number;
+  supervisadas: number;
+  control: number;
+  por_disparador: Record<string, number>;
+  por_accion: Record<string, number>;
+  latencia_media_ms: number;
+  recientes: SupervisionEvent[];
 }
 
 export interface PromptSuggestion {
@@ -153,6 +181,8 @@ export const api = {
   dashboardSeries: (companyId: number) =>
     request<DashboardSeries>(`/companies/${companyId}/dashboard/series`),
   listAgents: (companyId: number) => request<AgentSummary[]>(`/companies/${companyId}/agents`),
+  supervisionReport: (companyId: number) =>
+    request<SupervisionReport>(`/companies/${companyId}/supervision`),
   getAgent: (agentId: number) => request<AgentDetail>(`/agents/${agentId}`),
   updateAgent: (agentId: number, data: Partial<AgentDetail>) =>
     request<AgentDetail>(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify(data) }),
@@ -203,7 +233,7 @@ export interface ChatResponse {
 }
 
 export const waApi = {
-  updateCompany: (companyId: number, data: { wa_mode?: string; wa_phone_number_id?: string; address?: string }) =>
+  updateCompany: (companyId: number, data: { wa_mode?: string; wa_phone_number_id?: string; address?: string; supervision?: string; supervision_pct?: number }) =>
     request<Company>(`/companies/${companyId}`, { method: "PATCH", body: JSON.stringify(data) }),
   status: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/status`),
   start: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/start`, { method: "POST" }),

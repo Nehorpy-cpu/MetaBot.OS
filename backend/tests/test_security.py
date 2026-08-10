@@ -62,20 +62,14 @@ def test_booking_rejects_overlap_not_only_exact(monkeypatch):
             })},
         }]}
 
-    calls = [book_at("2030-10-01T10:15"), {"content": "Ese horario se solapa, ¿otro?"}]
-    idx = {"i": 0}
-
     async def fake_chat(messages, **kwargs):
-        r = calls[min(idx["i"], len(calls) - 1)]
-        idx["i"] += 1
-        return await r if hasattr(r, "__await__") else r
-
-    async def fake_chat2(messages, **kwargs):
+        # Primera vuelta: intenta agendar. Segunda (ya con el resultado de la
+        # herramienta): responde en texto.
         if not any(m.get("role") == "tool" for m in messages):
             return await book_at("2030-10-01T10:15")
         return {"content": "Ese horario se solapa con otra cita, ¿querés otro?"}
 
-    monkeypatch.setattr(chat_engine, "chat_raw", fake_chat2)
+    monkeypatch.setattr(chat_engine, "chat_raw", fake_chat)
     resp = client.post(
         f"/api/companies/{cid}/chat", json={"contact_phone": "+595971000123", "text": "A las 10:15"}
     )

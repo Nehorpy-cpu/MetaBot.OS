@@ -120,7 +120,12 @@ export default function App() {
             </div>
           )}
           {active && view === "dashboard" && <DashboardView companyId={active.id} />}
-          {active && view === "agents" && <AgentsView companyId={active.id} />}
+          {active && view === "agents" && (
+            <AgentsView
+              company={active}
+              onCompanyUpdated={() => api.listCompanies().then(setCompanies).catch(() => {})}
+            />
+          )}
           {active && view === "medical" && active.vertical === "medical" && <MedicalAgendaView companyId={active.id} />}
           {active && view === "chat" && <ChatView companyId={active.id} />}
           {active && view === "intelligence" && <IntelligenceView companyId={active.id} />}

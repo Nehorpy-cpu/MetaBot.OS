@@ -18,7 +18,7 @@ DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solape
 
 from sqlalchemy.orm import Session
 
-from . import job_handlers, packs
+from . import job_handlers, packs, supervisor
 from .config import TIMEZONE
 from .llm import chat_raw
 from .models import (
@@ -376,7 +376,9 @@ def _execute_tool(
     return {"error": f"Herramienta desconocida: {name}"}
 
 
-def _build_system_prompt(db: Session, company: Company, agent: Agent) -> str:
+def _build_system_prompt(
+    db: Session, company: Company, agent: Agent, directive: str = ""
+) -> str:
     now = datetime.now(ZoneInfo(TIMEZONE))
     days = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
     parts = [
@@ -425,6 +427,10 @@ def _build_system_prompt(db: Session, company: Company, agent: Agent) -> str:
     if terms:
         glossary = "; ".join(f"'{t.heard}' significa '{t.meaning or t.corrected}'" for t in terms[:30])
         parts.append(f"Glosario local (guaraní/jopara): {glossary}.")
+    if directive:
+        # Instrucción que dejó el supervisor tras revisar el turno anterior.
+        # Vale solo para este turno: se consume al usarla.
+        parts.append(f"NOTA DEL SUPERVISOR para este mensaje: {directive}")
     return "\n\n".join(parts)
 
 
@@ -514,7 +520,13 @@ async def handle_incoming(
         .limit(HISTORY_LIMIT)
         .all()
     )
-    messages: list[dict] = [{"role": "system", "content": _build_system_prompt(db, company, agent)}]
+    # Directiva que dejó el supervisor en el turno anterior: se usa una vez.
+    directive = conversation.pending_directive or ""
+    if directive:
+        conversation.pending_directive = ""
+    messages: list[dict] = [
+        {"role": "system", "content": _build_system_prompt(db, company, agent, directive)}
+    ]
     for m in reversed(history):
         messages.append({"role": "user" if m.direction == "in" else "assistant", "content": m.body})
 
@@ -522,6 +534,7 @@ async def handle_incoming(
     actions: list[dict] = []
     media: list[dict] = []  # fotos reales de catálogo a enviar al cliente
     reply_text = ""
+    rondas_agotadas = False
     booking_blocked = False  # tras un choque de agenda, no se agenda más en este turno
     for _ in range(MAX_TOOL_ROUNDS):
         assistant = await chat_raw(
@@ -566,6 +579,7 @@ async def handle_incoming(
     else:
         # Se agotaron las rondas de herramientas: forzar una respuesta de
         # texto (sin tools) para que el cliente nunca quede sin contestación.
+        rondas_agotadas = True
         messages.append(
             {
                 "role": "user",
@@ -582,6 +596,21 @@ async def handle_incoming(
     if not reply_text:
         reply_text = "Perdoná, ¿me repetís eso último?"
 
+    # El CEO revisa DESPUÉS, y solo si el resultado del CX muestra que el
+    # turno salió mal. Con supervision="off" (el default) esto no cuesta nada.
+    revision = await supervisor.review(
+        db, company, conversation,
+        cliente=text,
+        respuesta=reply_text,
+        actions=actions,
+        turnos_cliente=sum(1 for m in history if m.direction == "in"),
+        rondas_agotadas=rondas_agotadas,
+    )
+    if revision.get("reply"):
+        reply_text = revision["reply"]
+    if revision.get("escalate"):
+        conversation.status = "needs_human"
+
     db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="out", body=reply_text))
     tools_used = [a["tool"] for a in actions]
     db.add(AgentRun(
@@ -594,7 +623,7 @@ async def handle_incoming(
         tools_used=",".join(tools_used)[:300],
         latency_ms=int((time.monotonic() - started) * 1000),
         tool_rounds=len(actions),
-        escalated="escalate_to_human" in tools_used,
+        escalated="escalate_to_human" in tools_used or bool(revision.get("escalate")),
         booked=any(a["tool"] == "book_appointment" and a["result"].get("ok") for a in actions),
     ))
     db.commit()
@@ -604,4 +633,5 @@ async def handle_incoming(
         "status": conversation.status,
         "actions": actions,
         "media": media[:5],
+        "supervision": revision.get("trigger") or None,
     }

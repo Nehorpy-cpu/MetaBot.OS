@@ -6,7 +6,7 @@ from .. import onboarding
 from ..auth import Identity, allowed_company_ids, get_identity
 from ..db import get_db
 from ..llm import LLMError
-from ..models import Agent, Company, Membership
+from ..models import Agent, Company, Membership, Supervision
 from ..permissions import Role
 from ..swarm import _fetch_page_text
 from ..packs import suggested_for
@@ -47,6 +47,8 @@ class CompanyOut(BaseModel):
     address: str
     wa_mode: str
     wa_phone_number_id: str
+    supervision: str
+    supervision_pct: int
 
     model_config = {"from_attributes": True}
 
@@ -56,6 +58,10 @@ class CompanyUpdate(BaseModel):
     address: str | None = Field(default=None, max_length=300)
     wa_mode: str | None = Field(default=None, pattern="^(none|meta|qr)$")
     wa_phone_number_id: str | None = Field(default=None, max_length=50)
+    # Supervisión del CEO. El patrón cierra la puerta a valores inventados:
+    # cualquier cosa fuera de estos tres es 422, no un modo silencioso.
+    supervision: str | None = Field(default=None, pattern="^(off|shadow|inline)$")
+    supervision_pct: int | None = Field(default=None, ge=0, le=100)
 
 
 def _grant_owner(db: Session, identity: Identity, company_id: int) -> None:
@@ -158,6 +164,62 @@ def update_company(company_id: int, payload: CompanyUpdate, db: Session = Depend
     db.commit()
     db.refresh(company)
     return company
+
+
+@router.get("/{company_id}/supervision")
+def supervision_report(company_id: int, db: Session = Depends(get_db)):
+    """Qué está encontrando el CEO al revisar los turnos del CX.
+
+    Sirve para responder la única pregunta que importa antes de activar
+    `inline`: ¿supervisar mejora las respuestas o solo agrega costo? Por eso
+    se muestran separados los dos brazos (supervisado y control).
+    """
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(404, "Empresa no encontrada")
+
+    filas = (
+        db.query(Supervision)
+        .filter(Supervision.company_id == company_id)
+        .order_by(Supervision.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    supervisadas = [f for f in filas if f.arm == "supervised"]
+    por_disparador: dict[str, int] = {}
+    por_accion: dict[str, int] = {}
+    for f in filas:
+        por_disparador[f.trigger_key] = por_disparador.get(f.trigger_key, 0) + 1
+    for f in supervisadas:
+        por_accion[f.action] = por_accion.get(f.action, 0) + 1
+
+    latencias = [f.latency_ms for f in supervisadas if f.latency_ms]
+    return {
+        "supervision": company.supervision,
+        "supervision_pct": company.supervision_pct,
+        "total": len(filas),
+        "supervisadas": len(supervisadas),
+        "control": len(filas) - len(supervisadas),
+        "por_disparador": por_disparador,
+        "por_accion": por_accion,
+        "latencia_media_ms": round(sum(latencias) / len(latencias)) if latencias else 0,
+        "recientes": [
+            {
+                "id": f.id,
+                "conversation_id": f.conversation_id,
+                "trigger": f.trigger_key,
+                "agente": f.agent_slug,
+                "modo": f.mode,
+                "brazo": f.arm,
+                "accion": f.action,
+                "motivo": f.reason,
+                "degradado": f.downgraded,
+                "latencia_ms": f.latency_ms,
+                "creado": f.created_at.isoformat(),
+            }
+            for f in filas[:25]
+        ],
+    }
 
 
 @router.get("/{company_id}/agents", response_model=list[AgentOut])

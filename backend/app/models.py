@@ -97,6 +97,11 @@ class Company(Base):
     # "commerce". Definen herramientas del bot, reglas y módulos del panel.
     packs: Mapped[str] = mapped_column(String(200), default="")
     address: Mapped[str] = mapped_column(String(300), default="")  # para recordatorios de citas
+    # Supervisión del CEO: "off" (default, comportamiento intacto) |
+    # "shadow" (analiza fuera del camino del cliente) | "inline" (además
+    # puede reescribir la respuesta antes de enviarla).
+    supervision: Mapped[str] = mapped_column(String(10), default="off")
+    supervision_pct: Mapped[int] = mapped_column(default=100)  # % de conversaciones supervisadas
     profile: Mapped[str] = mapped_column(Text, default="")  # JSON: productos, audiencia, tono
     # Canal de WhatsApp del tenant: "none" | "meta" (Cloud API) | "qr" (Baileys)
     wa_mode: Mapped[str] = mapped_column(String(10), default="none")
@@ -229,6 +234,8 @@ class Conversation(Base):
     contact_phone: Mapped[str] = mapped_column(String(50), index=True)
     contact_name: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[str] = mapped_column(String(20), default="open")  # open | needs_human
+    # Directiva que dejó el CEO para el próximo turno del CX (modo shadow).
+    pending_directive: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     company: Mapped[Company] = relationship(back_populates="conversations")
@@ -268,6 +275,29 @@ class ChannelSession(Base):
     last_heartbeat: Mapped[datetime] = mapped_column(default=utcnow)
     status: Mapped[str] = mapped_column(String(20), default="disconnected")
     phone: Mapped[str] = mapped_column(String(40), default="")
+
+
+class Supervision(Base):
+    """Una intervención del CEO sobre un turno del CX.
+
+    Queda registrada siempre —incluso cuando decide no hacer nada— para
+    poder medir si supervisar mejora los resultados o solo agrega costo.
+    """
+
+    __tablename__ = "supervisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    trigger_key: Mapped[str] = mapped_column(String(40), index=True)
+    agent_slug: Mapped[str] = mapped_column(String(30))
+    mode: Mapped[str] = mapped_column(String(10))       # shadow | inline
+    arm: Mapped[str] = mapped_column(String(12), default="supervised")  # supervised | control
+    action: Mapped[str] = mapped_column(String(15), default="keep")  # keep|rewrite|directive|escalate
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    downgraded: Mapped[str] = mapped_column(String(120), default="")  # por qué se degradó, si pasó
+    latency_ms: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
 
 
 class Job(Base):

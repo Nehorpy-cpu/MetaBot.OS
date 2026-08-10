@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Activity, Sliders } from "lucide-react";
-import { api, type AgentDetail, type AgentSummary } from "../api";
+import { api, type AgentDetail, type AgentSummary, type Company } from "../api";
 import { card, input, btnPrimary, AGENT_ICONS, Modal } from "../ui";
+import { SupervisionPanel } from "./SupervisionPanel";
 
 export function AgentEditModal({ agentId, onClose, onSaved }: { agentId: number; onClose: () => void; onSaved: () => void }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
@@ -73,12 +74,12 @@ export function AgentEditModal({ agentId, onClose, onSaved }: { agentId: number;
   );
 }
 
-export function AgentsView({ companyId }: { companyId: number }) {
+export function AgentsView({ company, onCompanyUpdated }: { company: Company; onCompanyUpdated: () => void }) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [editing, setEditing] = useState<number | null>(null);
   const load = useCallback(() => {
-    api.listAgents(companyId).then(setAgents).catch(() => setAgents([]));
-  }, [companyId]);
+    api.listAgents(company.id).then(setAgents).catch(() => setAgents([]));
+  }, [company.id]);
   useEffect(load, [load]);
 
   return (
@@ -114,6 +115,7 @@ export function AgentsView({ companyId }: { companyId: number }) {
           );
         })}
       </div>
+      <SupervisionPanel company={company} onChanged={onCompanyUpdated} />
       {editing !== null && <AgentEditModal agentId={editing} onClose={() => setEditing(null)} onSaved={load} />}
     </div>
   );
