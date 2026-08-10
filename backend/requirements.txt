@@ -6,4 +6,5 @@ tzdata>=2024.1
 apscheduler>=3.10
 alembic>=1.13
 psycopg[binary]>=3.2
+email-validator>=2.2
 pytest>=8.0

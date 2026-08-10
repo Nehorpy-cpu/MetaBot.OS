@@ -15,6 +15,72 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class User(Base):
+    """Persona. Global a la plataforma: no cuelga de una empresa.
+
+    A qué empresas accede lo define Membership, nunca un dato del frontend.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    # El operador de la plataforma (nosotros): ve todas las empresas.
+    is_platform_admin: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[str] = mapped_column(String(10), default="active")  # active|disabled
+    failed_attempts: Mapped[int] = mapped_column(default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Membership(Base):
+    """ÚNICA fuente de verdad de qué usuario accede a qué empresa."""
+
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("user_id", "company_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(10), default="operator")
+    status: Mapped[str] = mapped_column(String(10), default="active")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AuthSession(Base):
+    """Sesión opaca y revocable. Se guarda el hash del token, nunca el token."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+    expires_at: Mapped[datetime]
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    ip: Mapped[str] = mapped_column(String(45), default="")
+
+
+class AuditLog(Base):
+    """Bitácora append-only: quién hizo qué, sobre qué empresa."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    actor_kind: Mapped[str] = mapped_column(String(20), default="user")  # user|platform_token|system
+    user_id: Mapped[int | None] = mapped_column(nullable=True)
+    company_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(60))
+    ok: Mapped[bool] = mapped_column(default=True)
+    ip: Mapped[str] = mapped_column(String(45), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+
+
 class Company(Base):
     """Tenant: una empresa, clínica o consultorio."""
 

@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import onboarding
+from ..auth import Identity, allowed_company_ids, get_identity
 from ..db import get_db
 from ..llm import LLMError
 from ..models import Agent, Company
@@ -89,8 +90,21 @@ async def create_company_smart(payload: SmartCompanyCreate, db: Session = Depend
 
 
 @router.get("", response_model=list[CompanyOut])
-def list_companies(db: Session = Depends(get_db)):
-    return db.query(Company).order_by(Company.id).all()
+def list_companies(
+    identity: Identity = Depends(get_identity), db: Session = Depends(get_db)
+):
+    """Solo las empresas donde la identidad tiene membresía activa.
+
+    El operador de la plataforma ve todas; un usuario normal jamás puede
+    enumerar tenants ajenos.
+    """
+    allowed = allowed_company_ids(db, identity)
+    query = db.query(Company)
+    if allowed is not None:
+        if not allowed:
+            return []
+        query = query.filter(Company.id.in_(allowed))
+    return query.order_by(Company.id).all()
 
 
 @router.get("/{company_id}", response_model=CompanyOut)
