@@ -10,6 +10,7 @@ import re
 
 from sqlalchemy.orm import Session
 
+from . import packs
 from .llm import complete
 from .models import Agent, Company
 from .templates import TEMPLATES
@@ -119,6 +120,8 @@ async def profile_and_create(
     company = Company(
         name=name,
         vertical=vertical,
+        # Business DNA → Business Packs: qué capacidades se activan
+        packs=",".join(packs.suggested_for(vertical)),
         niche=str(profile.get("niche", ""))[:200],
         industry=str(profile.get("industry", ""))[:200],
         profile=json.dumps(

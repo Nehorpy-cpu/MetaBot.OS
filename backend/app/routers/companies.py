@@ -8,6 +8,7 @@ from ..db import get_db
 from ..llm import LLMError
 from ..models import Agent, Company
 from ..swarm import _fetch_page_text
+from ..packs import suggested_for
 from ..templates import TEMPLATES
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -60,7 +61,12 @@ class CompanyUpdate(BaseModel):
 def create_company(payload: CompanyCreate, db: Session = Depends(get_db)):
     """Crea el tenant y siembra su enjambre de 6 agentes según la vertical."""
     template = TEMPLATES[payload.vertical]
-    company = Company(name=payload.name, vertical=payload.vertical, niche=template["niche"])
+    company = Company(
+        name=payload.name,
+        vertical=payload.vertical,
+        niche=template["niche"],
+        packs=",".join(suggested_for(payload.vertical)),
+    )
     db.add(company)
     db.flush()
     for spec in template["agents"]:

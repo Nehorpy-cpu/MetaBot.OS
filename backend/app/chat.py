@@ -17,6 +17,7 @@ DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solape
 
 from sqlalchemy.orm import Session
 
+from . import packs
 from .config import TIMEZONE
 from .llm import chat_raw
 from .models import (
@@ -60,103 +61,104 @@ REGLAS DE ESTILO (obligatorias):
 - Si no sabés algo del negocio, NO lo inventes: decí que consultás y usá la herramienta de escalar a humano.
 """
 
-MEDICAL_RULES = """
-REGLAS MÉDICAS (obligatorias):
-- JAMÁS des diagnósticos, dosis ni indicaciones médicas por chat. Ante síntomas, mostrá empatía y ofrecé turno.
-- Si hay urgencia (dolor de pecho, dificultad para respirar, sangrado fuerte), indicá acudir a urgencias YA y escalá a humano.
-- Para agendar usá SIEMPRE las herramientas: consultá la agenda real antes de ofrecer horarios. Nunca inventes disponibilidad.
-- Confirmá nombre y teléfono del paciente antes de agendar.
-- Si el horario pedido está ocupado o falla, NO agendes otro horario por tu cuenta: ofrecé 1 o 2 alternativas y esperá que el paciente elija.
-- Solo confirmá una cita cuando la herramienta book_appointment devuelva ok=true, con la fecha y hora EXACTAS que devolvió.
-"""
+# Catálogo de herramientas del enjambre. Qué recibe cada bot lo decide su
+# Business Pack (packs.py), no un `if vertical == "medical"`.
+TOOL_SPECS: dict[str, dict] = {
+    "search_catalog": {
+        "type": "function",
+        "function": {
+            "name": "search_catalog",
+            "description": (
+                "Busca productos REALES del catálogo con precio exacto y foto real. "
+                "Filtrá por lo que pide el cliente: presupuesto máximo, para quién es, "
+                "perfil buscado. Las fotos de lo que devuelva se envían solas al cliente."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Qué busca: perfil, notas, marca, tipo (ej. 'dulce floral', 'Dior')"},
+                    "budget_max": {"type": "integer", "description": "Presupuesto máximo en Guaraníes (ej. 350000)"},
+                    "budget_min": {"type": "integer", "description": "Mínimo en Guaraníes (opcional)"},
+                    "gender": {"type": "string", "description": "Para quién: 'femenino', 'masculino' o 'unisex'"},
+                    "avoid": {"type": "string", "description": "Qué NO quiere (ej. 'muy pesado')"},
+                    "in_stock_only": {"type": "boolean", "description": "Solo con stock (default true)"},
+                    "max_results": {"type": "integer", "description": "Máx resultados (default 3)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    "list_services": {
+        "type": "function",
+        "function": {
+            "name": "list_services",
+            "description": "Lista los servicios/estudios del negocio con precio exacto en Guaraníes, duración y qué profesional los atiende. Usar SIEMPRE antes de dar un precio.",
+            "parameters": {
+                "type": "object",
+                "properties": {"category": {"type": "string", "description": "Filtrar por categoría (opcional)"}},
+            },
+        },
+    },
+    "list_doctors": {
+        "type": "function",
+        "function": {
+            "name": "list_doctors",
+            "description": "Lista los profesionales del negocio con especialidad, horario e id.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    "check_agenda": {
+        "type": "function",
+        "function": {
+            "name": "check_agenda",
+            "description": "Devuelve los horarios YA OCUPADOS de un profesional en una fecha. Usar antes de ofrecer un horario.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doctor_id": {"type": "integer"},
+                    "date": {"type": "string", "description": "Fecha YYYY-MM-DD"},
+                },
+                "required": ["doctor_id", "date"],
+            },
+        },
+    },
+    "book_appointment": {
+        "type": "function",
+        "function": {
+            "name": "book_appointment",
+            "description": "Agenda una cita real. Solo usar tras confirmar profesional, fecha/hora, nombre y teléfono con el cliente.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doctor_id": {"type": "integer"},
+                    "patient_name": {"type": "string"},
+                    "patient_phone": {"type": "string"},
+                    "datetime_iso": {"type": "string", "description": "Fecha y hora YYYY-MM-DDTHH:MM"},
+                    "notes": {"type": "string", "description": "Motivo"},
+                },
+                "required": ["doctor_id", "patient_name", "datetime_iso"],
+            },
+        },
+    },
+    "escalate_to_human": {
+        "type": "function",
+        "function": {
+            "name": "escalate_to_human",
+            "description": "Marca la conversación para que la atienda una persona del equipo. Usar ante urgencias, reclamos, o cuando el cliente pide hablar con alguien o preguntás algo que no sabés.",
+            "parameters": {
+                "type": "object",
+                "properties": {"reason": {"type": "string", "description": "Motivo breve"}},
+                "required": ["reason"],
+            },
+        },
+    },
+}
 
 
 def _tools_for(company: Company) -> list[dict]:
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "list_services",
-                "description": "Lista los servicios/estudios del negocio con precio exacto en Guaraníes, duración y qué profesional los atiende. Usar SIEMPRE antes de dar un precio.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"category": {"type": "string", "description": "Filtrar por categoría (opcional)"}},
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "search_catalog",
-                "description": "Busca productos REALES del catálogo (nombre, marca, categoría o género) con precio exacto y foto real. Al usarla, las fotos de los productos encontrados se envían automáticamente al cliente.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Qué busca el cliente (ej. 'perfume dulce mujer', 'Dior')"},
-                        "max_results": {"type": "integer", "description": "Máx resultados (default 3)"},
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "escalate_to_human",
-                "description": "Marca la conversación para que la atienda una persona del equipo. Usar ante urgencias, reclamos, o cuando el cliente pide hablar con alguien o preguntás algo que no sabés.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"reason": {"type": "string", "description": "Motivo breve"}},
-                    "required": ["reason"],
-                },
-            },
-        }
-    ]
-    if company.vertical == "medical":
-        tools += [
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_doctors",
-                    "description": "Lista los doctores del centro con especialidad, horario e id.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "check_agenda",
-                    "description": "Devuelve los horarios YA OCUPADOS de un doctor en una fecha. Usar antes de ofrecer un horario.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "doctor_id": {"type": "integer"},
-                            "date": {"type": "string", "description": "Fecha YYYY-MM-DD"},
-                        },
-                        "required": ["doctor_id", "date"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "book_appointment",
-                    "description": "Agenda una cita real. Solo usar tras confirmar doctor, fecha/hora, nombre y teléfono con el paciente.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "doctor_id": {"type": "integer"},
-                            "patient_name": {"type": "string"},
-                            "patient_phone": {"type": "string"},
-                            "datetime_iso": {"type": "string", "description": "Fecha y hora YYYY-MM-DDTHH:MM"},
-                            "notes": {"type": "string", "description": "Motivo de la consulta"},
-                        },
-                        "required": ["doctor_id", "patient_name", "datetime_iso"],
-                    },
-                },
-            },
-        ]
-    return tools
+    """Herramientas del bot según los Business Packs activos del tenant."""
+    keys = {"escalate_to_human"} | packs.tools_for(company)
+    return [TOOL_SPECS[k] for k in TOOL_SPECS if k in keys]
 
 
 def _execute_tool(
@@ -164,20 +166,52 @@ def _execute_tool(
     media_out: list | None = None,
 ) -> dict:
     if name == "search_catalog":
+        # Vendedor consultivo: el LLM traduce el pedido del cliente a
+        # criterios; el CATÁLOGO confirma. Los filtros duros (presupuesto,
+        # stock, género) los aplica SQL, no el modelo.
         query = str(args.get("query", "")).strip().lower()
+        avoid = str(args.get("avoid", "")).strip().lower()
+        gender = str(args.get("gender", "")).strip().lower()
         limit = min(int(args.get("max_results") or 3), 5)
+        in_stock_only = args.get("in_stock_only", True)
+
+        def _amount(key: str) -> int | None:
+            raw = args.get(key)
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return None
+            return value if value > 0 else None
+
+        budget_max = _amount("budget_max")
+        budget_min = _amount("budget_min")
+
+        q = db.query(Product).filter(Product.company_id == company.id, Product.active)
+        if in_stock_only:
+            q = q.filter(Product.in_stock.is_(True))
+        if budget_max:
+            # price_gs == 0 significa "consultar": no se filtra por precio
+            q = q.filter((Product.price_gs <= budget_max) | (Product.price_gs == 0))
+        if budget_min:
+            q = q.filter((Product.price_gs >= budget_min) | (Product.price_gs == 0))
+        if gender in ("femenino", "masculino", "unisex"):
+            q = q.filter((Product.gender.ilike(f"%{gender}%")) | (Product.gender == ""))
+        candidates = q.all()
+
         words = [w for w in re.split(r"\W+", query) if len(w) > 2]
-        products = (
-            db.query(Product)
-            .filter(Product.company_id == company.id, Product.active)
-            .all()
-        )
+        avoid_words = [w for w in re.split(r"\W+", avoid) if len(w) > 3]
+
         def score(p: Product) -> int:
             hay = f"{p.name} {p.brand} {p.category} {p.gender} {p.notes}".lower()
-            return sum(1 for w in words if w in hay)
-        ranked = sorted((p for p in products if score(p) > 0), key=score, reverse=True)[:limit]
-        if not ranked and products:
-            ranked = [p for p in products if p.in_stock][:limit]
+            points = sum(2 if w in f"{p.name} {p.brand}".lower() else 1 for w in words if w in hay)
+            points -= sum(3 for w in avoid_words if w in hay)  # lo que NO quiere pesa
+            return points
+
+        matched = sorted((p for p in candidates if score(p) > 0), key=score, reverse=True)[:limit]
+        # Sin coincidencias de texto pero sí dentro de presupuesto: se ofrece
+        # lo que hay, en vez de dejar al cliente sin respuesta.
+        ranked = matched or candidates[:limit]
+
         out = []
         for p in ranked:
             out.append(
@@ -185,13 +219,31 @@ def _execute_tool(
                     "name": p.name,
                     "brand": p.brand,
                     "price": _fmt_gs(p.price_gs),
+                    "price_gs": p.price_gs,
                     "in_stock": p.in_stock,
+                    "notes": p.notes[:300],
                     "photo_attached": bool(p.image_path),
                 }
             )
             if p.image_path and media_out is not None:
                 media_out.append({"path": p.image_path, "caption": f"{p.name} — {_fmt_gs(p.price_gs)}"})
-        return {"products": out} if out else {"products": [], "note": "Sin coincidencias en el catálogo."}
+        if out:
+            return {"products": out, "exact_match": bool(matched)}
+        note = "Sin coincidencias en el catálogo."
+        if budget_max:
+            cheapest = (
+                db.query(Product)
+                .filter(Product.company_id == company.id, Product.active, Product.price_gs > 0)
+                .order_by(Product.price_gs)
+                .first()
+            )
+            if cheapest:
+                note = (
+                    f"No hay nada hasta {_fmt_gs(budget_max)}. Lo más accesible del "
+                    f"catálogo es {cheapest.name} a {_fmt_gs(cheapest.price_gs)}. "
+                    "Decíselo con honestidad al cliente."
+                )
+        return {"products": [], "note": note}
     if name == "escalate_to_human":
         conversation.status = "needs_human"
         db.commit()
@@ -353,8 +405,8 @@ def _build_system_prompt(db: Session, company: Company, agent: Agent) -> str:
             "herramienta list_services (tiene el dato exacto y qué profesional atiende cada uno). "
             "NUNCA inventes servicios ni precios que no estén en esa lista."
         )
-    if company.vertical == "medical":
-        parts.append(MEDICAL_RULES)
+    parts.extend(packs.rules_for(company))
+    if "book_appointment" in {t["function"]["name"] for t in _tools_for(company)}:
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
         if doctors:
             listing = "; ".join(
