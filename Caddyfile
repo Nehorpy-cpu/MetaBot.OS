@@ -19,6 +19,14 @@
 	# N8N_PATH=/n8n/, o sea que espera recibirlo. Con el prefijo cortado
 	# devolvía 404 en todo.
 	handle /n8n/* {
+		# La autenticación la hace CADDY, no n8n: las versiones nuevas de n8n
+		# ignoran N8N_BASIC_AUTH_ACTIVE y usan su propio registro de usuario,
+		# así que confiar en esa variable dejó el editor abierto a Internet
+		# —y el editor de n8n ejecuta código—. Verificado: devolvía 200 sin
+		# credenciales. Acá no depende de la versión de la imagen.
+		basic_auth {
+			metabot {$N8N_AUTH_HASH}
+		}
 		reverse_proxy n8n:5678
 	}
 
