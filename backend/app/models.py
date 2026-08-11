@@ -332,7 +332,17 @@ class Conversation(Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
     channel: Mapped[str] = mapped_column(String(20), default="whatsapp")
     contact_phone: Mapped[str] = mapped_column(String(50), index=True)
+    # Nombre del PERFIL de WhatsApp. Sirve para el panel, no para agendar: la
+    # gente pone "Mami", el nombre del comercio o un emoji.
     contact_name: Mapped[str] = mapped_column(String(200), default="")
+    # Nombre que la persona DIJO en la conversación, que es otra cosa. Se
+    # persiste para no volver a preguntárselo en el turno siguiente: el
+    # historial se corta a 20 mensajes y el nombre se perdía.
+    stated_name: Mapped[str] = mapped_column(String(200), default="")
+    # A quién le corresponde el turno cuando no es quien escribe. Mucha gente
+    # agenda para el hijo, la madre o la pareja, y confundirlos en salud
+    # significa mandarle a alguien los datos clínicos de otra persona.
+    patient_name: Mapped[str] = mapped_column(String(200), default="")
     status: Mapped[str] = mapped_column(String(20), default="open")  # open | needs_human
     # Directiva que dejó el CEO para el próximo turno del CX (modo shadow).
     pending_directive: Mapped[str] = mapped_column(String(500), default="")

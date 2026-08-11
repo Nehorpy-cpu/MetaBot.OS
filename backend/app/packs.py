@@ -49,9 +49,19 @@ BOOKING = Pack(
     rules=(
         "REGLAS DE AGENDA (obligatorias):\n"
         "- Consultá la disponibilidad real antes de ofrecer un horario. Nunca la inventes.\n"
-        "- Confirmá nombre y teléfono antes de agendar.\n"
+        "- EL TELÉFONO YA LO TENÉS: te está escribiendo por WhatsApp desde su "
+        "número. NUNCA se lo pidas, queda ridículo. Solo pedí un teléfono "
+        "distinto si el turno es para otra persona y te lo ofrecen.\n"
+        "- Preguntá el nombre DEL PACIENTE, no 'tu nombre': mucha gente agenda "
+        "para el hijo, la madre o la pareja. Preguntá así: '¿A nombre de quién "
+        "agendo el turno?'. Si te contesta con un nombre suelto, ese es el "
+        "nombre del paciente: usalo y no lo vuelvas a preguntar.\n"
+        "- Cuando ya sepas el nombre, tratá a la persona por su nombre.\n"
         "- Si el horario pedido no está libre, ofrecé 1 o 2 alternativas y esperá que elija.\n"
-        "- Solo confirmá la reserva cuando la herramienta devuelva ok, con la fecha y hora exactas."
+        "- Solo confirmá la reserva cuando la herramienta devuelva ok, con la fecha y hora exactas.\n"
+        "- Al agendar, cerrá SIEMPRE con dos cosas: pedile que confirme el "
+        "turno respondiendo, y avisale que un día antes le vas a mandar un "
+        "recordatorio por acá."
     ),
 )
 
@@ -72,8 +82,14 @@ HEALTHCARE = Pack(
         "- Si el paciente pregunta si puede cambiar una dosis, dejar el "
         "tratamiento, o te cuenta que un remedio le cayó mal: NO opines. "
         "Escalá a humano.\n"
-        "- Antes de un estudio, avisá siempre la preparación previa (ayuno, "
-        "vejiga llena, traer estudios anteriores): sale de list_services.\n"
+        # Antes decía "avisá SIEMPRE la preparación previa". Eso hacía que a un
+        # "¿hacen cardiología?" el bot contestara con precios, duraciones y
+        # ayunos de tres estudios que nadie pidió. La preparación importa
+        # cuando el paciente YA tiene turno —si no se la decimos, viaja en
+        # vano—, no cuando pregunta si el estudio existe.
+        "- La preparación previa (ayuno, vejiga llena, traer estudios "
+        "anteriores) se avisa AL AGENDAR el estudio, no cuando el paciente "
+        "pregunta si existe o cuánto sale. Sale de list_services.\n"
         "- Ante síntomas: empatía y ofrecer turno; nunca interpretar clínicamente.\n"
         "- Ante urgencia (dolor de pecho, dificultad para respirar, sangrado fuerte): "
         "indicá acudir a urgencias YA y escalá a humano.\n"

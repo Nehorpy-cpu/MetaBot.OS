@@ -74,6 +74,14 @@ REGLAS DE ESTILO (obligatorias):
 - LEÉ TODO el mensaje antes de contestar y respondé lo que realmente te pidieron.
   Si el cliente hace dos preguntas, contestá las dos. Si te dice que NO sabe algo,
   no se lo vuelvas a preguntar: ayudalo a averiguarlo.
+- CONTESTÁ LO QUE PREGUNTARON, NI MÁS NI MENOS. Una consulta de una palabra
+  ("¿Cardiología?") se responde corto —sí, tenemos— y con UNA pregunta para
+  saber qué necesita. No vuelques precios, duraciones, preparaciones ni listas
+  de profesionales que nadie pidió: la herramienta te da muchos datos, eso no
+  significa que haya que recitarlos. Cada dato de más entierra tu pregunta y el
+  cliente no sabe qué contestar.
+- Si el cliente NO sabe qué necesita, ahí sí ofrecé opciones: hasta 5, en lista
+  numerada, solo con el nombre —el precio y el detalle van cuando elija una.
 - Cuando el cliente no sepa el nombre de lo que necesita pero sí la zona del
   cuerpo, el síntoma o la especialidad, BUSCÁ en el catálogo por eso y ofrecele
   hasta 5 opciones, empezando por las más comunes. Preguntar "¿cómo se llama el
@@ -191,13 +199,28 @@ TOOL_SPECS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "book_appointment",
-            "description": "Agenda una cita real. Solo usar tras confirmar profesional, fecha/hora, nombre y teléfono con el cliente.",
+            "description": (
+                "Agenda una cita real. Solo usar tras confirmar con el cliente el "
+                "profesional, la fecha/hora y el NOMBRE DEL PACIENTE. El teléfono "
+                "NO hace falta pedirlo: se toma solo del WhatsApp desde el que "
+                "te escriben."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "doctor_id": {"type": "integer"},
-                    "patient_name": {"type": "string"},
-                    "patient_phone": {"type": "string"},
+                    "patient_name": {
+                        "type": "string",
+                        "description": "Nombre real del PACIENTE que va a ser atendido, tal como lo dijo el cliente. Nunca un relleno tipo 'el paciente' o 'Usuario'.",
+                    },
+                    "patient_phone": {
+                        "type": "string",
+                        "description": "Solo si el paciente es otra persona Y te dieron su teléfono. Si no, dejalo vacío: se usa el de esta conversación.",
+                    },
+                    "para_otra_persona": {
+                        "type": "boolean",
+                        "description": "true si quien escribe agenda para otro (su hijo, su madre, su pareja).",
+                    },
                     "datetime_iso": {"type": "string", "description": "Fecha y hora YYYY-MM-DDTHH:MM"},
                     "notes": {"type": "string", "description": "Motivo"},
                 },
@@ -360,6 +383,62 @@ def _normalizar(texto: str) -> str:
 # Formatos de teléfono que se usan en Paraguay: 021 214-400, 0981 123456,
 # +595981123456, (021) 214400. Se busca cualquier cosa con forma de teléfono.
 _TELEFONO_RE = re.compile(r"(?:\+?595|0)\s*\(?\d{2,4}\)?[\s.-]*\d{3}[\s.-]*\d{3,4}")
+
+
+# Rellenos que devuelve el modelo cuando agenda sin haber preguntado el
+# nombre. Una cita a nombre de "el paciente" no le sirve a nadie en recepción.
+_NOMBRES_DE_RELLENO = {
+    "", "n/a", "na", "null", "none", "undefined", "-", "--", "sin nombre",
+    "paciente", "el paciente", "la paciente", "nombre", "nombre del paciente",
+    "usuario", "cliente", "el cliente", "la clienta", "desconocido",
+    "patient", "patient name", "user", "customer", "unknown", "anonimo",
+    "tu nombre", "su nombre", "mi nombre", "xxx", "test", "prueba",
+}
+
+
+def _nombre_de_persona(valor) -> str:
+    """Devuelve el nombre si parece de una persona; si no, cadena vacía."""
+    nombre = " ".join(str(valor or "").split())
+    if len(nombre) < 3 or _normalizar(nombre) in _NOMBRES_DE_RELLENO:
+        return ""
+    # Al menos una letra: "12345" o "..." no son nombres.
+    if not any(c.isalpha() for c in nombre):
+        return ""
+    return nombre[:200]
+
+
+# El paciente dice cómo se llama en medio de una frase cualquiera ("Dr. Benítez
+# está bien el martes a las 10, Marco Garcete me llamo"). Resolverlo en el
+# servidor sale gratis y no depende de que el modelo se acuerde de guardarlo.
+_DECLARA_NOMBRE = re.compile(
+    r"(?:me\s+llamo|mi\s+nombre\s+es|soy)\s+(?P<nombre>[^\d,.;:!?\n]{3,60})"
+    r"|(?P<nombre2>[^\d,.;:!?\n]{3,60})\s+(?:me\s+llamo|es\s+mi\s+nombre)",
+    re.IGNORECASE,
+)
+# Palabras que descartan la captura: "soy alérgico", "soy de Luque". Se
+# comparan SIN TILDES porque el paciente escribe "alérgico" y "alergico" por
+# igual, y guardar "alérgico" como nombre termina en "¡Hola alérgico!".
+_NO_ES_NOMBRE = re.compile(
+    r"^(alergic|diabetic|hipertens|asmatic|celiac|paciente|de\s|el\s|la\s|"
+    r"un\s|una\s|nuevo|nueva|del\s|para\s|mayor|menor|jubilad|"
+    r"medic|doctor|enfermer|estudiante|embarazad)",
+    re.IGNORECASE,
+)
+
+
+def _nombre_declarado(texto: str) -> str:
+    """Extrae el nombre que la persona dijo, si lo dijo de forma inequívoca."""
+    m = _DECLARA_NOMBRE.search(texto or "")
+    if not m:
+        return ""
+    crudo = (m.group("nombre") or m.group("nombre2") or "").strip(" .,-")
+    if not crudo or _NO_ES_NOMBRE.match(_normalizar(crudo)):
+        return ""
+    # Un nombre son una a cuatro palabras; más que eso es una frase.
+    palabras = crudo.split()
+    if not 1 <= len(palabras) <= 4:
+        return ""
+    return _nombre_de_persona(crudo)
 
 
 def _solo_digitos(texto: str) -> str:
@@ -819,15 +898,31 @@ def _execute_tool(
                     "Ofrecé un horario que no choque."
                 )
             }
+        # El nombre tiene que ser de una persona, no un relleno del modelo.
+        # Una cita a nombre de "el paciente" no le sirve a nadie en la
+        # recepción, y es lo que sale cuando el bot agenda sin haber preguntado.
+        nombre = _nombre_de_persona(args.get("patient_name"))
+        if not nombre:
+            return {
+                "error": (
+                    "Falta el nombre del paciente. Preguntá '¿a nombre de quién "
+                    "agendo el turno?' y volvé a intentar con lo que te diga."
+                )
+            }
         # El teléfono debe ser real: si el modelo manda placeholders
         # ("null", "your phone number", etc.) usamos el de la conversación.
         phone = str(args.get("patient_phone") or "").strip()
         if sum(c.isdigit() for c in phone) < 6:
             phone = conversation.contact_phone
+        # Se recuerda para los próximos turnos: el historial se corta a 20
+        # mensajes y el nombre se perdía, así que el bot lo volvía a preguntar.
+        conversation.patient_name = nombre[:200]
+        if not args.get("para_otra_persona") and not conversation.stated_name:
+            conversation.stated_name = nombre[:200]
         appt = Appointment(
             company_id=company.id,
             doctor_id=doctor.id,
-            patient_name=args["patient_name"],
+            patient_name=nombre,
             patient_phone=phone,
             scheduled_at=when,
             status="pending",
@@ -849,14 +944,57 @@ def _execute_tool(
     return {"error": f"Herramienta desconocida: {name}"}
 
 
+def _bloque_de_contacto(conversation: Conversation | None) -> str:
+    """Con quién está hablando el bot. Sin esto pedía el teléfono que ya tiene.
+
+    El número llega en el propio mensaje de WhatsApp y `contact_phone` lo
+    guarda desde siempre; el modelo nunca lo veía, así que le preguntaba al
+    paciente un dato que estaba a una línea de distancia.
+
+    El nombre del PERFIL no se ofrece como nombre del paciente a propósito:
+    la gente pone "Mami" o el nombre de su comercio, y el modelo lo usaría
+    para agendar. Se pasa aparte y aclarado.
+    """
+    if not conversation:
+        return ""
+    lineas = [
+        f"Te escribe por WhatsApp el número {conversation.contact_phone}. "
+        "YA LO TENÉS: no se lo pidas nunca."
+    ]
+    if conversation.stated_name:
+        lineas.append(
+            f"Esta persona ya te dijo que se llama {conversation.stated_name}. "
+            "Tratala por su nombre y no se lo vuelvas a preguntar."
+        )
+    elif conversation.contact_name:
+        lineas.append(
+            f"Su perfil de WhatsApp figura como '{conversation.contact_name}', "
+            "que puede no ser su nombre real: no lo uses para agendar sin "
+            "confirmarlo."
+        )
+    if conversation.patient_name:
+        lineas.append(
+            f"El turno es para {conversation.patient_name}"
+            + (
+                " (no es quien te escribe)."
+                if conversation.patient_name != conversation.stated_name
+                else "."
+            )
+        )
+    return "DATOS DE ESTE CONTACTO:\n- " + "\n- ".join(lineas)
+
+
 def _build_system_prompt(
-    db: Session, company: Company, agent: Agent, directive: str = ""
+    db: Session, company: Company, agent: Agent, directive: str = "",
+    conversation: Conversation | None = None,
 ) -> str:
     now = datetime.now(ZoneInfo(TIMEZONE))
     days = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    contacto = _bloque_de_contacto(conversation)
     parts = [
         agent.system_prompt,
         STYLE_RULES,
+        *([contacto] if contacto else []),
         f"Negocio: {company.name} ({company.niche}).",
         f"Ahora es {days[now.weekday()]} {now.strftime('%d/%m/%Y %H:%M')} en Paraguay. "
         f"Toda cita se agenda en fecha futura, con año {now.year} o posterior.",
@@ -969,6 +1107,14 @@ async def handle_incoming(
     elif contact_name and not conversation.contact_name:
         conversation.contact_name = contact_name
 
+    # Si dijo cómo se llama, se guarda ACÁ y no cuando al modelo se le ocurra:
+    # el historial se corta a 20 mensajes y el nombre se perdía, así que el
+    # bot volvía a preguntarle algo que ya le habían contestado.
+    if not conversation.stated_name:
+        declarado = _nombre_declarado(text)
+        if declarado:
+            conversation.stated_name = declarado
+
     db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="in",
                    body=text, external_id=external_id or None))
     db.commit()
@@ -1062,7 +1208,8 @@ async def handle_incoming(
     if aviso_cancelacion:
         directive = f"{directive}\n{aviso_cancelacion}".strip()
     messages: list[dict] = [
-        {"role": "system", "content": _build_system_prompt(db, company, agent, directive)}
+        {"role": "system", "content": _build_system_prompt(
+            db, company, agent, directive, conversation)}
     ]
     for m in reversed(history):
         messages.append({"role": "user" if m.direction == "in" else "assistant", "content": m.body})
