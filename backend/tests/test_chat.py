@@ -195,7 +195,9 @@ def test_busy_slot_blocks_rebooking_same_turn(monkeypatch):
         f"/api/companies/{cid}/chat", json={"contact_phone": "+595978888888", "text": "El 15 a las 9"}
     )
     data = resp.json()
-    assert "solapa" in data["actions"][0]["result"]["error"]
+    # El mensaje lo redacta ahora agenda.verificar_turno, que además del
+    # solape valida día, franja y licencias.
+    assert "superpone" in data["actions"][0]["result"]["error"]
     assert "NO agendes" in data["actions"][1]["result"]["error"]
     # Solo existe la cita original: nada se agendó sin confirmación
     appts = client.get(f"/api/companies/{cid}/appointments", params={"doctor_id": doc["id"]}).json()

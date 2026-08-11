@@ -55,12 +55,20 @@ TASK_MODELS: dict[str, list[str]] = {
     # El nemotron es un modelo de razonamiento: gasta el presupuesto pensando
     # antes de contestar "¿te refieres a una consulta?". En WhatsApp eso es
     # medio minuto mirando el celular.
-    # El cupo del free tier de Groq es POR MODELO (8.000 tokens/minuto cada
-    # uno, medido en los headers x-ratelimit el 11-ago-2026), así que poner
-    # dos modelos de Groq no es redundante: es duplicar el presupuesto antes
-    # de caer al proveedor lento. `llama-3.3-70b-versatile` va último de los
-    # tres porque a veces rechaza el esquema de herramientas con un 400.
-    "cx": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile",
+    # El orden importa por el cupo, no solo por la velocidad. Medido en los
+    # headers x-ratelimit del free tier de Groq el 11-ago-2026:
+    #   gpt-oss-120b y gpt-oss-20b COMPARTEN un bucket de 8.000 tokens/minuto
+    #     (los dos devuelven el mismo `remaining`), así que encadenarlos no
+    #     sirve de nada: cuando uno da 429, el otro también.
+    #   llama-3.3-70b-versatile tiene bucket PROPIO de 12.000 tokens/minuto.
+    # Por eso el respaldo inmediato es el 70b y no el 20b, aunque el 70b a
+    # veces rechace el esquema de herramientas con un 400: si lo rechaza se
+    # pasa al siguiente, y sale mucho más barato que caer al de 40 segundos.
+    #
+    # Un turno gasta ~2.500 tokens, o sea ~3 turnos por minuto por bucket. Para
+    # una clínica arrancando alcanza; para varias en paralelo hay que pasar al
+    # tier pago de Groq.
+    "cx": ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b",
            "nvidia/llama-3.3-nemotron-super-49b-v1.5"],
     # Razonamiento/planificación: acá sí conviene el que piensa.
     "reasoning": ["nvidia/llama-3.3-nemotron-super-49b-v1.5", "openai/gpt-oss-120b"],

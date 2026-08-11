@@ -22,7 +22,7 @@ DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solape
 
 from sqlalchemy.orm import Session
 
-from . import job_handlers, packs, supervisor
+from . import agenda, job_handlers, packs, supervisor
 from .config import TIMEZONE
 from .llm import cadena_para, chat_raw
 from .models import (
@@ -235,6 +235,10 @@ TOOL_SPECS: dict[str, dict] = {
                         "description": "true si quien escribe agenda para otro (su hijo, su madre, su pareja).",
                     },
                     "datetime_iso": {"type": "string", "description": "Fecha y hora YYYY-MM-DDTHH:MM"},
+                    "service_id": {
+                        "type": "integer",
+                        "description": "El service_id que devolvió list_services. Pasalo SIEMPRE que sepas qué se va a hacer: define cuánto dura el turno.",
+                    },
                     "notes": {"type": "string", "description": "Motivo"},
                 },
                 "required": ["doctor_id", "patient_name", "datetime_iso"],
@@ -813,6 +817,10 @@ def _execute_tool(
         out = []
         for s in services:
             fila = {
+                # El id va para que al agendar se pueda pasar `service_id` y
+                # el turno ocupe su duración real: sin esto una ecografía de
+                # 45 minutos y una consulta de 20 bloqueaban lo mismo.
+                "service_id": s.id,
                 "name": s.name,
                 "category": s.category,
                 "price": _fmt_gs(s.price_gs),
@@ -914,11 +922,33 @@ def _execute_tool(
             .order_by(Appointment.scheduled_at)
             .all()
         )
-        return {
+        # Los huecos los calcula el SERVIDOR. Antes se devolvían los horarios
+        # ocupados y el horario laboral como texto, y el modelo tenía que
+        # deducir qué quedaba libre: de ahí salían turnos fuera de horario.
+        libres = agenda.huecos_del_dia(
+            db, company, doctor, day.date(), args.get("service_id")
+        )
+        salida = {
             "doctor": doctor.name,
             "work_schedule": doctor.schedule or "no especificado",
             "busy_slots": [a.scheduled_at.strftime("%H:%M") for a in busy],
         }
+        if doctor.agenda_mode == "estructurado":
+            salida["horarios_libres"] = libres
+            salida["nota"] = (
+                "Ofrecele SOLO horarios de `horarios_libres`: son los que el "
+                "sistema verificó contra la agenda del profesional."
+                if libres
+                else f"{doctor.name} no tiene horarios libres ese día. Ofrecele otra fecha."
+            )
+        else:
+            salida["nota"] = (
+                "Este profesional todavía no tiene su horario cargado en el "
+                "sistema, así que NO se puede confirmar disponibilidad. Podés "
+                "tomar el pedido de turno, pero avisale que recepción se lo "
+                "confirma; no le digas que ese horario está libre."
+            )
+        return salida
 
     if name == "book_appointment":
         doctor = db.get(Doctor, args.get("doctor_id"))
@@ -936,28 +966,19 @@ def _execute_tool(
                     f"Hoy es {now_local.strftime('%d/%m/%Y')}; usá el año correcto y reintentá."
                 )
             }
-        # Choque por SOLAPAMIENTO (citas de 30 min), no solo igualdad exacta:
-        # una cita nueva [when, when+30) no debe pisar a otra existente.
-        slot = timedelta(minutes=DEFAULT_SLOT_MIN)
-        window_lo = when - slot
-        window_hi = when + slot
-        clash = (
-            db.query(Appointment)
-            .filter(
-                Appointment.doctor_id == doctor.id,
-                Appointment.status.notin_(["cancelled"]),
-                Appointment.scheduled_at > window_lo,
-                Appointment.scheduled_at < window_hi,
-            )
-            .first()
+        # El servidor decide si el turno existe: día de la semana, franja del
+        # profesional, licencias, duración real del servicio y solape. Antes
+        # solo se miraba el solape, así que un paciente quedaba agendado un
+        # domingo a las 23:00 con un doctor que atiende de mañana.
+        servicio_id = args.get("service_id")
+        veredicto = agenda.verificar_turno(
+            db, company, doctor, when, service_id=servicio_id
         )
-        if clash:
-            return {
-                "error": (
-                    f"Ese horario se solapa con otra cita ({clash.scheduled_at.strftime('%H:%M')}). "
-                    "Ofrecé un horario que no choque."
-                )
-            }
+        if not veredicto["ok"]:
+            respuesta = {"error": veredicto["motivo"], "codigo": veredicto["codigo"]}
+            if veredicto.get("alternativas"):
+                respuesta["horarios_libres"] = veredicto["alternativas"]
+            return respuesta
         # El nombre tiene que ser de una persona, no un relleno del modelo.
         # Una cita a nombre de "el paciente" no le sirve a nadie en la
         # recepción, y es lo que sale cuando el bot agenda sin haber preguntado.
@@ -985,6 +1006,9 @@ def _execute_tool(
             patient_name=nombre,
             patient_phone=phone,
             scheduled_at=when,
+            service_id=servicio_id or None,
+            duration_min=veredicto["duracion_min"],
+            verificacion=veredicto["verificacion"],
             status="pending",
             notes=args.get("notes", ""),
         )
@@ -1012,6 +1036,14 @@ def _execute_tool(
                 "fecha usando exactamente el texto de `decirle_al_paciente`, "
                 "pedile que confirme respondiendo, y avisale que un día antes "
                 "le vas a mandar el recordatorio por acá."
+                + (
+                    ""
+                    if veredicto["verificacion"] == "verificado"
+                    else " OJO: este profesional no tiene su horario cargado en "
+                    "el sistema, así que NO le prometas que el horario está "
+                    "libre. Decile que queda PEDIDO y que recepción se lo "
+                    "confirma."
+                )
             ),
         }
 
@@ -1102,15 +1134,28 @@ def _build_system_prompt(
             "pide algo de OTRO rubro (ej. ropa si vendés perfumes), aclaralo con amabilidad "
             "y redirigí al catálogo real. Nunca sigas la corriente ofreciendo productos inexistentes."
         )
-    services = (
-        db.query(Service).filter(Service.company_id == company.id, Service.active).limit(25).all()
-    )
-    if services:
-        listing = "; ".join(f"{s.name} ({_fmt_gs(s.price_gs)})" for s in services)
+    # Solo las CATEGORÍAS, no el catálogo con precios. Dos razones:
+    #  1. Los precios acá invitaban al modelo a citarlos sin llamar a
+    #     list_services, que es la única fuente exacta y la que sabe qué
+    #     profesional atiende cada cosa.
+    #  2. Cupo: los 25 servicios con precio pesaban 385 tokens de los 2.814
+    #     fijos por llamada, y el proveedor rápido da 8.000 tokens por minuto.
+    #     Cada token de más le saca turnos por minuto a la clínica.
+    categorias = [
+        c[0] for c in db.query(Service.category)
+        .filter(Service.company_id == company.id, Service.active)
+        .distinct().limit(20).all() if c[0]
+    ]
+    hay_servicios = db.query(Service.id).filter(
+        Service.company_id == company.id, Service.active).first()
+    if hay_servicios:
         parts.append(
-            f"Servicios/estudios cargados: {listing}. Antes de confirmar un precio usá la "
-            "herramienta list_services (tiene el dato exacto y qué profesional atiende cada uno). "
-            "NUNCA inventes servicios ni precios que no estén en esa lista."
+            (f"Áreas que atiende este negocio: {', '.join(categorias)}. "
+             if categorias else "")
+            + "El catálogo exacto —nombre, precio, duración, qué profesional lo "
+            "hace y la preparación previa— sale SIEMPRE de list_services. "
+            "NUNCA des un precio ni afirmes que un estudio existe sin haberlo "
+            "consultado ahí."
         )
     parts.extend(packs.rules_for(company))
     if "book_appointment" in {t["function"]["name"] for t in _tools_for(company)}:
@@ -1352,7 +1397,13 @@ async def handle_incoming(
                     name, args, db, company, conversation,
                     media_out=media, verbatim_out=verbatim,
                 )
-                if name == "book_appointment" and "solapa" in result.get("error", ""):
+                # Por el CÓDIGO, no por una palabra del mensaje: antes esto
+                # miraba si el texto decía "solapa", así que cambiar una
+                # palabra del error desarmaba la guarda en silencio. Y ahora
+                # vale para cualquier rechazo de agenda: si el doctor no
+                # atiende los domingos, el bot tampoco puede elegir otro día
+                # por su cuenta.
+                if name == "book_appointment" and result.get("codigo"):
                     booking_blocked = True
             actions.append({"tool": name, "args": args, "result": result})
             messages.append(

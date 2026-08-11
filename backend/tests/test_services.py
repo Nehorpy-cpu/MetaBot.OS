@@ -74,9 +74,14 @@ def test_bot_lists_services_with_real_prices(monkeypatch):
         f"/api/companies/{cid}/chat",
         json={"contact_phone": "+595971414141", "text": "¿Cuánto sale la ecografía?"},
     )
-    # El system prompt anuncia el servicio y prohíbe inventar precios
-    assert "Ecografía abdominal" in captured["system"]
-    assert "NUNCA inventes servicios" in captured["system"]
+    # El prompt ancla el negocio y obliga a consultar, pero YA NO trae los
+    # precios. Tenerlos ahí invitaba al modelo a citarlos sin llamar a la
+    # herramienta —quedaban desactualizados y sin saber qué profesional
+    # atiende—, y pesaban 385 de los 2.814 tokens fijos por llamada, que es
+    # cupo que el proveedor rápido le cobra a la clínica en turnos por minuto.
+    assert "list_services" in captured["system"]
+    assert "NUNCA des un precio" in captured["system"]
+    assert "₲ 250.000" not in captured["system"], "el precio no debe ir en el prompt"
     assert "list_services" in captured["tools"]
     # La herramienta devolvió precio formateado y el profesional que atiende
     svc = captured["tool_result"]["services"][0]

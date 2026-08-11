@@ -74,7 +74,7 @@ def test_booking_rejects_overlap_not_only_exact(monkeypatch):
         f"/api/companies/{cid}/chat", json={"contact_phone": "+595971000123", "text": "A las 10:15"}
     )
     result = resp.json()["actions"][0]["result"]
-    assert "solapa" in result.get("error", "")
+    assert "superpone" in result.get("error", "")
     # No se creó la segunda cita
     appts = client.get(f"/api/companies/{cid}/appointments", params={"doctor_id": doc["id"]}).json()
     assert len(appts) == 1

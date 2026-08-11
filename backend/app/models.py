@@ -6,6 +6,7 @@ decimales). El formato con puntos de miles es responsabilidad del frontend.
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
+    CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -181,7 +182,15 @@ class Doctor(Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     specialty: Mapped[str] = mapped_column(String(200), default="")
+    # Horario en texto libre, como lo carga la clínica: "Lun a Vie 08:00-14:00".
+    # Sirve para MOSTRAR. No se parsea nunca para decidir si hay turno: eso lo
+    # dice `doctor_schedules`, que es consultable con SQL.
     schedule: Mapped[str] = mapped_column(String(100), default="")
+    # "libre" = no cargó horario estructurado. Se le sigue agendando —hay
+    # clínicas operando así y bloquearlas les rompe el negocio— pero la cita
+    # queda como PEDIDO y el bot no promete disponibilidad.
+    # "estructurado" = tiene franjas cargadas; el servidor valida contra ellas.
+    agenda_mode: Mapped[str] = mapped_column(String(15), default="libre")
     phone: Mapped[str] = mapped_column(String(50), default="")
     email: Mapped[str] = mapped_column(String(200), default="")
     # Verificación contra el padrón público de especialistas certificados.
@@ -225,6 +234,15 @@ class Appointment(Base):
     patient_name: Mapped[str] = mapped_column(String(200))
     patient_phone: Mapped[str] = mapped_column(String(50), default="")
     scheduled_at: Mapped[datetime] = mapped_column(index=True)
+    # Qué se va a hacer en el turno. Sin esto la cita era un punto de 30
+    # minutos fijos: una ecografía de 45 y una consulta de 20 ocupaban lo
+    # mismo, y dos pacientes reales quedaban solapados.
+    service_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    duration_min: Mapped[int] = mapped_column(default=30)
+    # Si el servidor pudo confirmar contra el horario cargado del profesional.
+    # "sin_verificar" = el doctor no tiene horario estructurado; la cita vale
+    # como PEDIDO de turno y recepción lo confirma. El bot no promete.
+    verificacion: Mapped[str] = mapped_column(String(20), default="sin_verificar")
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|confirmed|cancelled|attended|no_show
     reminder_status: Mapped[str] = mapped_column(String(15), default="scheduled")
     notes: Mapped[str] = mapped_column(Text, default="")
@@ -232,6 +250,76 @@ class Appointment(Base):
 
     company: Mapped[Company] = relationship(back_populates="appointments")
     doctor: Mapped[Doctor] = relationship(back_populates="appointments", viewonly=True)
+
+
+class DoctorSchedule(Base):
+    """Una franja de atención del profesional, consultable con SQL.
+
+    Existe porque `Doctor.schedule` es texto libre y la única forma de saber
+    si el doctor atiende un martes a las 10 era que el MODELO interpretara ese
+    string. Medido en producción: un paciente podía quedar agendado un domingo
+    a las 23:00 con un doctor que atiende lunes a viernes de mañana, y el
+    sistema le mandaba el recordatorio de una cita que no existía.
+
+    `doctor_id` nulo = horario de la INSTITUCIÓN. Sirve para que una clínica
+    con 40 médicos mate el "domingo a las 23:00" con cinco filas, sin cargar
+    el horario de cada uno. Acota, no habilita: un turno dentro del horario de
+    la clínica pero con un doctor sin franjas propias sigue siendo un pedido.
+
+    `service_id` nulo = la franja vale para todo. Con servicio, vale SOLO para
+    ese: es como se representa al profesional que atiende consulta toda la
+    semana pero hace ecocardiogramas solo los martes a la tarde.
+    """
+
+    __tablename__ = "doctor_schedules"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_doctor_schedules_doctor_tenant", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "service_id"], ["services.company_id", "services.id"],
+            name="fk_doctor_schedules_service_tenant", ondelete="CASCADE",
+        ),
+        CheckConstraint("weekday >= 0 AND weekday <= 6", name="ck_schedule_weekday"),
+        CheckConstraint("hora_fin > hora_inicio", name="ck_schedule_rango"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    doctor_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    service_id: Mapped[int | None] = mapped_column(nullable=True)
+    weekday: Mapped[int] = mapped_column()  # 0=lunes … 6=domingo (como Python)
+    # Minutos desde medianoche. Enteros y no `time` porque toda la aritmética
+    # de huecos y solapes se hace en minutos.
+    hora_inicio: Mapped[int] = mapped_column()
+    hora_fin: Mapped[int] = mapped_column()
+    lugar: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DoctorAbsence(Base):
+    """Licencia, vacaciones o cierre por feriado. Fechas, no recurrencia.
+
+    `doctor_id` nulo = cierra la clínica entera ese día, para todos.
+    """
+
+    __tablename__ = "doctor_absences"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_doctor_absences_doctor_tenant", ondelete="CASCADE",
+        ),
+        CheckConstraint("hasta >= desde", name="ck_absence_rango"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    doctor_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    desde: Mapped[date] = mapped_column(index=True)
+    hasta: Mapped[date] = mapped_column()  # inclusive
+    motivo: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class Product(Base):
