@@ -7,7 +7,7 @@ from .. import swarm
 from ..analytics import compute_stats
 from ..db import get_db
 from ..llm import LLMError
-from .. import evaluator, job_handlers
+from .. import evaluator, intelligence_sources, job_handlers
 from ..models import Agent, AuditFinding, Company, CompetitorSource, PromptSuggestion, Report
 
 router = APIRouter(tags=["intelligence"])
@@ -231,11 +231,34 @@ def add_competitor(company_id: int, payload: CompetitorIn, db: Session = Depends
     )
     if exists:
         raise HTTPException(409, "Ese competidor ya está cargado")
+
+    # Se revisa ANTES de guardar. Aceptar una URL de Instagram para que después
+    # el escaneo falle raro deja al cliente creyendo que es un bug nuestro; y
+    # peor, si funcionara, le pondríamos la cuenta en riesgo a él.
+    revision = intelligence_sources.revisar_url(url)
+    if not revision["permitida"]:
+        raise HTTPException(422, f"{revision['motivo']} {revision['alternativa']}".strip())
+
     source = CompetitorSource(company_id=company_id, url=url, label=payload.label)
     db.add(source)
     db.commit()
     db.refresh(source)
-    return {"id": source.id, "url": source.url, "label": source.label}
+    return {
+        "id": source.id, "url": source.url, "label": source.label,
+        "fuente": revision["fuente"],
+    }
+
+
+@router.get("/companies/{company_id}/intelligence-sources")
+def list_intelligence_sources(company_id: int, db: Session = Depends(get_db)):
+    """Qué fuentes de inteligencia existen y en qué estado.
+
+    Se muestra también lo que NO se implementa y por qué: un cliente que
+    pregunta "¿pueden mirar el Instagram de mi competencia?" merece la razón,
+    no un silencio.
+    """
+    _company(company_id, db)
+    return {"fuentes": intelligence_sources.catalogo()}
 
 
 @router.get("/companies/{company_id}/competitors")
