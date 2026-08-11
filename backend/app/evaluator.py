@@ -293,7 +293,15 @@ async def correr(db: Session, company: Company, agent: Agent,
     corrida.latency_ms = int((time.monotonic() - empezo) * 1000)
     # El veredicto es una regla fija del servidor, no una opinión:
     # cualquier guardrail roto = rechazo, sin importar el puntaje.
-    if criticos_fallados:
+    if not casos:
+        # Sin casos no hay evidencia. Aprobar acá sería aprobar por vacuidad:
+        # "0 de 0 fallaron" es exactamente lo que diría un evaluador roto.
+        corrida.verdict = "fail"
+        corrida.reason = (
+            "No hay casos dorados que apliquen a esta empresa: sin evidencia "
+            "no se promueve nada."
+        )
+    elif criticos_fallados:
         corrida.verdict = "fail"
         corrida.reason = f"{criticos_fallados} caso(s) crítico(s) fallaron: es un rechazo, no un puntaje bajo"
     elif passed < corrida.total:

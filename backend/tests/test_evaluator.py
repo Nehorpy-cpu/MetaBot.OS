@@ -379,3 +379,68 @@ async def test_la_evaluacion_restaura_el_prompt_aunque_falle(monkeypatch):
         assert a.system_prompt == original, "el candidato quedó sirviendo en producción"
     finally:
         db.close()
+
+
+@pytest.mark.anyio
+async def test_sin_casos_dorados_NO_aprueba_por_vacuidad(monkeypatch):
+    """'0 de 0 casos fallaron' es exactamente lo que diría un evaluador roto.
+
+    Sin este guardia, una empresa cuyo pack no tenga casos aplicables
+    promovería cualquier prompt con un `pass` perfecto.
+    """
+    company = _create_company(name="Sin Casos")
+    agent = _agente(company["id"])
+
+    fake, _ = _mock_llm([{"content": "hola"}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+
+    db = SessionLocal()
+    try:
+        corrida = await evaluator.correr(db, db.get(Company, company["id"]), db.get(Agent, agent.id))
+        assert corrida.total == 0
+        assert corrida.verdict == "fail", "aprobó sin un solo caso que lo respalde"
+        assert "sin evidencia" in corrida.reason
+    finally:
+        db.close()
+
+
+def test_aplicar_una_sugerencia_no_toca_produccion_hasta_que_pase_la_eval(monkeypatch):
+    """Antes esto escribía `agent.system_prompt` directo: salteaba el
+    evaluador, no dejaba historial y desincronizaba el versionado."""
+    from app.models import Job, PromptSuggestion
+
+    company = _create_company(name="Sugerencia Evaluada")
+    cid = company["id"]
+    agent = _agente(cid)
+
+    db = SessionLocal()
+    try:
+        a = db.get(Agent, agent.id)
+        original = a.system_prompt
+        db.add(PromptSuggestion(
+            company_id=cid, agent_id=a.id, old_prompt=original,
+            suggested_prompt="PROMPT SUGERIDO POR EL OPTIMIZADOR",
+            rationale="mejora el tono", status="pending",
+        ))
+        db.commit()
+        sug_id = db.query(PromptSuggestion).filter(
+            PromptSuggestion.company_id == cid).one().id
+    finally:
+        db.close()
+
+    resp = client.post(f"/api/companies/{cid}/prompt-suggestions/{sug_id}/apply")
+    assert resp.status_code == 200
+    datos = resp.json()
+    assert datos["applied"] is False
+    assert datos["status"] == "evaluating"
+
+    db = SessionLocal()
+    try:
+        a = db.get(Agent, agent.id)
+        assert a.system_prompt == original, "se aplicó sin evaluar"
+        sug = db.get(PromptSuggestion, sug_id)
+        assert sug.status == "evaluating"
+        # Y quedó encolada la evaluación.
+        assert db.query(Job).filter(Job.kind == "prompt_eval").count() == 1
+    finally:
+        db.close()

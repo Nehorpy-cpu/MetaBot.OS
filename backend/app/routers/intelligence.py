@@ -7,6 +7,7 @@ from .. import swarm
 from ..analytics import compute_stats
 from ..db import get_db
 from ..llm import LLMError
+from .. import evaluator, job_handlers
 from ..models import Agent, AuditFinding, Company, CompetitorSource, PromptSuggestion, Report
 
 router = APIRouter(tags=["intelligence"])
@@ -156,18 +157,50 @@ def list_suggestions(company_id: int, db: Session = Depends(get_db)):
 
 @router.post("/companies/{company_id}/prompt-suggestions/{suggestion_id}/apply")
 def apply_suggestion(company_id: int, suggestion_id: int, db: Session = Depends(get_db)):
+    """Manda la sugerencia a evaluación. NO la aplica en el acto.
+
+    Antes esto escribía `agent.system_prompt` directo, y eso hacía tres cosas
+    malas a la vez: salteaba el evaluador, no dejaba historial al que volver, y
+    desincronizaba el versionado —la tabla habría seguido diciendo que la
+    versión 1 estaba activa mientras el agente tenía otro texto—.
+
+    Ahora la sugerencia se convierte en candidato y se encola la corrida del
+    conjunto dorado. Si pasa, se activa sola; si rompe un guardrail, queda
+    registrada con la evidencia y nadie toca producción. Que un cambio de
+    prompt necesite evidencia es justamente el punto de la etapa 5.
+    """
     suggestion = db.get(PromptSuggestion, suggestion_id)
     if not suggestion or suggestion.company_id != company_id:
         raise HTTPException(404, "Sugerencia no encontrada")
     if suggestion.status != "pending":
         raise HTTPException(409, f"La sugerencia ya está en estado '{suggestion.status}'")
     agent = db.get(Agent, suggestion.agent_id)
-    if not agent:
+    if not agent or agent.company_id != company_id:
         raise HTTPException(404, "El agente ya no existe")
-    agent.system_prompt = suggestion.suggested_prompt
-    suggestion.status = "applied"
+
+    candidato = evaluator.crear_candidato(
+        db, agent, suggestion.suggested_prompt,
+        source="optimizer", suggestion_id=suggestion.id,
+        note=suggestion.rationale[:300],
+    )
+    suggestion.status = "evaluating"
     db.commit()
-    return {"applied": True, "agent_id": agent.id}
+    job_handlers.schedule_prompt_eval(
+        db, company_id, agent.id, candidato.id, suggestion.id
+    )
+    db.commit()
+    return {
+        "applied": False,
+        "status": "evaluating",
+        "version_id": candidato.id,
+        "version": candidato.version,
+        "nota": (
+            "El cambio quedó como candidato y se está evaluando contra el "
+            "conjunto dorado. Si pasa se activa solo; si rompe un guardrail "
+            "queda bloqueado con el detalle de qué falló. Tarda unos minutos: "
+            "cada caso corre el bot de verdad."
+        ),
+    }
 
 
 @router.post("/companies/{company_id}/prompt-suggestions/{suggestion_id}/reject")

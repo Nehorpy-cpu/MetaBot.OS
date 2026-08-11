@@ -191,3 +191,63 @@ async def _run_supervision(db: Session, company_id: int, payload: dict) -> None:
         modo="shadow",
         degradacion=payload.get("degradacion", ""),
     )
+
+
+# --- Evaluación de un prompt candidato (etapa 5) ---
+
+PROMPT_EVAL_KIND = "prompt_eval"
+
+
+def schedule_prompt_eval(db: Session, company_id: int, agent_id: int,
+                         version_id: int, suggestion_id: int | None = None) -> None:
+    """Encola la evaluación de un candidato.
+
+    Va a la cola y no al request porque el conjunto dorado tarda minutos: cada
+    caso corre el motor de verdad, con sus ~60 s de herramientas. Un HTTP de
+    cinco minutos lo corta cualquier proxy.
+    """
+    jobs.enqueue(
+        db,
+        company_id=company_id,
+        kind=PROMPT_EVAL_KIND,
+        run_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        payload={"agent_id": agent_id, "version_id": version_id,
+                 "suggestion_id": suggestion_id},
+        dedup_key=f"{PROMPT_EVAL_KIND}:{version_id}",
+        max_attempts=2,
+    )
+
+
+@jobs.handler(PROMPT_EVAL_KIND)
+async def _run_prompt_eval(db: Session, company_id: int, payload: dict) -> None:
+    from . import evaluator
+    from .models import Agent, AgentPromptVersion, PromptSuggestion
+
+    company = db.get(Company, company_id)
+    agent = db.get(Agent, payload.get("agent_id"))
+    version = db.get(AgentPromptVersion, payload.get("version_id"))
+    if not company or not agent or not version or agent.company_id != company_id:
+        logger.info("eval de prompt: el candidato ya no existe")
+        return
+
+    corrida = await evaluator.correr(db, company, agent, version)
+    sugerencia = (
+        db.get(PromptSuggestion, payload["suggestion_id"])
+        if payload.get("suggestion_id") else None
+    )
+
+    if corrida.verdict != "pass":
+        # El candidato queda registrado con su evidencia. No se activa nada:
+        # que un cambio de prompt necesite evidencia es justamente el punto.
+        if sugerencia:
+            sugerencia.status = "blocked_by_eval"
+        db.commit()
+        logger.warning("candidato v%s rechazado por el evaluador: %s",
+                       version.version, corrida.reason)
+        return
+
+    resultado = evaluator.activar(db, agent, version.id)
+    if sugerencia:
+        sugerencia.status = "applied" if resultado["ok"] else "blocked_by_eval"
+    db.commit()
+    logger.info("candidato v%s: %s", version.version, resultado)

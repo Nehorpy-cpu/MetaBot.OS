@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as db_module
+from . import evaluator
 from . import medication  # noqa: F401  — registra el handler de tomas en la cola
 from .auth import resolve_identity
 from .config import ADMIN_TOKEN
@@ -101,6 +102,18 @@ async def enforce_auth_and_tenant(request: Request, call_next):
 
 @app.on_event("startup")
 async def _startup():
+    # El conjunto dorado se siembra al arrancar. Sin casos, `correr` aprueba
+    # todo por vacuidad (0 de 0 fallaron) — el mismo modo de falla que el
+    # auditor que aprobaba en silencio.
+    _db = db_module.SessionLocal()
+    try:
+        nuevos = evaluator.sembrar_casos(_db)
+        if nuevos:
+            print(f"conjunto dorado: {nuevos} casos sembrados")
+    except Exception:  # noqa: BLE001 — no impedir el arranque por esto
+        pass
+    finally:
+        _db.close()
     start_scheduler()
     # Trabajos durables: al arrancar retoma lo que quedó pendiente (un
     # recordatorio no se pierde porque el servidor se haya reiniciado).
