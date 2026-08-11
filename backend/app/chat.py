@@ -1026,8 +1026,20 @@ async def handle_incoming(
 
     # La receta se anexa DESPUÉS de la supervisión, a propósito: ni el CX ni el
     # CEO pueden reescribirla. Lo que el doctor cargó es lo que el paciente lee.
+    #
+    # PERO no se PERSISTE. Se guarda una marca. Dos razones, las dos serias:
+    #  1. Privacidad: `messages.body` alimenta la auditoría diaria del Guard,
+    #     que manda las conversaciones a un LLM externo. Persistir el bloque
+    #     mandaría nombre, diagnóstico y dosis del paciente fuera del país
+    #     todos los días. La receta ya vive en `prescriptions`, que no sale.
+    #  2. El historial del turno siguiente se arma con `messages.body`: si el
+    #     bloque estuviera ahí, la receta volvería al contexto del modelo y
+    #     podría parafrasearla —justo lo que la entrega verbatim evita.
+    reply_a_enviar = reply_text
     if verbatim:
-        reply_text = "\n\n".join([reply_text, *verbatim])
+        reply_a_enviar = "\n\n".join([reply_text, *verbatim])
+        marca = f"[se le envió al paciente su receta ({len(verbatim)} adjunto/s)]"
+        reply_text = f"{reply_text}\n\n{marca}".strip()
 
     db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="out", body=reply_text))
     tools_used = [a["tool"] for a in actions]
@@ -1047,7 +1059,8 @@ async def handle_incoming(
     db.commit()
     return {
         "conversation_id": conversation.id,
-        "reply": reply_text,
+        # Al canal va la respuesta CON la receta; a la base fue sin ella.
+        "reply": reply_a_enviar,
         "status": conversation.status,
         "actions": actions,
         "media": media[:5],

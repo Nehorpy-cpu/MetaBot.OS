@@ -557,3 +557,74 @@ def test_cancelar_el_tratamiento_apaga_los_recordatorios():
     listado = client.get(f"/api/companies/{cid}/prescriptions").json()
     assert listado[0]["status"] == "cancelled"
     assert listado[0]["reminders_enabled"] is False
+
+
+def test_la_receta_NO_queda_guardada_en_el_historial(monkeypatch):
+    """Privacidad y contexto, de un solo cambio.
+
+    `messages.body` alimenta la auditoría diaria del Guard, que manda las
+    conversaciones a un LLM externo: persistir el bloque mandaría nombre,
+    diagnóstico y dosis del paciente fuera del país todos los días. Y el
+    historial del turno siguiente se arma con esa misma columna, así que la
+    receta volvería al contexto del modelo y podría parafrasearla —justo lo
+    que la entrega verbatim evita.
+    """
+    from app.models import AgentRun, Message
+
+    company = _sanatorio("Sanatorio No Persiste")
+    cid = company["id"]
+    telefono = "+595981200099"
+    _cargar_receta(cid, telefono)
+
+    fake, _ = _mock_llm([
+        _tool_call("get_prescription", {}),
+        {"content": "Te la mando."},
+    ])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": telefono, "text": "mi receta?"})
+
+    # Al paciente SÍ le llega, textual.
+    assert "Amoxicilina 500 mg" in resp.json()["reply"]
+
+    db = SessionLocal()
+    try:
+        salientes = (
+            db.query(Message)
+            .filter(Message.company_id == cid, Message.direction == "out")
+            .all()
+        )
+        assert salientes, "tiene que haber quedado el mensaje de salida"
+        for m in salientes:
+            assert "Amoxicilina" not in m.body, "la medicación quedó guardada en el historial"
+            assert "Faringitis" not in m.body, "el diagnóstico quedó guardado en el historial"
+        assert any("receta" in m.body for m in salientes), "debe quedar la marca de que se envió"
+
+        for run in db.query(AgentRun).filter(AgentRun.company_id == cid).all():
+            assert "Amoxicilina" not in (run.answer or "")
+    finally:
+        db.close()
+
+
+def test_la_receta_no_vuelve_al_contexto_del_modelo(monkeypatch):
+    """El turno siguiente no debe llevarle la receta al modelo."""
+    company = _sanatorio("Sanatorio Contexto Limpio")
+    cid = company["id"]
+    telefono = "+595981200098"
+    _cargar_receta(cid, telefono)
+
+    fake, _ = _mock_llm([
+        _tool_call("get_prescription", {}),
+        {"content": "Te la mando."},
+    ])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    client.post(f"/api/companies/{cid}/chat",
+                json={"contact_phone": telefono, "text": "mi receta?"})
+
+    fake2, calls2 = _mock_llm([{"content": "¿Algo más?"}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake2)
+    client.post(f"/api/companies/{cid}/chat",
+                json={"contact_phone": telefono, "text": "gracias"})
+
+    enviado = json.dumps(calls2[0]["messages"], ensure_ascii=False)
+    assert "Amoxicilina" not in enviado, "la receta volvió al contexto del modelo"
