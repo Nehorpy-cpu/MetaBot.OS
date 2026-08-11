@@ -6,7 +6,7 @@ endpoint se acuerde de filtrar.
 """
 from fastapi.testclient import TestClient
 
-from tests.test_api import _create_company, app, client
+from tests.test_api import _create_company, app, client, drenar_cola, post_webhook
 
 from app.auth import hash_password
 from app.db import SessionLocal
@@ -291,8 +291,9 @@ def test_el_webhook_entrega_el_mensaje_a_la_empresa_duena_del_numero(monkeypatch
                           "type": "text", "text": {"body": "hola"}}],
         }}]}]
     }
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
+    resp = post_webhook(payload)
     assert resp.status_code == 200
+    drenar_cola()  # el webhook encola; el mensaje se procesa en el worker
 
     de_la_duena = client.get(f"/api/companies/{duena['id']}/conversations").json()
     de_la_vecina = client.get(f"/api/companies/{vecina['id']}/conversations").json()

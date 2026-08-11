@@ -3,6 +3,11 @@ import os
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["ADMIN_TOKEN"] = "test-token-secreto"
 os.environ["SCHEDULER_ENABLED"] = "0"
+# El webhook de Meta falla CERRADO sin este secreto. Configurarlo acá hace que
+# las pruebas firmen sus cargas y ejerciten la validación de verdad, en vez de
+# saltearla.
+os.environ["WHATSAPP_APP_SECRET"] = "secreto-de-prueba"
+os.environ["WHATSAPP_VERIFY_TOKEN"] = "verify-de-prueba"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import StaticPool, create_engine  # noqa: E402
@@ -225,3 +230,37 @@ def test_dashboard_counts():
     assert data["agents_active"] == 7
     assert data["doctors"] == 0
     assert data["company"]["vertical"] == "medical"
+
+
+# --- Webhook de Meta: firmar y drenar ---
+
+
+def firmar_webhook(body: bytes) -> dict:
+    """Cabeceras con la firma HMAC que Meta manda en cada POST."""
+    import hashlib
+    import hmac
+
+    firma = hmac.new(b"secreto-de-prueba", body, hashlib.sha256).hexdigest()
+    return {"Content-Type": "application/json", "X-Hub-Signature-256": f"sha256={firma}"}
+
+
+def post_webhook(payload: dict):
+    """POST al webhook con firma válida, como lo haría Meta."""
+    import json as _json
+
+    body = _json.dumps(payload).encode()
+    return client.post("/api/webhooks/whatsapp", content=body, headers=firmar_webhook(body))
+
+
+def drenar_cola() -> int:
+    """Corre los trabajos pendientes.
+
+    El webhook ENCOLA y responde 200 al toque —Meta reintenta si tarda—, así
+    que las pruebas que verifican la respuesta del bot tienen que correr el
+    worker a mano.
+    """
+    import asyncio
+
+    from app import jobs
+
+    return asyncio.run(jobs.process_due("worker-de-prueba", limit=50))

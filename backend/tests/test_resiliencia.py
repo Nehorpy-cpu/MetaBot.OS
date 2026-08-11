@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 
-from tests.test_api import _create_company, client
+from tests.test_api import _create_company, client, drenar_cola, post_webhook
 
 from app import chat as chat_engine
 from app import sessions
@@ -110,20 +110,23 @@ def test_meta_webhook_replay_does_not_duplicate(monkeypatch):
         enviados.append(text)
         return {"sent": True}
 
-    monkeypatch.setattr(whatsapp_webhook.whatsapp, "send_text", fake_send)
-    monkeypatch.setattr(whatsapp_webhook, "WHATSAPP_APP_SECRET", "secreto-replay")
+    from app import whatsapp as whatsapp_mod
 
-    body = json.dumps({"entry": [{"changes": [{"value": {
+    monkeypatch.setattr(whatsapp_mod, "send_text", fake_send)
+
+    payload = {"entry": [{"changes": [{"value": {
         "metadata": {"phone_number_id": "PN-REPLAY"},
         "contacts": [{"wa_id": "595971040404", "profile": {"name": "Luis"}}],
         "messages": [{"id": "wamid.REPLAY1", "from": "595971040404",
                       "type": "text", "text": {"body": "Hola"}}],
-    }}]}]}).encode()
-    sig = "sha256=" + hmac.new(b"secreto-replay", body, hashlib.sha256).hexdigest()
-    headers = {"X-Hub-Signature-256": sig, "Content-Type": "application/json"}
+    }}]}]}
 
-    client.post("/api/webhooks/whatsapp", content=body, headers=headers)
-    client.post("/api/webhooks/whatsapp", content=body, headers=headers)  # replay
+    # Meta reenvía el webhook cuando no recibe el 200 a tiempo. La reentrega
+    # tiene que morir en el dedup de la cola: si no, el cliente recibe dos
+    # respuestas y, peor, se le agenda dos veces.
+    post_webhook(payload)
+    post_webhook(payload)  # replay
+    drenar_cola()
 
     assert len(enviados) == 1, "el replay del webhook mandó una segunda respuesta"
 

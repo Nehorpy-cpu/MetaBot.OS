@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import json
 
-from tests.test_api import _create_company, client
+from tests.test_api import _create_company, client, drenar_cola, post_webhook
 
 from app import chat as chat_engine
 from app.routers import whatsapp_webhook
@@ -79,34 +79,58 @@ def test_webhook_routes_message_to_tenant_and_replies(monkeypatch):
         sent.append({"pnid": phone_number_id, "to": to, "text": text})
         return {"sent": True}
 
-    monkeypatch.setattr(whatsapp_webhook.chat_engine, "handle_incoming", fake_handle)
-    monkeypatch.setattr(whatsapp_webhook.whatsapp, "send_text", fake_send)
-    monkeypatch.setattr(whatsapp_webhook, "WHATSAPP_APP_SECRET", "secreto")
+    from app import chat as chat_engine
+    from app import whatsapp as whatsapp_mod
 
-    body = json.dumps(_wa_payload("PNID-777", "595971234567", "Hola, quiero un turno", "Juan Pérez")).encode()
-    sig = "sha256=" + hmac.new(b"secreto", body, hashlib.sha256).hexdigest()
-    resp = client.post(
-        "/api/webhooks/whatsapp",
-        content=body,
-        headers={"X-Hub-Signature-256": sig, "Content-Type": "application/json"},
-    )
+    monkeypatch.setattr(chat_engine, "handle_incoming", fake_handle)
+    monkeypatch.setattr(whatsapp_mod, "send_text", fake_send)
+
+    # El webhook ENCOLA y responde al toque: Meta reintenta si tarda, y
+    # `handle_incoming` tarda ~60s. El envío ocurre al correr el worker.
+    resp = post_webhook(_wa_payload("PNID-777", "595971234567", "Hola, quiero un turno", "Juan Pérez"))
     assert resp.status_code == 200
+    assert resp.json()["queued"] == 1
+    assert sent == [], "el webhook no puede esperar al modelo"
+
+    drenar_cola()
     assert sent == [{"pnid": "PNID-777", "to": "595971234567", "text": "¡Hola Juan!"}]
 
 
-def test_webhook_unknown_tenant_ignored(monkeypatch):
+def test_webhook_unknown_tenant_ignored():
+    """Un phone_number_id que no es de nadie no encola nada, y Meta igual
+    recibe 200: si no, reintentaría en bucle para siempre."""
+    resp = post_webhook(_wa_payload("PNID-INEXISTENTE", "595970000000", "hola"))
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 0
+
+
+def test_el_webhook_falla_CERRADO_sin_app_secret(monkeypatch):
+    """Es un endpoint público. Antes, sin el secreto configurado aceptaba
+    cualquier POST: cualquiera podía inyectarle conversaciones al bot de
+    cualquier empresa."""
     monkeypatch.setattr(whatsapp_webhook, "WHATSAPP_APP_SECRET", "")
-    called = []
+    body = json.dumps(_wa_payload("PNID-777", "595971234567", "hola")).encode()
+    resp = client.post("/api/webhooks/whatsapp", content=body,
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 403
 
-    async def fake_handle(*a, **k):
-        called.append(1)
-        return {}
 
-    monkeypatch.setattr(whatsapp_webhook.chat_engine, "handle_incoming", fake_handle)
-    body = json.dumps(_wa_payload("PNID-INEXISTENTE", "595970000000", "hola")).encode()
-    resp = client.post("/api/webhooks/whatsapp", content=body, headers={"Content-Type": "application/json"})
-    assert resp.status_code == 200  # Meta siempre recibe 200
-    assert not called
+def test_el_webhook_responde_rapido_sin_esperar_al_modelo(monkeypatch):
+    """Meta espera un 200 pronto y reintenta si no lo recibe. Procesar adentro
+    haría que cada mensaje se reintente varias veces."""
+    from app import chat as chat_engine
+
+    company = _create_company(name="Clínica Rápida")
+    cid = company["id"]
+    client.patch(f"/api/companies/{cid}", json={"wa_phone_number_id": "PNID-RAPIDO"})
+
+    async def jamas(*a, **k):
+        raise AssertionError("el webhook no puede llamar al modelo")
+
+    monkeypatch.setattr(chat_engine, "handle_incoming", jamas)
+    resp = post_webhook(_wa_payload("PNID-RAPIDO", "595971000999", "hola"))
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 1
 
 
 def test_reminders_for_date():

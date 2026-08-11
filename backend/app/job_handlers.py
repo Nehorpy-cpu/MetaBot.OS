@@ -251,3 +251,66 @@ async def _run_prompt_eval(db: Session, company_id: int, payload: dict) -> None:
         sugerencia.status = "applied" if resultado["ok"] else "blocked_by_eval"
     db.commit()
     logger.info("candidato v%s: %s", version.version, resultado)
+
+
+# --- Mensaje entrante de WhatsApp (Cloud API) ---
+
+INBOUND_KIND = "whatsapp_inbound"
+
+
+def schedule_inbound_message(db: Session, company_id: int, *, telefono: str,
+                             texto: str, nombre: str = "", external_id: str = "",
+                             phone_number_id: str = "") -> None:
+    """Encola un mensaje entrante para procesarlo fuera del webhook.
+
+    El dedup_key es el id del mensaje de Meta: si Meta reenvía el webhook —lo
+    hace cuando no recibe el 200 a tiempo—, el mensaje no se procesa dos veces
+    ni se le responde dos veces al cliente.
+    """
+    jobs.enqueue(
+        db,
+        company_id=company_id,
+        kind=INBOUND_KIND,
+        run_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        payload={
+            "telefono": telefono, "texto": texto, "nombre": nombre,
+            "external_id": external_id, "phone_number_id": phone_number_id,
+        },
+        dedup_key=f"{INBOUND_KIND}:{company_id}:{external_id}" if external_id else None,
+        max_attempts=3,
+    )
+
+
+@jobs.handler(INBOUND_KIND)
+async def _procesar_entrante(db: Session, company_id: int, payload: dict) -> None:
+    from . import chat as chat_engine
+    from . import whatsapp
+    from .llm import LLMError
+
+    company = db.get(Company, company_id)
+    if not company:
+        return
+    try:
+        salida = await chat_engine.handle_incoming(
+            db, company, payload["telefono"], payload["texto"],
+            contact_name=payload.get("nombre", ""),
+            external_id=payload.get("external_id", ""),
+        )
+    except LLMError as exc:
+        # Reintentable: el proveedor puede volver. Lanzar deja el trabajo en la
+        # cola con backoff en vez de perder el mensaje del cliente.
+        raise RuntimeError(f"LLM no disponible: {exc}")
+
+    if salida.get("duplicate"):
+        logger.info("mensaje %s ya procesado", payload.get("external_id"))
+        return
+
+    pnid = payload.get("phone_number_id", "") or company.wa_phone_number_id
+    destino = payload["telefono"].lstrip("+")
+    for item in (salida.get("media") or [])[:5]:
+        await whatsapp.send_image(pnid, destino, item.get("path", ""), item.get("caption", ""))
+    respuesta = salida.get("reply")
+    if respuesta:
+        resultado = await whatsapp.send_text(pnid, destino, respuesta)
+        if resultado.get("error"):
+            raise RuntimeError(resultado["error"])
