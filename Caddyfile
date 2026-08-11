@@ -14,10 +14,11 @@
 	@assets path /assets/*
 	header @assets Cache-Control "public, max-age=31536000, immutable"
 
-	# n8n detrás del mismo dominio. Va ANTES del proxy general porque Caddy
-	# resuelve por especificidad, pero se deja explícito para que se lea el
-	# orden real: /n8n/* es de n8n, todo lo demás del backend.
-	handle_path /n8n/* {
+	# n8n detrás del mismo dominio, en /n8n/. Va `handle` y NO `handle_path`
+	# a propósito: handle_path corta el prefijo, y n8n está configurado con
+	# N8N_PATH=/n8n/, o sea que espera recibirlo. Con el prefijo cortado
+	# devolvía 404 en todo.
+	handle /n8n/* {
 		reverse_proxy n8n:5678
 	}
 
