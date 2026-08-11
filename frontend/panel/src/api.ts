@@ -148,6 +148,59 @@ export interface Doctor {
   schedule: string;
   phone: string;
   email: string;
+  // Resultado del cruce contra el padrón del CPM. `not_found` no es un error:
+  // el padrón es solo de médicos especialistas, así que una bioquímica o un
+  // veterinario nunca van a figurar.
+  verification?: "unverified" | "verified" | "expired" | "not_found";
+  cert_number?: string;
+  cert_specialty?: string;
+  cert_expires_at?: string | null;
+}
+
+export interface EspecialidadPadron {
+  // El padrón escribe la misma especialidad de varias formas. `clave` es la
+  // forma normalizada con la que se busca; `etiqueta` es la más usada, que es
+  // la que se le muestra a la gente.
+  clave: string;
+  etiqueta: string;
+  cantidad: number;
+}
+
+export interface RegistryMatch {
+  registry_id: number;
+  full_name: string;
+  specialty: string;
+  cert_number: string;
+  expires_at: string | null;
+  vigente: boolean;
+}
+
+export interface ImportRow {
+  name: string;
+  specialty: string;
+  schedule: string;
+  phone: string;
+  email: string;
+  ya_cargado: boolean;
+  // El mismo nombre en el padrón. `sugerencias` son parecidos, por si la
+  // planilla trae el nombre incompleto o mal escrito.
+  padron: RegistryMatch | null;
+  sugerencias: RegistryMatch[];
+}
+
+export interface ImportPreview {
+  archivo: string;
+  total: number;
+  en_padron: number;
+  ya_cargados: number;
+  filas: ImportRow[];
+}
+
+export interface ImportResult {
+  creados: { id: number; name: string; verification: string; cert_number: string }[];
+  omitidos: { name: string; motivo: string }[];
+  verificados: number;
+  no_figuran: number;
 }
 
 export interface Appointment {
@@ -208,6 +261,24 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return resp.status === 204 ? (undefined as T) : resp.json();
 }
 
+async function upload<T>(path: string, archivo: File): Promise<T> {
+  const cuerpo = new FormData();
+  cuerpo.append("archivo", archivo);
+  // Sin `Content-Type`: el navegador tiene que ponerlo con su propio boundary.
+  const resp = await fetch(`/api${path}`, {
+    method: "POST", credentials: "same-origin", body: cuerpo,
+  });
+  if (resp.status === 401) {
+    onUnauthorized?.();
+    throw new Error("Sesión expirada. Ingresá de nuevo.");
+  }
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail ?? `Error ${resp.status}`);
+  }
+  return resp.json();
+}
+
 export interface Me {
   user: { id: number | null; email: string; full_name: string };
   is_platform_admin: boolean;
@@ -243,6 +314,26 @@ export const api = {
   listDoctors: (companyId: number) => request<Doctor[]>(`/companies/${companyId}/doctors`),
   createDoctor: (companyId: number, data: Omit<Doctor, "id">) =>
     request<Doctor>(`/companies/${companyId}/doctors`, { method: "POST", body: JSON.stringify(data) }),
+  buscarPadron: (companyId: number, q: string, specialty: string) =>
+    request<{ resultados: RegistryMatch[]; total: number; mostrados: number; hay_mas: boolean; nota: string }>(
+      `/companies/${companyId}/registry/search?q=${encodeURIComponent(q)}&specialty=${encodeURIComponent(specialty)}`
+    ),
+  especialidadesPadron: (companyId: number) =>
+    request<{ especialidades: EspecialidadPadron[] }>(`/companies/${companyId}/registry/specialties`),
+  reverificarDoctores: (companyId: number) =>
+    request<{ total: number; por_estado: Record<string, number> }>(
+      `/companies/${companyId}/doctors/verify-all`, { method: "POST" }
+    ),
+  altaDesdePadron: (companyId: number, data: { registry_id: number; schedule?: string; phone?: string; email?: string }) =>
+    request<{ id: number; name: string; verification: string; cert_number: string }>(
+      `/companies/${companyId}/doctors/from-registry`, { method: "POST", body: JSON.stringify(data) }
+    ),
+  previsualizarPlanilla: (companyId: number, archivo: File) =>
+    upload<ImportPreview>(`/companies/${companyId}/doctors/import/preview`, archivo),
+  confirmarPlanilla: (companyId: number, profesionales: Partial<Doctor>[]) =>
+    request<ImportResult>(`/companies/${companyId}/doctors/import/confirm`, {
+      method: "POST", body: JSON.stringify({ profesionales }),
+    }),
   listAppointments: (companyId: number, doctorId?: number) =>
     request<Appointment[]>(
       `/companies/${companyId}/appointments${doctorId ? `?doctor_id=${doctorId}` : ""}`

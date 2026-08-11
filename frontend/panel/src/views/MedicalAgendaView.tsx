@@ -1,8 +1,9 @@
 import React from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Calendar, Clock, Plus, Send, Smartphone, Users } from "lucide-react";
+import { BadgeCheck, Calendar, Clock, Plus, Send, Smartphone, Upload, Users } from "lucide-react";
 import { STATUS_ES, api, type Appointment, type DailySummary, type Doctor } from "../api";
 import { card, input, btnPrimary, Modal } from "../ui";
+import { DoctorImportModal } from "./DoctorImportModal";
 
 export function MedicalAgendaView({ companyId }: { companyId: number }) {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
@@ -12,6 +13,7 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
   const [showSummaries, setShowSummaries] = useState(false);
   const [copiedDoctor, setCopiedDoctor] = useState<string | null>(null);
   const [showAddDoctor, setShowAddDoctor] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showAddAppt, setShowAddAppt] = useState(false);
 
   const load = useCallback(() => {
@@ -65,8 +67,21 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
             <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest flex items-center gap-2">
               <Users size={15} className="text-indigo-400" /> Doctores ({doctors.length})
             </h3>
-            <button onClick={() => setShowAddDoctor(true)} className="text-cyan-400 hover:text-cyan-300 p-1"><Plus size={16} /></button>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setShowImport(true)} title="Buscar en el padrón o subir tu planilla"
+                className="text-cyan-400 hover:text-cyan-300 p-1"><Upload size={15} /></button>
+              <button onClick={() => setShowAddDoctor(true)} title="Cargar uno a mano"
+                className="text-cyan-400 hover:text-cyan-300 p-1"><Plus size={16} /></button>
+            </div>
           </div>
+          {!doctors.length && (
+            <button onClick={() => setShowImport(true)}
+              className="w-full border-2 border-dashed border-white/10 hover:border-cyan-500/40 rounded-xl p-5 text-center transition-colors">
+              <Upload size={20} className="mx-auto text-zinc-600 mb-2" />
+              <span className="text-xs text-zinc-400 block">Cargá tus profesionales</span>
+              <span className="text-[10px] text-zinc-600">desde el padrón del CPM o tu propia planilla</span>
+            </button>
+          )}
           <div onClick={() => setSelectedDoctor("all")}
             className={`p-3 rounded-xl border cursor-pointer text-sm font-bold ${selectedDoctor === "all" ? "bg-cyan-500/10 border-cyan-500/50 text-white" : "bg-white/[0.02] border-white/5 text-zinc-400"}`}>
             Todos los consultorios
@@ -74,7 +89,17 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
           {doctors.map((d) => (
             <div key={d.id} onClick={() => setSelectedDoctor(d.id)}
               className={`p-3 rounded-xl border cursor-pointer ${selectedDoctor === d.id ? "bg-cyan-500/10 border-cyan-500/50 text-white" : "bg-white/[0.02] border-white/5 text-zinc-400"}`}>
-              <p className="font-bold text-sm text-zinc-100">{d.name}</p>
+              <p className="font-bold text-sm text-zinc-100 flex items-center gap-1.5">
+                {d.name}
+                {d.verification === "verified" && (
+                  <BadgeCheck size={13} className="text-emerald-400 shrink-0"
+                    aria-label={`Certificación ${d.cert_number} vigente en el padrón del CPM`} />
+                )}
+                {d.verification === "expired" && (
+                  <BadgeCheck size={13} className="text-amber-400 shrink-0"
+                    aria-label={`Certificación ${d.cert_number} vencida`} />
+                )}
+              </p>
               <p className="text-[10px] text-cyan-300">{d.specialty}</p>
               {d.schedule && <p className="text-xs text-zinc-400 mt-1 flex items-center gap-1"><Clock size={11} /> {d.schedule}</p>}
               {d.phone && <p className="text-xs text-zinc-500 flex items-center gap-1"><Smartphone size={11} /> {d.phone}</p>}
@@ -146,6 +171,9 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
 
       {showAddDoctor && (
         <AddDoctorModal companyId={companyId} onClose={() => setShowAddDoctor(false)} onSaved={load} />
+      )}
+      {showImport && (
+        <DoctorImportModal companyId={companyId} onClose={() => setShowImport(false)} onSaved={load} />
       )}
       {showAddAppt && (
         <AddAppointmentModal companyId={companyId} doctors={doctors} onClose={() => setShowAddAppt(false)} onSaved={load} />

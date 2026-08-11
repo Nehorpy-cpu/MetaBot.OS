@@ -415,6 +415,12 @@ class MedicalRegistry(Base):
     # hace que las dos formas colisionen en la misma clave.
     match_key: Mapped[str] = mapped_column(String(200), index=True)
     specialty: Mapped[str] = mapped_column(String(120), index=True)
+    # La misma especialidad viene escrita de varias formas: "Cirugía General"
+    # (327 filas) y "Cirugia General" (19), "Pediatría General" (335),
+    # "Pediatria General" (23) y "Pediátria General" (1). Buscar por el texto
+    # tal cual dejaría fuera a esas decenas de profesionales sin avisar, así
+    # que se guarda también la forma normalizada y se busca por ella.
+    specialty_key: Mapped[str] = mapped_column(String(120), default="", index=True)
     cert_number: Mapped[str] = mapped_column(String(30), default="")
     accredited_at: Mapped[date | None] = mapped_column(nullable=True)
     expires_at: Mapped[date | None] = mapped_column(nullable=True, index=True)

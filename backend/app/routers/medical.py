@@ -1,11 +1,11 @@
 """Módulo médico: doctores, citas, recordatorios, iCalendar y resúmenes."""
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels, job_handlers, outbound, registry, whatsapp
+from .. import channels, importador_profesionales, job_handlers, outbound, registry, whatsapp
 from ..config import TIMEZONE
 from ..db import get_db
 from ..models import Appointment, Company, Doctor
@@ -339,3 +339,106 @@ def daily_summary(
         lines.append("Sin citas para esta fecha.")
     lines.append("_Enviado automáticamente por MetaBot.OS_")
     return {"doctor": doctor.name, "date": target.isoformat(), "count": len(appts), "text": "\n".join(lines)}
+
+
+# --- Alta de profesionales desde el padrón y por planilla ---
+
+
+@router.get("/companies/{company_id}/registry/search")
+def buscar_en_padron(
+    company_id: int, q: str = "", specialty: str = "", db: Session = Depends(get_db)
+):
+    """Busca en el padrón del CPM para dar de alta profesionales.
+
+    Exige un criterio: sin `q` ni `specialty` devuelve vacío. El padrón no es
+    un directorio para navegar —son 4.772 personas reales—, es una ayuda para
+    que quien da de alta no tipee mal un nombre ni invente una especialidad.
+    Está solo acá, en el panel: el bot no lo tiene como herramienta.
+    """
+    _get_company(company_id, db)
+    resultados = registry.buscar(db, texto=q, especialidad=specialty)
+    total = registry.contar(db, texto=q, especialidad=specialty)
+    return {
+        "resultados": resultados,
+        # Sin esto, ver 25 de 346 parece "estos son todos los que hay".
+        "total": total,
+        "mostrados": len(resultados),
+        "hay_mas": total > len(resultados),
+        "nota": (
+            "Marcá solo a los profesionales que realmente atienden en tu "
+            "institución. El padrón confirma la certificación; no dice dónde "
+            "trabaja cada uno."
+        ),
+    }
+
+
+@router.get("/companies/{company_id}/registry/specialties")
+def especialidades_del_padron(company_id: int, db: Session = Depends(get_db)):
+    _get_company(company_id, db)
+    return {"especialidades": registry.especialidades(db)}
+
+
+@router.post("/companies/{company_id}/doctors/verify-all")
+def verificar_todos(company_id: int, db: Session = Depends(get_db)):
+    """Vuelve a cruzar contra el padrón a todos los profesionales cargados."""
+    _get_company(company_id, db)
+    return registry.verificar_empresa(db, company_id)
+
+
+class AltaPadronIn(BaseModel):
+    registry_id: int
+    schedule: str = Field(default="", max_length=100)
+    phone: str = Field(default="", max_length=50)
+    email: str = Field(default="", max_length=200)
+
+
+@router.post("/companies/{company_id}/doctors/from-registry", status_code=201)
+def alta_desde_padron(
+    company_id: int, payload: AltaPadronIn, db: Session = Depends(get_db)
+):
+    """Da de alta un profesional con los datos del padrón, ya verificado."""
+    _get_company(company_id, db)
+    resultado = registry.alta_desde_padron(
+        db, company_id, payload.registry_id,
+        schedule=payload.schedule, phone=payload.phone, email=payload.email,
+    )
+    if not resultado["ok"]:
+        raise HTTPException(409, resultado["error"])
+    return resultado
+
+
+@router.post("/companies/{company_id}/doctors/import/preview")
+async def previsualizar_planilla(
+    company_id: int, archivo: UploadFile = File(...), db: Session = Depends(get_db)
+):
+    """Lee la planilla del cliente y la cruza contra el padrón, SIN guardar.
+
+    Devuelve fila por fila qué encontró y con qué coincidió, para que una
+    persona confirme. Cargar cuarenta médicos de un archivo sin mirarlo es
+    como se meten cuarenta errores de una sentada.
+    """
+    _get_company(company_id, db)
+    contenido = await archivo.read()
+    if len(contenido) > 5 * 1024 * 1024:
+        raise HTTPException(413, "El archivo supera los 5 MB")
+    resultado = importador_profesionales.previsualizar(
+        db, company_id, contenido, archivo.filename or "planilla.csv"
+    )
+    if resultado.get("error"):
+        raise HTTPException(422, resultado["error"])
+    return resultado
+
+
+class ConfirmarImportIn(BaseModel):
+    profesionales: list[dict]
+
+
+@router.post("/companies/{company_id}/doctors/import/confirm")
+def confirmar_planilla(
+    company_id: int, payload: ConfirmarImportIn, db: Session = Depends(get_db)
+):
+    """Da de alta lo que la persona confirmó de la previsualización."""
+    _get_company(company_id, db)
+    if len(payload.profesionales) > 500:
+        raise HTTPException(422, "Máximo 500 profesionales por importación")
+    return importador_profesionales.confirmar(db, company_id, payload.profesionales)

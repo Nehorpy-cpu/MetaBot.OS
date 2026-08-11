@@ -46,3 +46,6 @@ graphify-out/
 # no al repositorio.
 medicos_certificados_cpm.csv
 *_cpm.csv
+
+# Config local del asistente (rutas absolutas de cada máquina)
+.claude/
