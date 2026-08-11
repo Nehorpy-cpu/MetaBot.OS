@@ -11,6 +11,58 @@ export interface Company {
   wa_phone_number_id: string | null;
   supervision: "off" | "shadow" | "inline";
   supervision_pct: number;
+  // Módulos habilitados por los Business Packs. El panel decide qué vistas
+  // mostrar con ESTO y no con `vertical`: un sanatorio, una odontológica y una
+  // veterinaria son verticales distintas con la misma agenda.
+  modules: string[];
+}
+
+export interface Insurer {
+  id: number;
+  name: string;
+  plan: string;
+  coverage_pct: number;
+  copay_gs: number;
+  active: boolean;
+  notes: string;
+  coberturas_especificas: number;
+}
+
+export interface PrescriptionItemIn {
+  medication: string;
+  dose: string;
+  route: string;
+  frequency: string;
+  // 0 = pauta a demanda: no se programan recordatorios.
+  every_hours: number;
+  duration_days: number;
+  instructions: string;
+}
+
+export interface PrescriptionItem extends PrescriptionItemIn {
+  id: number;
+  a_demanda: boolean;
+}
+
+export interface Prescription {
+  id: number;
+  doctor: string;
+  doctor_id: number;
+  patient_name: string;
+  patient_phone: string;
+  diagnosis: string;
+  indications: string;
+  status: string;
+  reminders_enabled: boolean;
+  version: number;
+  issued_at: string;
+  items: PrescriptionItem[];
+}
+
+export interface RecordatoriosResult {
+  programadas: number;
+  motivo: string;
+  a_demanda_omitidas?: number;
 }
 
 export interface SupervisionEvent {
@@ -240,6 +292,22 @@ export const waApi = {
   status: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/status`),
   start: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/start`, { method: "POST" }),
   logout: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/logout`, { method: "POST" }),
+};
+
+export const clinicalApi = {
+  listInsurers: (companyId: number) => request<Insurer[]>(`/companies/${companyId}/insurers`),
+  createInsurer: (companyId: number, data: { name: string; plan: string; coverage_pct: number; copay_gs: number }) =>
+    request<{ id: number }>(`/companies/${companyId}/insurers`, { method: "POST", body: JSON.stringify(data) }),
+  listPrescriptions: (companyId: number) =>
+    request<Prescription[]>(`/companies/${companyId}/prescriptions`),
+  createPrescription: (companyId: number, data: Record<string, unknown>) =>
+    request<Prescription & { recordatorios: RecordatoriosResult }>(
+      `/companies/${companyId}/prescriptions`, { method: "POST", body: JSON.stringify(data) }),
+  cancelPrescription: (companyId: number, id: number) =>
+    request<{ ok: boolean }>(`/companies/${companyId}/prescriptions/${id}/cancel`, { method: "POST" }),
+  verifyDoctors: (companyId: number) =>
+    request<{ total: number; por_estado: Record<string, number>; nota: string }>(
+      `/companies/${companyId}/doctors/verify`, { method: "POST" }),
 };
 
 export interface Report {

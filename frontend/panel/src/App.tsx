@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Activity, Bot, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
-  MessageSquare, Plus, Sliders, Video, Zap,
+  MessageSquare, Pill, Plus, Sliders, Video, Zap,
 } from "lucide-react";
 import { api, auth, setUnauthorizedHandler, type Company } from "./api";
 import { btnPrimary } from "./ui";
@@ -14,13 +14,14 @@ import { StudioView } from "./views/StudioView";
 import { IntelligenceView } from "./views/IntelligenceView";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { ChatView } from "./views/ChatView";
+import { ClinicalView } from "./views/ClinicalView";
 import { LoginScreen } from "./views/LoginScreen";
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null); // null = verificando
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical">("dashboard");
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -89,7 +90,8 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-1">
           <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest px-3 py-2">Módulos</div>
           {navBtn("dashboard", "Dashboard", LayoutDashboard)}
-          {active?.vertical === "medical" && navBtn("medical", "Agenda de Doctores", Calendar)}
+          {active?.modules?.includes("agenda") && navBtn("medical", "Agenda de Doctores", Calendar)}
+          {active?.modules?.includes("prescriptions") && navBtn("clinical", "Recetas y Convenios", Pill)}
           {navBtn("services", "Servicios & Estudios", Sliders)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
@@ -126,7 +128,8 @@ export default function App() {
               onCompanyUpdated={() => api.listCompanies().then(setCompanies).catch(() => {})}
             />
           )}
-          {active && view === "medical" && active.vertical === "medical" && <MedicalAgendaView companyId={active.id} />}
+          {active && view === "medical" && active.modules?.includes("agenda") && <MedicalAgendaView companyId={active.id} />}
+          {active && view === "clinical" && <ClinicalView company={active} />}
           {active && view === "chat" && <ChatView companyId={active.id} />}
           {active && view === "intelligence" && <IntelligenceView companyId={active.id} />}
           {active && view === "studio" && <StudioView companyId={active.id} />}

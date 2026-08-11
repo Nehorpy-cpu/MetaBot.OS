@@ -13,14 +13,14 @@ from .auth import resolve_identity
 from .config import ADMIN_TOKEN
 from .llm import available_providers
 from .models import Membership
-from .routers import agents, auth, bridge, campaigns, catalog, chat, companies, creatives, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
+from .routers import agents, auth, bridge, campaigns, catalog, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
 from .scheduler import _start_job_worker, start_scheduler
 
 # El esquema lo gestiona Alembic (entrypoint.sh corre `alembic upgrade head`).
 # Una sola fuente de verdad para la estructura de la base.
 
 app = FastAPI(title="MetaBot.OS", version="0.12.0")
-for router in (auth.router, companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router):
+for router in (auth.router, companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router, clinical.router):
     app.include_router(router, prefix="/api")
 
 

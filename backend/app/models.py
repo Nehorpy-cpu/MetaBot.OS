@@ -119,6 +119,18 @@ class Company(Base):
     )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
+    @property
+    def modules(self) -> list[str]:
+        """Módulos habilitados por los Business Packs activos.
+
+        El panel decide qué vistas mostrar con esto y no con `vertical`: un
+        sanatorio, una odontológica y una veterinaria son verticales distintas
+        con la misma agenda. Import tardío para no acoplar el esquema a packs.
+        """
+        from . import packs
+
+        return sorted(packs.modules_for(self))
+
     agents: Mapped[list["Agent"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     doctors: Mapped[list["Doctor"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     appointments: Mapped[list["Appointment"]] = relationship(back_populates="company", cascade="all, delete-orphan")

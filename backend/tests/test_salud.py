@@ -439,3 +439,121 @@ def test_la_confirmacion_no_alcanza_a_la_cita_de_otra_empresa(monkeypatch):
         assert db.get(Appointment, ajena).status == "pending"
     finally:
         db.close()
+
+
+# --- API del panel: convenios y recetas ---
+
+
+def test_convenio_se_carga_y_no_se_duplica():
+    company = _sanatorio("Sanatorio API Convenio")
+    cid = company["id"]
+    alta = client.post(f"/api/companies/{cid}/insurers",
+                       json={"name": "Seguro Ñandutí", "plan": "Plan Oro",
+                             "coverage_pct": 80, "copay_gs": 15000})
+    assert alta.status_code == 201
+    repetido = client.post(f"/api/companies/{cid}/insurers",
+                           json={"name": "Seguro Ñandutí", "plan": "Plan Oro"})
+    assert repetido.status_code == 409
+
+    listado = client.get(f"/api/companies/{cid}/insurers").json()
+    assert listado[0]["coverage_pct"] == 80
+
+
+def test_la_receta_exige_un_profesional_de_la_misma_empresa():
+    """La clave foránea compuesta ya lo impide en el motor; acá se responde
+    con un 422 legible en vez de un error de base."""
+    a = _sanatorio("Sanatorio Receta Propia")
+    b = _sanatorio("Sanatorio Receta Ajena")
+    doc_b = client.post(f"/api/companies/{b['id']}/doctors",
+                        json={"name": "Dr. Ajeno"}).json()
+
+    resp = client.post(f"/api/companies/{a['id']}/prescriptions", json={
+        "doctor_id": doc_b["id"], "patient_name": "Paciente",
+        "patient_phone": "+595981600001",
+        "items": [{"medication": "Ibuprofeno 400 mg", "dose": "1 comprimido"}],
+    })
+    assert resp.status_code == 422
+    assert "no es de esta empresa" in resp.json()["detail"]
+
+
+def test_la_receta_dice_por_que_no_hay_recordatorios():
+    """Que la clínica crea que el paciente va a recibir avisos que nunca van
+    a salir es peor que no ofrecer la función."""
+    company = _sanatorio("Sanatorio Receta Sin Aviso")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dra. Vera"}).json()
+
+    resp = client.post(f"/api/companies/{cid}/prescriptions", json={
+        "doctor_id": doc["id"], "patient_name": "Sin Contacto",
+        "patient_phone": "+595981600002",
+        "reminders_enabled": True, "consent_by": "Dra. Vera",
+        "items": [{"medication": "Amoxicilina 500 mg", "dose": "1 comprimido",
+                   "every_hours": 8, "duration_days": 5}],
+    })
+    assert resp.status_code == 201
+    datos = resp.json()
+    assert datos["recordatorios"]["programadas"] == 0
+    assert "no escribió nunca" in datos["recordatorios"]["motivo"]
+
+
+def test_editar_la_receta_sube_la_version_y_cancela_las_tomas_viejas():
+    from app.models import Conversation
+
+    company = _sanatorio("Sanatorio Receta Editada")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Edita"}).json()
+    tel = "+595981600003"
+
+    db = SessionLocal()
+    try:  # el paciente escribió alguna vez: queda verificado
+        db.add(Conversation(company_id=cid, contact_phone=tel, channel="whatsapp"))
+        db.commit()
+    finally:
+        db.close()
+
+    creada = client.post(f"/api/companies/{cid}/prescriptions", json={
+        "doctor_id": doc["id"], "patient_name": "Con Contacto", "patient_phone": tel,
+        "reminders_enabled": True, "consent_by": "Dr. Edita",
+        "items": [{"medication": "Amoxicilina 500 mg", "dose": "1 comprimido",
+                   "every_hours": 8, "duration_days": 3}],
+    }).json()
+    assert creada["recordatorios"]["programadas"] == 9
+    assert creada["version"] == 1
+
+    editada = client.patch(f"/api/companies/{cid}/prescriptions/{creada['id']}", json={
+        "doctor_id": doc["id"], "patient_name": "Con Contacto", "patient_phone": tel,
+        "reminders_enabled": True, "consent_by": "Dr. Edita",
+        "items": [{"medication": "Amoxicilina 875 mg", "dose": "1 comprimido",
+                   "every_hours": 12, "duration_days": 3}],
+    }).json()
+    assert editada["version"] == 2
+    assert editada["tomas_canceladas"] == 9   # las viejas se dieron de baja
+    assert editada["recordatorios"]["programadas"] == 6  # 12h × 3 días
+
+
+def test_una_pauta_a_demanda_se_marca_como_tal():
+    company = _sanatorio("Sanatorio A Demanda API")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Dolor"}).json()
+    creada = client.post(f"/api/companies/{cid}/prescriptions", json={
+        "doctor_id": doc["id"], "patient_name": "Paciente", "patient_phone": "+595981600004",
+        "items": [{"medication": "Paracetamol 500 mg", "dose": "1 comprimido",
+                   "frequency": "si tenés dolor", "every_hours": 0}],
+    }).json()
+    assert creada["items"][0]["a_demanda"] is True
+
+
+def test_cancelar_el_tratamiento_apaga_los_recordatorios():
+    company = _sanatorio("Sanatorio Cancela API")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Stop"}).json()
+    creada = client.post(f"/api/companies/{cid}/prescriptions", json={
+        "doctor_id": doc["id"], "patient_name": "Paciente", "patient_phone": "+595981600005",
+        "items": [{"medication": "Ibuprofeno 400 mg", "dose": "1 comprimido"}],
+    }).json()
+    resp = client.post(f"/api/companies/{cid}/prescriptions/{creada['id']}/cancel")
+    assert resp.status_code == 200
+
+    listado = client.get(f"/api/companies/{cid}/prescriptions").json()
+    assert listado[0]["status"] == "cancelled"
+    assert listado[0]["reminders_enabled"] is False

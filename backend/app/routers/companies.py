@@ -9,7 +9,7 @@ from ..llm import LLMError
 from ..models import Agent, Company, Membership, Supervision
 from ..permissions import Role
 from ..swarm import _fetch_page_text
-from ..packs import suggested_for
+from ..packs import modules_for, suggested_for
 from ..templates import TEMPLATES
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -49,6 +49,11 @@ class CompanyOut(BaseModel):
     wa_phone_number_id: str | None
     supervision: str
     supervision_pct: int
+    # Módulos habilitados por los Business Packs. El panel decide qué vistas
+    # mostrar con ESTO y no con `vertical`: un sanatorio, una odontológica y
+    # una veterinaria son verticales distintas con la misma agenda, y filtrar
+    # por rubro las dejaba a todas sin la vista.
+    modules: list[str] = []
 
     model_config = {"from_attributes": True}
 
