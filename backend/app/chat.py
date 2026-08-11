@@ -98,10 +98,18 @@ TOOL_SPECS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "list_services",
-            "description": "Lista los servicios/estudios del negocio con precio exacto en Guaraníes, duración y qué profesional los atiende. Usar SIEMPRE antes de dar un precio.",
+            "description": (
+                "Busca servicios y estudios del negocio: precio exacto en Guaraníes, duración, "
+                "qué profesional lo atiende y LA PREPARACIÓN PREVIA que el paciente debe hacer "
+                "(ayuno, vejiga llena, traer estudios anteriores). Usar SIEMPRE antes de dar un "
+                "precio y antes de agendar un estudio. Pasá en `query` lo que pidió el paciente."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {"category": {"type": "string", "description": "Filtrar por categoría (opcional)"}},
+                "properties": {
+                    "query": {"type": "string", "description": "Qué busca el paciente, ej. 'ecografía abdominal', 'hemograma', 'extracción de muela'"},
+                    "category": {"type": "string", "description": "Filtrar por categoría (opcional)"},
+                },
             },
         },
     },
@@ -436,26 +444,74 @@ def _execute_tool(
         return {"ok": True, "message": "Conversación derivada al equipo humano."}
 
     if name == "list_services":
+        # Un sanatorio tiene ~300 estudios: devolverlos todos no le sirve al
+        # modelo ni entra en su contexto. Se busca por texto y se acota.
         q = db.query(Service).filter(Service.company_id == company.id, Service.active)
         category = str(args.get("category") or "").strip()
         if category:
             q = q.filter(Service.category.ilike(f"%{category}%"))
-        services = q.order_by(Service.category, Service.name).all()
+        buscado = str(args.get("query") or "").strip()
+        if buscado:
+            # Cada palabra de más de 3 letras tiene que aparecer en algún lado:
+            # "eco abdominal" encuentra "Ecografía abdominal".
+            for palabra in [w for w in re.split(r"\W+", buscado) if len(w) > 3]:
+                patron = f"%{palabra}%"
+                q = q.filter(
+                    Service.name.ilike(patron)
+                    | Service.category.ilike(patron)
+                    | Service.specialty.ilike(patron)
+                )
+        total = q.count()
+        services = q.order_by(Service.category, Service.name).limit(12).all()
+        if not services:
+            return {
+                "services": [],
+                "note": (
+                    "No hay ningún servicio con ese criterio. Preguntale al paciente "
+                    "cómo se llama el estudio o quién se lo pidió; NO inventes uno."
+                ),
+            }
+
+        # Los profesionales de todos los servicios en UNA consulta: antes se
+        # hacía una por servicio (300 consultas para listar un catálogo).
+        ids = [s.id for s in services]
+        links = (
+            db.query(DoctorService, Doctor)
+            .join(Doctor, Doctor.id == DoctorService.doctor_id)
+            .filter(DoctorService.service_id.in_(ids), Doctor.company_id == company.id)
+            .all()
+        )
+        por_servicio: dict[int, list[str]] = {}
+        for link, doctor in links:
+            por_servicio.setdefault(link.service_id, []).append(doctor.name)
+
         out = []
         for s in services:
-            links = db.query(DoctorService).filter(DoctorService.service_id == s.id).all()
-            doctors = [d.name for link in links if (d := db.get(Doctor, link.doctor_id))]
-            out.append(
-                {
-                    "name": s.name,
-                    "category": s.category,
-                    "price": _fmt_gs(s.price_gs),
-                    "duration_min": s.duration_min,
-                    "attended_by": doctors or ["cualquier profesional del equipo"],
-                    "description": s.description[:200],
-                }
+            fila = {
+                "name": s.name,
+                "category": s.category,
+                "price": _fmt_gs(s.price_gs),
+                "duration_min": s.duration_min,
+                "attended_by": por_servicio.get(s.id) or ["cualquier profesional del equipo"],
+            }
+            if s.specialty:
+                fila["specialty"] = s.specialty
+            if s.prep:
+                # Lo más importante para el paciente: qué tiene que hacer ANTES
+                # de venir. Si no se lo decimos, viaja al vicio.
+                fila["preparacion"] = s.prep
+            if s.sample:
+                fila["muestra"] = s.sample
+            if s.description:
+                fila["description"] = s.description[:200]
+            out.append(fila)
+        resultado = {"services": out}
+        if total > len(out):
+            resultado["note"] = (
+                f"Hay {total} que coinciden; te muestro {len(out)}. Si el paciente "
+                "busca otra cosa, afiná la búsqueda."
             )
-        return {"services": out} if out else {"services": [], "note": "No hay servicios cargados con ese criterio."}
+        return resultado
 
     if name == "list_doctors":
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
