@@ -99,8 +99,13 @@ async def _send_appointment_reminder(db: Session, company_id: int, payload: dict
         logger.info("recordatorio: cita %s sin teléfono", appointment.id)
         return
 
-    result = await whatsapp.send_text(
-        company.wa_phone_number_id, appointment.patient_phone,
+    # Enruta según el canal de la empresa: Cloud API o bridge de Baileys.
+    # Llamar directo a la Cloud API mandaría el aviso por el canal equivocado
+    # a toda empresa conectada por QR.
+    from . import outbound
+
+    result = await outbound.enviar(
+        db, company_id, appointment.patient_phone,
         _reminder_text(appointment, doctor, company),
     )
     if result.get("error"):

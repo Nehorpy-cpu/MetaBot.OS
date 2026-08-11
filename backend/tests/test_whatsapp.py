@@ -264,10 +264,11 @@ def test_reminders_blocked_on_community_qr_channel(monkeypatch):
 
     monkeypatch.setattr(medical_router.whatsapp, "send_text", fake_send)
     resp = client.post(f"/api/companies/{cid}/reminders/send", params={"on_date": "2030-05-05"})
-    data = resp.json()
-    assert data["skipped"] is True
-    assert "proactivos" in data["reason"]
-    assert sent == []  # NADA se envió por el canal de comunidad
+    assert resp.status_code == 200
+    # El bridge de Baileys ya tiene endpoint de envío, así que por QR ahora SÍ
+    # sale el aviso —pero por el bridge, NUNCA por la API oficial de Meta. Que
+    # `sent` quede vacío es la prueba de que no se coló por el canal ajeno.
+    assert sent == [], "no puede salir por la Cloud API una empresa conectada por QR"
 
 
 def test_channel_profiles_declare_honest_capabilities():
@@ -279,15 +280,22 @@ def test_channel_profiles_declare_honest_capabilities():
     assert qr.official is False
     assert "no es una integración oficial" in qr.warning.lower()
     assert cloud.official is True
-    # Ambos responden y mandan fotos; solo el oficial manda proactivos/plantillas
+    # Ambos responden y mandan fotos. Los dos pueden iniciar un envío desde
+    # que el bridge tiene endpoint de salida; la diferencia que queda es que
+    # las PLANTILLAS son un mecanismo exclusivo de la API oficial, y que el
+    # conector de comunidad no se presenta como autorizado.
     assert qr.can(channels.Capability.REPLY)
     assert qr.can(channels.Capability.SEND_MEDIA)
-    assert not qr.can(channels.Capability.SEND_PROACTIVE)
+    assert qr.can(channels.Capability.SEND_PROACTIVE)
     assert not qr.can(channels.Capability.SEND_TEMPLATE)
     assert cloud.can(channels.Capability.SEND_PROACTIVE)
     assert cloud.can(channels.Capability.SEND_TEMPLATE)
     assert channels.can_send_proactive("meta") is True
-    assert channels.can_send_proactive("qr") is False
+    assert channels.can_send_proactive("qr") is True
+    # Lo que NO cambió: por el canal de comunidad solo salen avisos que el
+    # paciente pidió. Eso lo garantizan las guardias de app/medication.py
+    # (consentimiento, horario silencioso y baja con STOP), no el canal.
+    assert channels.can_send_proactive("none") is False
 
 
 def test_model_router_uses_different_model_for_audit():

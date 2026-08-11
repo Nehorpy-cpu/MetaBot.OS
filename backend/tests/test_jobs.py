@@ -9,7 +9,7 @@ import pytest
 
 from tests.test_api import _create_company, client
 
-from app import job_handlers, jobs
+from app import channels, job_handlers, jobs
 from app.db import SessionLocal
 from app.models import Appointment, Job
 
@@ -252,9 +252,13 @@ def test_reminder_not_scheduled_for_imminent_appointment():
         db.close()
 
 
-@pytest.mark.parametrize("wa_mode,debe_enviar", [("meta", True), ("qr", False), ("none", False)])
+@pytest.mark.parametrize("wa_mode,debe_enviar", [("meta", True), ("qr", True), ("none", False)])
 def test_reminder_respects_channel_capability(monkeypatch, wa_mode, debe_enviar):
-    """El recordatorio es proactivo: solo sale por canales que lo admiten."""
+    """El recordatorio es proactivo: solo sale por canales que lo admiten.
+
+    Desde que el bridge de Baileys tiene endpoint de salida, QR también
+    envía. El que NO envía es "none": no hay canal conectado. El enrutamiento
+    a Cloud API o al bridge lo resuelve `outbound.enviar`."""
     company = _create_company(name=f"Cita Canal {wa_mode}")
     cid = company["id"]
     client.patch(f"/api/companies/{cid}", json={"wa_mode": wa_mode})
@@ -268,11 +272,15 @@ def test_reminder_respects_channel_capability(monkeypatch, wa_mode, debe_enviar)
 
     enviados = []
 
-    async def fake_send(pnid, to, text):
+    from app import outbound
+
+    async def fake_enviar(db, company_id, to, text):
+        if not channels.can_send_proactive(wa_mode):
+            return {"sent": False, "skipped": True, "reason": "canal sin proactivos"}
         enviados.append(to)
         return {"sent": True}
 
-    monkeypatch.setattr(job_handlers.whatsapp, "send_text", fake_send)
+    monkeypatch.setattr(outbound, "enviar", fake_enviar)
 
     import asyncio
 

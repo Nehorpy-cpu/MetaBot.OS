@@ -290,6 +290,11 @@ class Conversation(Base):
     status: Mapped[str] = mapped_column(String(20), default="open")  # open | needs_human
     # Directiva que dejó el CEO para el próximo turno del CX (modo shadow).
     pending_directive: Mapped[str] = mapped_column(String(500), default="")
+    # El paciente escribió "STOP"/"BAJA": no recibe más avisos proactivos.
+    # Seguir mandándole después de que pidió parar es lo que termina con el
+    # número del cliente reportado.
+    opted_out: Mapped[bool] = mapped_column(default=False)
+    opted_out_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     company: Mapped[Company] = relationship(back_populates="conversations")
@@ -419,6 +424,15 @@ class Prescription(Base):
     indications: Mapped[str] = mapped_column(Text, default="")  # reposo, dieta, control
     issued_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
     status: Mapped[str] = mapped_column(String(15), default="active")  # active|completed|cancelled
+    # Recordatorios de toma: apagados salvo que el paciente los pida. El
+    # consentimiento se registra con quién y cuándo, no como un booleano suelto.
+    reminders_enabled: Mapped[bool] = mapped_column(default=False)
+    consent_by: Mapped[str] = mapped_column(String(120), default="")
+    consent_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Sube en cada edición. Las tomas ya programadas llevan la versión con la
+    # que se crearon: si la receta cambia, las viejas se descartan solas en
+    # vez de mandarle al paciente la dosis nueva en los horarios viejos.
+    version: Mapped[int] = mapped_column(default=1)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

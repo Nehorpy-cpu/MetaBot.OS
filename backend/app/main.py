@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as db_module
+from . import medication  # noqa: F401  — registra el handler de tomas en la cola
 from .auth import resolve_identity
 from .config import ADMIN_TOKEN
 from .llm import available_providers

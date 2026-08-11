@@ -233,6 +233,35 @@ app.post("/sessions/:id/start", async (req, res) => {
   }
 });
 
+// Salida proactiva: el backend inicia un envío (recordatorio de toma, aviso
+// de cita). Hasta ahora el bridge SOLO podía contestar dentro del manejador
+// de mensajes entrantes, así que no existía forma de que el servidor mandara
+// nada por su cuenta — ni siquiera manualmente.
+//
+// Advertencia que no hay que perder de vista: este es un cliente NO oficial.
+// Mandar mensajes no solicitados por acá es lo que hace que le quemen el
+// número al cliente. Por eso el backend solo llega hasta acá con mensajes
+// que el paciente pidió o consintió, y con horario silencioso.
+app.post("/sessions/:id/send", async (req, res) => {
+  const session = sessions.get(String(req.params.id));
+  if (!session || session.status !== "connected") {
+    return res.status(409).json({ error: "sesión no conectada", status: session?.status || "disconnected" });
+  }
+  const { to, text } = req.body || {};
+  if (!to || !text) {
+    return res.status(422).json({ error: "faltan 'to' o 'text'" });
+  }
+  const jid = String(to).replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+  try {
+    const enviado = await session.sock.sendMessage(jid, { text: String(text).slice(0, 4096) });
+    logger.info({ companyId: req.params.id, to: jid }, "envío proactivo");
+    res.json({ sent: true, id: enviado?.key?.id || "" });
+  } catch (err) {
+    logger.error({ err, to: jid }, "falló el envío proactivo");
+    res.status(502).json({ error: String(err) });
+  }
+});
+
 app.post("/sessions/:id/logout", async (req, res) => {
   const s = sessions.get(req.params.id);
   if (s) {

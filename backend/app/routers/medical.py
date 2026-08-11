@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels, job_handlers, registry, whatsapp
+from .. import channels, job_handlers, outbound, registry, whatsapp
 from ..config import TIMEZONE
 from ..db import get_db
 from ..models import Appointment, Company, Doctor
@@ -246,7 +246,8 @@ async def send_reminders(company_id: int, on_date: date | None = None, db: Sessi
         if not r["phone"]:
             results.append({**r, "send": {"error": "sin teléfono"}})
             continue
-        send = await whatsapp.send_text(company.wa_phone_number_id, r["phone"], r["text"])
+        # Por el canal que corresponda a la empresa, no siempre por Meta.
+        send = await outbound.enviar(db, company_id, r["phone"], r["text"])
         results.append({**r, "send": send})
     return {"date": data["date"], "results": results}
 

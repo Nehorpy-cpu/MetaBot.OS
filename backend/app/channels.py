@@ -91,8 +91,14 @@ WHATSAPP_QR = ChannelProfile(
         Capability.RECEIVE_IMAGES,
         Capability.RECEIVE_VOICE,
         Capability.RECEIVE_LOCATION,
-        # Sin SEND_TEMPLATE ni SEND_PROACTIVE: enviar mensajes no solicitados
-        # por este canal es justamente lo que hace que restrinjan el número.
+        # SEND_PROACTIVE está, pero acotado: el bridge ya tiene endpoint de
+        # envío, así que técnicamente puede. Lo que NO puede es mandar
+        # mensajes no solicitados: enviar campañas por acá es lo que hace que
+        # restrinjan el número. Solo salen avisos que el paciente pidió o
+        # consintió (recordatorio de su propia cita, de su propia medicación),
+        # con horario silencioso y con baja por "STOP".
+        Capability.SEND_PROACTIVE,
+        # Sin SEND_TEMPLATE: las plantillas son un mecanismo de la API oficial.
     },
     warning=(
         "Conector de comunidad: usa WhatsApp Web y NO es una integración "

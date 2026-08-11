@@ -12,7 +12,7 @@ import json
 import re
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solapes
@@ -221,6 +221,15 @@ _NEGATIVO = re.compile(
     r"cancela|anular|anulo|no voy|no podre|no podre ir|otro dia|otro horario|"
     r"no gracias)\b[\s\.\!]*$"
 )
+
+
+# Baja de avisos proactivos. Es la palabra convenida del canal: se atiende
+# sin modelo, sin ambigüedad y sin excusas.
+_ES_BAJA = re.compile(
+    r"^\W*(stop|baja|darme de baja|dar de baja|no quiero mas mensajes|"
+    r"no me escriban mas|cancelar avisos|basta|unsubscribe)\b[\s\.\!]*$"
+)
+_ES_ALTA = re.compile(r"^\W*(alta|si quiero recordatorios|activar avisos)\b[\s\.\!]*$")
 
 
 def _es_afirmativo(texto: str) -> bool:
@@ -833,6 +842,32 @@ async def handle_incoming(
     db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="in",
                    body=text, external_id=external_id or None))
     db.commit()
+
+    # Baja de avisos: si el paciente escribe STOP hay que parar YA. Dejar eso
+    # en manos de la interpretación de un modelo es como termina el número del
+    # cliente reportado.
+    if _ES_BAJA.match(_normalizar(text).strip()):
+        conversation.opted_out = True
+        conversation.opted_out_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        respuesta_baja = (
+            "Listo, no te mandamos más recordatorios automáticos. 👍\n\n"
+            "Vas a seguir pudiendo escribirnos cuando quieras, y te "
+            "respondemos igual. Si más adelante los querés de vuelta, "
+            "decinos *ALTA*."
+        )
+        db.add(Message(company_id=company.id, conversation_id=conversation.id,
+                       direction="out", body=respuesta_baja))
+        db.commit()
+        return {
+            "conversation_id": conversation.id, "reply": respuesta_baja,
+            "status": conversation.status,
+            "actions": [{"tool": "opt_out", "args": {}, "result": {"ok": True}}],
+            "media": [], "supervision": None,
+        }
+    if conversation.opted_out and _ES_ALTA.match(_normalizar(text).strip()):
+        conversation.opted_out = False
+        conversation.opted_out_at = None
+        db.commit()
 
     # Confirmación de cita: guardia determinística ANTES del modelo. Que una
     # cita quede confirmada no puede depender de que un LLM interprete bien un
