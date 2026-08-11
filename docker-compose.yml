@@ -49,6 +49,35 @@ services:
     expose:
       - "3001"
 
+  # n8n: integraciones LATERALES únicamente (Sheets, Drive, correo, ERP del
+  # cliente, avisos internos). Lo que no se puede perder —citas,
+  # recordatorios, tomas de medicación, cobros— vive en la cola durable del
+  # backend, no acá: un workflow visual no da garantías de reintento ni de
+  # idempotencia, y ya nos costó caro aprender esa diferencia.
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    environment:
+      N8N_HOST: ${DOMAIN}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://${DOMAIN}/n8n/
+      N8N_PATH: /n8n/
+      GENERIC_TIMEZONE: America/Asuncion
+      TZ: America/Asuncion
+      # Sin autenticación propia n8n queda abierto a Internet: el editor
+      # permite ejecutar comandos, así que esto NO es opcional.
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:?definí N8N_USER en .env}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:?definí N8N_PASSWORD en .env}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?definí N8N_ENCRYPTION_KEY en .env}
+      # Para que los workflows lleguen al backend por la red interna.
+      METABOT_URL: http://backend:8000
+    volumes:
+      - n8n_data:/home/node/.n8n
+    expose:
+      - "5678"
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -67,5 +96,6 @@ volumes:
   data:      # legado SQLite (se conserva para respaldo tras la migración)
   media:
   sessions:
+  n8n_data:
   caddy_data:
   caddy_config:
