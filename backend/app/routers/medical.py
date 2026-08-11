@@ -52,6 +52,9 @@ class DoctorOut(DoctorIn):
     cert_number: str = ""
     cert_specialty: str = ""
     cert_expires_at: date | None = None
+    # "libre" = todavía no cargó su horario, así que sus turnos se toman como
+    # pedido. El panel lo muestra para que se vea quién falta.
+    agenda_mode: str = "libre"
 
     model_config = {"from_attributes": True}
 
@@ -111,12 +114,19 @@ class AppointmentIn(BaseModel):
     patient_name: str = Field(min_length=1, max_length=200)
     patient_phone: str = ""
     scheduled_at: datetime
+    # Qué se va a hacer: define cuánto ocupa el turno. Sin esto todo dura 30
+    # minutos y una ecografía de 45 se pisa con el siguiente paciente.
+    service_id: int | None = None
     notes: str = ""
 
 
 class AppointmentOut(AppointmentIn):
     id: int
     status: str
+    duration_min: int = 30
+    # "verificada" contra el horario del profesional, "sin_verificar" si no lo
+    # cargó, o "forzada" si recepción la cargó igual fuera de horario.
+    verificacion: str = "sin_verificar"
 
     model_config = {"from_attributes": True}
 
@@ -126,12 +136,50 @@ class AppointmentStatusUpdate(BaseModel):
 
 
 @router.post("/companies/{company_id}/appointments", response_model=AppointmentOut, status_code=201)
-def create_appointment(company_id: int, payload: AppointmentIn, db: Session = Depends(get_db)):
-    _get_company(company_id, db)
+def create_appointment(
+    company_id: int,
+    payload: AppointmentIn,
+    # Va por query y NO en el cuerpo: `Appointment(**payload.model_dump())` de
+    # abajo explotaría con un campo que no es columna.
+    forzar: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Alta desde el panel. Valida contra la agenda igual que el bot.
+
+    Hasta ahora este endpoint no chequeaba nada —ni solape—, así que recepción
+    podía cargar un turno un domingo a las 23:00 con un profesional que
+    atiende de mañana, y el sistema le mandaba al paciente el recordatorio de
+    una cita que no existe. Con `forzar=true` se puede igual: un sobreturno o
+    un caso especial es decisión de la clínica, pero tiene que ser una
+    decisión, no un descuido.
+    """
+    company = _get_company(company_id, db)
     doctor = db.get(Doctor, payload.doctor_id)
     if not doctor or doctor.company_id != company_id:
         raise HTTPException(404, "Doctor no encontrado en esta empresa")
-    appt = Appointment(company_id=company_id, **payload.model_dump())
+
+    datos = payload.model_dump()
+    veredicto = agenda.verificar_turno(
+        db, company, doctor, payload.scheduled_at,
+        service_id=datos.get("service_id"),
+    )
+    if not veredicto["ok"] and not forzar:
+        raise HTTPException(409, {
+            "motivo": veredicto["motivo"],
+            "codigo": veredicto["codigo"],
+            "horarios_libres": veredicto.get("alternativas", []),
+            "se_puede_forzar": True,
+        })
+
+    appt = Appointment(company_id=company_id, **datos)
+    if veredicto["ok"]:
+        appt.duration_min = veredicto["duracion_min"]
+        appt.verificacion = veredicto["verificacion"]
+    else:
+        appt.duration_min = agenda.duracion_de(db, company_id, datos.get("service_id"))
+        # Queda marcado: si después alguien se pregunta por qué hay un turno
+        # fuera de horario, la respuesta está en la fila.
+        appt.verificacion = "forzada"
     db.add(appt)
     db.commit()
     db.refresh(appt)

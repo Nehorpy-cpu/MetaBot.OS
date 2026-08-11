@@ -536,3 +536,107 @@ def test_el_horario_de_otra_empresa_no_se_ve():
     doc_a = client.post(f"/api/companies/{a['id']}/doctors", json={"name": "Dr. A"}).json()
     r = client.get(f"/api/companies/{b['id']}/doctors/{doc_a['id']}/schedule")
     assert r.status_code == 404
+
+
+# --- El alta desde el panel también se valida ---
+
+
+def test_el_panel_no_carga_un_turno_fuera_de_horario_sin_avisar():
+    """Recepción podía cargar un domingo a las 23:00 con un profesional que
+    atiende de mañana, y el sistema mandaba el recordatorio de una cita que no
+    existe. El bot ya lo rechazaba; este endpoint no chequeaba nada."""
+    company = _create_company(name="Clínica Panel Alta")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Panel Alta"}).json()
+    client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": d, "desde": "08:00", "hasta": "14:00"} for d in range(5)]})
+
+    r = client.post(f"/api/companies/{cid}/appointments", json={
+        "doctor_id": doc["id"], "patient_name": "Paciente Domingo",
+        "scheduled_at": _proximo(DOM, 23, 0).strftime("%Y-%m-%dT%H:%M:%S")})
+    assert r.status_code == 409
+    detalle = r.json()["detail"]
+    assert detalle["codigo"] == "sin_franjas_ese_dia"
+    assert "no atiende los domingos" in detalle["motivo"]
+    assert detalle["se_puede_forzar"] is True
+    assert client.get(f"/api/companies/{cid}/appointments").json() == []
+
+
+def test_recepcion_puede_forzar_un_sobreturno():
+    """Un sobreturno es decisión de la clínica. Lo que no puede ser es un
+    descuido: queda marcado como forzada."""
+    company = _create_company(name="Clínica Forzar")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Forzar"}).json()
+    client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": d, "desde": "08:00", "hasta": "14:00"} for d in range(5)]})
+
+    r = client.post(f"/api/companies/{cid}/appointments?forzar=true", json={
+        "doctor_id": doc["id"], "patient_name": "Sobreturno",
+        "scheduled_at": _proximo(DOM, 23, 0).strftime("%Y-%m-%dT%H:%M:%S")})
+    assert r.status_code == 201
+    assert r.json()["verificacion"] == "forzada"
+
+
+def test_el_turno_dentro_del_horario_queda_verificado():
+    company = _create_company(name="Clínica Alta OK")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Alta OK"}).json()
+    client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": d, "desde": "08:00", "hasta": "14:00"} for d in range(5)]})
+
+    r = client.post(f"/api/companies/{cid}/appointments", json={
+        "doctor_id": doc["id"], "patient_name": "En Horario",
+        "scheduled_at": _proximo(MIE, 10, 0).strftime("%Y-%m-%dT%H:%M:%S")})
+    assert r.status_code == 201
+    assert r.json()["verificacion"] == "verificado"
+
+
+def test_sin_horario_cargado_el_panel_sigue_pudiendo_agendar():
+    """Las clínicas que todavía no migraron tienen que poder seguir usando el
+    panel igual que antes."""
+    company = _create_company(name="Clínica Panel Libre")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Libre"}).json()
+    r = client.post(f"/api/companies/{cid}/appointments", json={
+        "doctor_id": doc["id"], "patient_name": "Sin Verificar",
+        "scheduled_at": _proximo(DOM, 23, 0).strftime("%Y-%m-%dT%H:%M:%S")})
+    assert r.status_code == 201
+    assert r.json()["verificacion"] == "sin_verificar"
+
+
+def test_el_turno_toma_la_duracion_del_servicio():
+    company = _create_company(name="Clínica Duración Panel")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Dur"}).json()
+    svc = client.post(f"/api/companies/{cid}/services", json={
+        "name": "Ecografía abdominal", "duration_min": 45, "price_gs": 250000}).json()
+    r = client.post(f"/api/companies/{cid}/appointments", json={
+        "doctor_id": doc["id"], "patient_name": "Con Servicio",
+        "service_id": svc["id"],
+        "scheduled_at": _proximo(MIE, 10, 0).strftime("%Y-%m-%dT%H:%M:%S")})
+    assert r.status_code == 201
+    assert r.json()["duration_min"] == 45
+
+
+def test_si_el_dia_esta_bien_y_falla_la_hora_ofrece_los_huecos_de_ese_dia():
+    """Lo más útil para quien está agendando: no "no atiende a esa hora" a
+    secas, sino a qué hora sí."""
+    cid, did, _ = _armar("Clínica Huecos Mismo Día", [(MIE, "08:00", "14:00")])
+    v = _verificar(cid, did, _proximo(MIE, 19, 0))
+    assert v["codigo"] == "fuera_de_franja"
+    assert v["alternativas"], "no ofreció horarios del mismo día"
+    assert all(h < "14:00" for h in v["alternativas"])
+
+
+def test_el_panel_recibe_los_horarios_libres_al_rechazar():
+    company = _create_company(name="Clínica Panel Huecos")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Huecos"}).json()
+    client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": MIE, "desde": "08:00", "hasta": "14:00"}]})
+    r = client.post(f"/api/companies/{cid}/appointments", json={
+        "doctor_id": doc["id"], "patient_name": "Fuera de Hora",
+        "scheduled_at": _proximo(MIE, 19, 0).strftime("%Y-%m-%dT%H:%M:%S")})
+    assert r.status_code == 409
+    assert r.json()["detail"]["horarios_libres"], "el panel no puede ofrecer nada"

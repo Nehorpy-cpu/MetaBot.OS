@@ -155,6 +155,57 @@ export interface Doctor {
   cert_number?: string;
   cert_specialty?: string;
   cert_expires_at?: string | null;
+  // "libre" = todavía no cargó su horario: sus turnos se toman como pedido y
+  // el bot no puede rechazar un domingo a las 23:00.
+  agenda_mode?: "libre" | "estructurado";
+}
+
+export interface Franja {
+  id?: number;
+  // 0 = lunes … 6 = domingo, igual que en el servidor.
+  weekday: number;
+  desde: string; // "HH:MM"
+  hasta: string;
+  // Vacío = la franja vale para todo. Con servicio, vale SOLO para ese: así se
+  // carga al profesional que atiende consulta toda la semana pero hace
+  // ecografías los martes a la tarde.
+  service_id?: number | null;
+  lugar?: string;
+}
+
+export interface HorarioDoctor {
+  // "libre" = todavía no cargó su horario. Se le siguen tomando turnos, pero
+  // como PEDIDO: el bot avisa que recepción confirma en vez de prometer.
+  agenda_mode: "libre" | "estructurado";
+  // El horario como lo escribió la clínica, para transcribirlo al lado. El
+  // servidor NO lo interpreta.
+  texto_libre: string;
+  franjas: Franja[];
+  nota: string;
+}
+
+export interface CitaFueraDeHorario {
+  id: number;
+  paciente: string;
+  telefono: string;
+  cuando: string;
+  motivo: string;
+}
+
+export interface ResultadoHorario {
+  agenda_mode: string;
+  franjas: number;
+  // Personas que ya tenían turno y ahora quedan fuera del horario nuevo. No se
+  // cancelan: hay que llamarlas.
+  citas_fuera_de_horario: CitaFueraDeHorario[];
+}
+
+export interface Ausencia {
+  id: number;
+  doctor_id: number | null; // null = cierra la institución entera
+  desde: string;
+  hasta: string;
+  motivo: string;
 }
 
 export interface EspecialidadPadron {
@@ -256,9 +307,42 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Error ${resp.status}`);
+    throw new ApiError(resp.status, body.detail);
   }
   return resp.status === 204 ? (undefined as T) : resp.json();
+}
+
+/**
+ * Error de la API con el detalle ESTRUCTURADO, no solo el texto.
+ *
+ * FastAPI puede devolver `detail` como objeto —por ejemplo el 409 al agendar
+ * fuera de horario, que trae el motivo, los horarios libres y si se puede
+ * forzar—. Con `new Error(detail)` eso quedaba en "[object Object]" y la
+ * pantalla no podía ofrecer nada.
+ */
+export class ApiError extends Error {
+  status: number;
+  detail: any;
+
+  constructor(status: number, detail: any) {
+    super(
+      typeof detail === "string" ? detail
+        : detail?.motivo ?? `Error ${status}`
+    );
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/**
+ * Si el error vino de la API, sin usar `instanceof`.
+ *
+ * `instanceof` falla cuando el módulo se cargó dos veces —pasa con el
+ * hot-reload en desarrollo— y el error queda sin manejar sin que nada avise.
+ * Mirar la forma del objeto es a prueba de eso.
+ */
+export function esErrorApi(err: unknown): err is ApiError {
+  return typeof err === "object" && err !== null && "status" in err && "detail" in err;
 }
 
 async function upload<T>(path: string, archivo: File): Promise<T> {
@@ -320,6 +404,26 @@ export const api = {
     ),
   especialidadesPadron: (companyId: number) =>
     request<{ especialidades: EspecialidadPadron[] }>(`/companies/${companyId}/registry/specialties`),
+  verHorario: (companyId: number, doctorId: number) =>
+    request<HorarioDoctor>(`/companies/${companyId}/doctors/${doctorId}/schedule`),
+  guardarHorario: (companyId: number, doctorId: number, franjas: Franja[]) =>
+    request<ResultadoHorario>(`/companies/${companyId}/doctors/${doctorId}/schedule`, {
+      method: "PUT", body: JSON.stringify({ franjas }),
+    }),
+  verHorarioClinica: (companyId: number) =>
+    request<{ franjas: Franja[]; nota: string }>(`/companies/${companyId}/clinic-schedule`),
+  guardarHorarioClinica: (companyId: number, franjas: Franja[]) =>
+    request<{ franjas: number }>(`/companies/${companyId}/clinic-schedule`, {
+      method: "PUT", body: JSON.stringify({ franjas }),
+    }),
+  listarAusencias: (companyId: number) =>
+    request<Ausencia[]>(`/companies/${companyId}/absences`),
+  crearAusencia: (companyId: number, data: Omit<Ausencia, "id">) =>
+    request<{ id: number; citas_afectadas: CitaFueraDeHorario[] }>(
+      `/companies/${companyId}/absences`, { method: "POST", body: JSON.stringify(data) }
+    ),
+  borrarAusencia: (companyId: number, id: number) =>
+    request<void>(`/companies/${companyId}/absences/${id}`, { method: "DELETE" }),
   reverificarDoctores: (companyId: number) =>
     request<{ total: number; por_estado: Record<string, number> }>(
       `/companies/${companyId}/doctors/verify-all`, { method: "POST" }
@@ -338,11 +442,17 @@ export const api = {
     request<Appointment[]>(
       `/companies/${companyId}/appointments${doctorId ? `?doctor_id=${doctorId}` : ""}`
     ),
-  createAppointment: (companyId: number, data: Omit<Appointment, "id" | "status">) =>
-    request<Appointment>(`/companies/${companyId}/appointments`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
+  createAppointment: (
+    companyId: number,
+    data: Omit<Appointment, "id" | "status">,
+    // Sobreturno o caso especial: salta la validación de horario. Va por query
+    // porque el servidor arma la fila con el cuerpo entero.
+    forzar = false,
+  ) =>
+    request<Appointment>(
+      `/companies/${companyId}/appointments${forzar ? "?forzar=true" : ""}`,
+      { method: "POST", body: JSON.stringify(data) },
+    ),
   updateAppointmentStatus: (companyId: number, apptId: number, status: string) =>
     request<Appointment>(`/companies/${companyId}/appointments/${apptId}`, {
       method: "PATCH",

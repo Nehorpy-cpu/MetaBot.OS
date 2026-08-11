@@ -275,6 +275,11 @@ def verificar_turno(
                     + " y de ".join(f"{_hhmm(f.hora_inicio)} a {_hhmm(f.hora_fin)}" for f in franjas)
                     + ". Ofrecele un horario que entre."
                 ),
+                # El día está bien y solo falla la hora: los huecos de ESE día
+                # son lo más útil que se le puede dar a quien está agendando.
+                "alternativas": huecos_del_dia(
+                    db, company, doctor, cuando.date(), service_id, ahora=ahora
+                )[:6],
             }
     else:
         # Sin horario propio, el horario de la INSTITUCIÓN acota pero no

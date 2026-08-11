@@ -36,6 +36,18 @@ def _create_company(vertical="medical", name="Clínica Test"):
     return resp.json()
 
 
+def _pronto(dias=3, hora=10):
+    """Una fecha futura cercana, para fixtures de citas.
+
+    Las fechas FIJAS en los tests se ponen rojas solas el día que quedan en el
+    pasado: pasó con `2026-08-10`, que dejó de pasar el 11.
+    """
+    from datetime import datetime, timedelta
+
+    return (datetime.now() + timedelta(days=dias)).replace(
+        hour=hora, minute=0, second=0, microsecond=0)
+
+
 def test_health():
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -138,11 +150,14 @@ def test_doctors_and_appointments_flow():
             "doctor_id": doc["id"],
             "patient_name": "Paciente Uno",
             "patient_phone": "+595 971 222333",
-            "scheduled_at": "2026-08-10T09:00:00",
+            # Fecha RELATIVA: con una fija, el test se pone rojo el día que esa
+            # fecha queda en el pasado. Pasó: el fixture decía 2026-08-10 y el
+            # endpoint empezó a rechazar turnos vencidos.
+            "scheduled_at": _pronto().strftime("%Y-%m-%dT%H:%M:%S"),
             "notes": "Control",
         },
     )
-    assert appt.status_code == 201
+    assert appt.status_code == 201, appt.text
 
     listed = client.get(f"/api/companies/{cid}/appointments", params={"doctor_id": doc["id"]}).json()
     assert len(listed) == 1
@@ -168,19 +183,21 @@ def test_daily_summary_only_includes_own_doctor_appointments():
     doc_a = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dra. A"}).json()
     doc_b = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. B"}).json()
 
+    cuando = _pronto()
     for doc, patient in ((doc_a, "Paciente De A"), (doc_b, "Paciente De B")):
-        client.post(
+        r = client.post(
             f"/api/companies/{cid}/appointments",
             json={
                 "doctor_id": doc["id"],
                 "patient_name": patient,
-                "scheduled_at": "2026-08-10T10:00:00",
+                "scheduled_at": cuando.strftime("%Y-%m-%dT%H:%M:%S"),
             },
         )
+        assert r.status_code == 201, r.text
 
     summary = client.get(
         f"/api/companies/{cid}/doctors/{doc_a['id']}/daily-summary",
-        params={"on_date": "2026-08-10"},
+        params={"on_date": cuando.date().isoformat()},
     ).json()
     assert summary["count"] == 1
     assert "Paciente De A" in summary["text"]
