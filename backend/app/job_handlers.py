@@ -6,10 +6,12 @@ backoff lo maneja la cola. Nada de tragar excepciones acá.
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from . import channels, jobs, whatsapp
+from .config import TIMEZONE
 from .models import Appointment, Company, Conversation, Doctor
 
 logger = logging.getLogger("metabot.jobs")
@@ -26,13 +28,32 @@ def reminder_dedup_key(appointment_id: int) -> str:
     return f"{REMINDER_KIND}:{appointment_id}"
 
 
+def local_a_utc(local_ingenuo: datetime) -> datetime:
+    """Convierte una hora de la agenda (hora de Paraguay) a UTC.
+
+    La agenda se guarda en hora local: es lo que el paciente dice, lo que el
+    panel muestra y lo que sale en el mensaje. La cola de trabajos, en cambio,
+    compara `run_at` contra `datetime.now(timezone.utc)`.
+
+    Sin esta conversión los dos relojes se mezclan y el recordatorio sale 3
+    horas ANTES de lo previsto: el aviso de una cita de las 06:00 le llega al
+    paciente a las 03:00 de la madrugada.
+    """
+    return (
+        local_ingenuo.replace(tzinfo=ZoneInfo(TIMEZONE))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+
+
 def schedule_appointment_reminder(db: Session, appointment: Appointment) -> None:
     """Programa el recordatorio T-24h de una cita.
 
     Se llama al agendar (por el bot o desde el panel). Si la cita es en menos
     de 24 horas, no se programa: el cliente acaba de hablar con nosotros.
     """
-    run_at = appointment.scheduled_at - timedelta(hours=REMINDER_HOURS_BEFORE)
+    # scheduled_at está en hora de Paraguay; la cola razona en UTC.
+    run_at = local_a_utc(appointment.scheduled_at - timedelta(hours=REMINDER_HOURS_BEFORE))
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     if run_at <= now:
         return

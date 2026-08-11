@@ -200,8 +200,11 @@ def test_booking_schedules_durable_reminder():
         ).first()
         assert job is not None, "agendar debe programar el recordatorio"
         assert job.kind == job_handlers.REMINDER_KIND
-        # Programado 24 h antes de la cita
-        esperado = cuando - timedelta(hours=24)
+        # Programado 24 h antes de la cita. `cuando` se escribió como hora de
+        # agenda (local de Paraguay) y la cola razona en UTC, así que hay que
+        # comparar contra el instante convertido: esta prueba antes esperaba el
+        # valor sin convertir y por eso consagraba un desfase de 3 horas.
+        esperado = job_handlers.local_a_utc(cuando - timedelta(hours=24))
         assert abs((job.run_at - esperado).total_seconds()) < 90
     finally:
         db.close()
@@ -279,3 +282,58 @@ def test_reminder_respects_channel_capability(monkeypatch, wa_mode, debe_enviar)
     finally:
         db.close()
     assert bool(enviados) is debe_enviar
+
+
+def test_recordatorio_se_programa_en_utc_no_en_hora_local():
+    """Regresión: la agenda se guarda en hora de Paraguay y la cola compara
+    contra UTC. Sin conversión, el recordatorio salía 3 horas ANTES: el aviso
+    de una cita de las 06:00 le llegaba al paciente a las 03:00 de la
+    madrugada."""
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from app import job_handlers
+    from app.config import TIMEZONE
+    from app.models import Appointment
+
+    company = _create_company(name="Clínica Huso Horario")
+    doc = client.post(f"/api/companies/{company['id']}/doctors", json={"name": "Dr. Reloj"}).json()
+
+    # Cita a las 06:00 hora de Paraguay, dentro de 10 días.
+    ahora_local = datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None)
+    cita_local = (ahora_local + timedelta(days=10)).replace(hour=6, minute=0, second=0, microsecond=0)
+
+    db = SessionLocal()
+    try:
+        appt = Appointment(
+            company_id=company["id"], doctor_id=doc["id"],
+            patient_name="Paciente Madrugada", patient_phone="+595981000600",
+            scheduled_at=cita_local, status="pending",
+        )
+        db.add(appt)
+        db.commit()
+        db.refresh(appt)
+        job_handlers.schedule_appointment_reminder(db, appt)
+
+        job = db.query(Job).filter(
+            Job.dedup_key == job_handlers.reminder_dedup_key(appt.id)
+        ).one()
+
+        # El instante correcto: 24h antes de la cita, expresado en UTC.
+        esperado = (
+            (cita_local - timedelta(hours=job_handlers.REMINDER_HOURS_BEFORE))
+            .replace(tzinfo=ZoneInfo(TIMEZONE))
+            .astimezone(timezone.utc)
+            .replace(tzinfo=None)
+        )
+        assert abs((job.run_at - esperado).total_seconds()) < 1, (
+            f"run_at={job.run_at} esperado={esperado}: se está mezclando hora local con UTC"
+        )
+
+        # Y en hora local eso cae a las 06:00 del día anterior, no a las 03:00.
+        local_del_aviso = (
+            job.run_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(TIMEZONE))
+        )
+        assert local_del_aviso.hour == 6, f"el aviso saldría a las {local_del_aviso.hour}:00 hora de Paraguay"
+    finally:
+        db.close()
