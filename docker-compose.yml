@@ -86,6 +86,11 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN:-:80}
+      # Hash bcrypt de la clave de n8n. Caddy hace la autenticación porque
+      # n8n ya no respeta N8N_BASIC_AUTH_ACTIVE. Con `:?` el despliegue falla
+      # ruidosamente si falta: sin el hash, Caddy no arranca y el sitio entero
+      # se cae, así que es mejor enterarse acá que en producción.
+      N8N_AUTH_HASH: ${N8N_AUTH_HASH:?definí N8N_AUTH_HASH en .env (caddy hash-password)}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
