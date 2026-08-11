@@ -11,6 +11,7 @@ Diseño:
 import json
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -206,6 +207,17 @@ def _tools_for(company: Company) -> list[dict]:
     return [TOOL_SPECS[k] for k in TOOL_SPECS if k in keys]
 
 
+def _normalizar(texto: str) -> str:
+    """Minúsculas sin tildes ni ñ, para comparar lo que la gente escribe.
+
+    En WhatsApp nadie pone tildes: "Seguro Nanduti" tiene que encontrar
+    "Seguro Ñandutí". Sin esto el sistema le dice al paciente que no hay
+    convenio mientras se lo lista entre los disponibles.
+    """
+    limpio = unicodedata.normalize("NFD", (texto or "").lower())
+    return "".join(c for c in limpio if unicodedata.category(c) != "Mn")
+
+
 def _receta_verbatim(receta, doctor, items: list, company: Company) -> str:
     """Arma el texto de la receta con los campos de la base, sin modelo.
 
@@ -328,17 +340,28 @@ def _execute_tool(
     if name == "check_coverage":
         # El convenio lo cargó ESTA empresa: no hay base compartida de
         # aseguradoras, porque eso sería inventar acuerdos que no existen.
-        pedido = str(args.get("insurer", "")).strip().lower()
-        insurer = next(
-            (
-                i
-                for i in db.query(Insurer)
-                .filter(Insurer.company_id == company.id, Insurer.active)
-                .all()
-                if pedido and (pedido in i.name.lower() or i.name.lower() in pedido)
-            ),
-            None,
+        pedido = _normalizar(args.get("insurer", "")).strip()
+        convenios = (
+            db.query(Insurer)
+            .filter(Insurer.company_id == company.id, Insurer.active)
+            .all()
         )
+        # Se compara sin tildes ni ñ, y también contra el plan: el paciente
+        # escribe "Nanduti Plan Oro" y el convenio se llama "Seguro Ñandutí".
+        insurer = None
+        if pedido:
+            for i in convenios:
+                nombre = _normalizar(i.name)
+                completo = _normalizar(f"{i.name} {i.plan}").strip()
+                plan = _normalizar(i.plan)
+                if nombre in pedido or pedido in completo:
+                    # Si el paciente nombró un plan, tiene que coincidir: los
+                    # planes de una misma prepaga cubren distinto.
+                    if not plan or plan in pedido or not any(
+                        _normalizar(o.plan) in pedido for o in convenios if _normalizar(o.name) == nombre
+                    ):
+                        insurer = i
+                        break
         if not insurer:
             disponibles = [
                 f"{i.name} {i.plan}".strip()
@@ -356,13 +379,21 @@ def _execute_tool(
                 "convenios_disponibles": disponibles,
             }
 
-        buscado = str(args.get("service", "")).strip().lower()
+        buscado = _normalizar(args.get("service", "")).strip()
         candidatos = (
             db.query(Service)
             .filter(Service.company_id == company.id, Service.active)
             .all()
         )
-        service = next((s for s in candidatos if buscado and buscado in s.name.lower()), None)
+        service = next((s for s in candidatos if buscado and buscado in _normalizar(s.name)), None)
+        if not service and buscado:
+            # Segunda pasada: que todas las palabras aparezcan, en cualquier
+            # orden. "eco abdominal" encuentra "Ecografía abdominal total".
+            palabras = [w for w in re.split(r"\W+", buscado) if len(w) > 3]
+            service = next(
+                (s for s in candidatos if palabras and all(w in _normalizar(s.name) for w in palabras)),
+                None,
+            )
         if not service:
             return {"error": f"No encontré '{args.get('service')}' en el catálogo. Usá list_services."}
 
@@ -450,19 +481,23 @@ def _execute_tool(
         category = str(args.get("category") or "").strip()
         if category:
             q = q.filter(Service.category.ilike(f"%{category}%"))
-        buscado = str(args.get("query") or "").strip()
+        candidatos = q.order_by(Service.category, Service.name).all()
+        buscado = _normalizar(args.get("query") or "").strip()
         if buscado:
-            # Cada palabra de más de 3 letras tiene que aparecer en algún lado:
-            # "eco abdominal" encuentra "Ecografía abdominal".
-            for palabra in [w for w in re.split(r"\W+", buscado) if len(w) > 3]:
-                patron = f"%{palabra}%"
-                q = q.filter(
-                    Service.name.ilike(patron)
-                    | Service.category.ilike(patron)
-                    | Service.specialty.ilike(patron)
-                )
-        total = q.count()
-        services = q.order_by(Service.category, Service.name).limit(12).all()
+            # El filtro va en Python y no en SQL porque hay que ignorar tildes
+            # y ñ, y ni SQLite ni PostgreSQL lo hacen igual con ilike. Son unos
+            # cientos de filas: no justifica una extensión de la base.
+            palabras = [w for w in re.split(r"\W+", buscado) if len(w) > 3]
+            if palabras:
+                candidatos = [
+                    s for s in candidatos
+                    if all(
+                        w in _normalizar(f"{s.name} {s.category} {s.specialty}")
+                        for w in palabras
+                    )
+                ]
+        total = len(candidatos)
+        services = candidatos[:12]
         if not services:
             return {
                 "services": [],

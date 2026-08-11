@@ -264,3 +264,57 @@ def test_la_receta_no_es_de_otra_empresa(monkeypatch):
 
     assert resp.json()["actions"][0]["result"]["found"] is False
     assert "Amoxicilina" not in resp.json()["reply"]
+
+
+def test_el_seguro_se_encuentra_aunque_se_escriba_sin_tildes(monkeypatch):
+    """En WhatsApp nadie pone tildes. Observado en producción: el paciente
+    escribió 'Seguro Nanduti Plan Oro' y el sistema le dijo que no había
+    convenio... mientras se lo listaba entre los disponibles."""
+    company = _sanatorio("Sanatorio Sin Tildes")
+    cid = company["id"]
+    _armar_convenio(cid, precio=180000, cobertura=80, copago=10000)
+
+    fake, _ = _mock_llm([
+        _tool_call("check_coverage", {"service": "ecografia abdominal", "insurer": "Seguro Nanduti Plan Oro"}),
+        {"content": "Con tu seguro te sale ₲ 46.000."},
+    ])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": "+595981100010", "text": "tengo Nanduti, cuanto sale la eco?"})
+    result = resp.json()["actions"][0]["result"]
+
+    assert result["covered"] is True, "el convenio existe: escribirlo sin tildes no puede negarlo"
+    assert result["insurer"] == "Seguro Ñandutí Plan Oro"
+    # 180.000 - 80% = 36.000, más 10.000 de copago
+    assert result["patient_pays"] == "₲ 46.000"
+
+
+def test_busqueda_de_estudios_ignora_tildes_y_acota_el_catalogo(monkeypatch):
+    """Con ~300 estudios, devolverlos todos no le sirve al modelo."""
+    company = _sanatorio("Sanatorio Búsqueda")
+    cid = company["id"]
+    db = SessionLocal()
+    try:
+        for n in range(40):
+            db.add(Service(company_id=cid, name=f"Estudio de relleno {n}", category="Otros",
+                           price_gs=50000, duration_min=15))
+        db.add(Service(company_id=cid, name="Ecografía abdominal total", category="Ecografía",
+                       specialty="Radiología", price_gs=180000, duration_min=30,
+                       prep="Ayuno de 8 horas."))
+        db.commit()
+    finally:
+        db.close()
+
+    fake, _ = _mock_llm([
+        _tool_call("list_services", {"query": "ecografia abdominal"}),
+        {"content": "La ecografía abdominal sale ₲ 180.000."},
+    ])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": "+595981100011", "text": "quiero una eco abdominal"})
+    result = resp.json()["actions"][0]["result"]
+
+    nombres = [s["name"] for s in result["services"]]
+    assert "Ecografía abdominal total" in nombres
+    assert len(result["services"]) <= 12, "el catálogo entero no entra en el contexto"
+    assert result["services"][0]["preparacion"] == "Ayuno de 8 horas."
