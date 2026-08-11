@@ -9,11 +9,14 @@ Diseño:
 - Estilo humano: mensajes cortos, voseo, una pregunta por vez.
 """
 import json
+import logging
 import re
 import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger("metabot.chat")
 
 DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solapes
 
@@ -352,6 +355,57 @@ def _normalizar(texto: str) -> str:
     """
     limpio = unicodedata.normalize("NFD", (texto or "").lower())
     return "".join(c for c in limpio if unicodedata.category(c) != "Mn")
+
+
+# Formatos de teléfono que se usan en Paraguay: 021 214-400, 0981 123456,
+# +595981123456, (021) 214400. Se busca cualquier cosa con forma de teléfono.
+_TELEFONO_RE = re.compile(r"(?:\+?595|0)\s*\(?\d{2,4}\)?[\s.-]*\d{3}[\s.-]*\d{3,4}")
+
+
+def _solo_digitos(texto: str) -> str:
+    return re.sub(r"\D", "", texto or "")
+
+
+def _sanear_telefonos_inventados(db: Session, company: Company, conversation: Conversation,
+                                 reply: str) -> tuple[str, list[str]]:
+    """Saca de la respuesta cualquier teléfono que no exista en los datos.
+
+    Observado en producción: el sanatorio no tiene teléfono cargado y el bot le
+    dio a un paciente "021 214-400" —inventado— con un emoji de teléfono que lo
+    hacía ver oficial. Un paciente llamaría a un desconocido.
+
+    El prompt ya dice que no invente, pero los modelos igual inventan cuando
+    les falta un dato. Esto lo verifica del lado del servidor, que es donde
+    tienen que vivir las reglas que importan.
+    """
+    candidatos = _TELEFONO_RE.findall(reply or "")
+    if not candidatos:
+        return reply, []
+
+    permitidos = {_solo_digitos(company.phone), _solo_digitos(conversation.contact_phone)}
+    for d in db.query(Doctor).filter(Doctor.company_id == company.id).all():
+        permitidos.add(_solo_digitos(d.phone))
+    # También lo que el propio cliente escribió en el hilo: si él dio su
+    # número, repetírselo para confirmar es legítimo.
+    for m in (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation.id, Message.direction == "in")
+        .order_by(Message.id.desc()).limit(10).all()
+    ):
+        for t_ in _TELEFONO_RE.findall(m.body or ""):
+            permitidos.add(_solo_digitos(t_))
+    permitidos.discard("")
+
+    inventados = []
+    for encontrado in candidatos:
+        digitos = _solo_digitos(encontrado)
+        # Coincide si alguno de los permitidos termina igual (con o sin código
+        # de país, con o sin el 0 inicial).
+        if any(p.endswith(digitos[-8:]) or digitos.endswith(p[-8:]) for p in permitidos if len(p) >= 8):
+            continue
+        inventados.append(encontrado)
+        reply = reply.replace(encontrado, "").replace("📞", "").replace("  ", " ")
+    return reply.strip(), inventados
 
 
 def _receta_verbatim(receta, doctor, items: list, company: Company) -> str:
@@ -1111,6 +1165,17 @@ async def handle_incoming(
     #  2. El historial del turno siguiente se arma con `messages.body`: si el
     #     bloque estuviera ahí, la receta volvería al contexto del modelo y
     #     podría parafrasearla —justo lo que la entrega verbatim evita.
+    # Ningún teléfono inventado sale al cliente. Va antes del verbatim porque
+    # la receta se arma desde la base y no necesita revisión.
+    reply_text, telefonos_inventados = _sanear_telefonos_inventados(
+        db, company, conversation, reply_text
+    )
+    if telefonos_inventados:
+        logger.warning(
+            "empresa %s: el modelo inventó teléfono(s) %s; se quitaron de la respuesta",
+            company.id, telefonos_inventados,
+        )
+
     reply_a_enviar = reply_text
     if verbatim:
         reply_a_enviar = "\n\n".join([reply_text, *verbatim])

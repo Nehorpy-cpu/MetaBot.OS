@@ -105,6 +105,10 @@ class Company(Base):
     # "commerce". Definen herramientas del bot, reglas y módulos del panel.
     packs: Mapped[str] = mapped_column(String(200), default="")
     address: Mapped[str] = mapped_column(String(300), default="")  # para recordatorios de citas
+    # Teléfono de contacto del negocio. Sin esto cargado el modelo INVENTA uno
+    # —observado en producción: le dio a un paciente "021 214-400", que no
+    # existe en ninguna parte de la base.
+    phone: Mapped[str] = mapped_column(String(50), default="")
     # Supervisión del CEO: "off" (default, comportamiento intacto) |
     # "shadow" (analiza fuera del camino del cliente) | "inline" (además
     # puede reescribir la respuesta antes de enviarla).

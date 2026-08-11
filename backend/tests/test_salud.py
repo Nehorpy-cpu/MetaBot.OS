@@ -628,3 +628,58 @@ def test_la_receta_no_vuelve_al_contexto_del_modelo(monkeypatch):
 
     enviado = json.dumps(calls2[0]["messages"], ensure_ascii=False)
     assert "Amoxicilina" not in enviado, "la receta volvió al contexto del modelo"
+
+
+# --- Teléfonos inventados ---
+
+
+def test_el_bot_no_puede_dar_un_telefono_que_no_existe(monkeypatch):
+    """Observado en producción: el sanatorio no tenía teléfono cargado y el bot
+    le dio a un paciente '021 214-400', inventado, con un emoji de teléfono que
+    lo hacía ver oficial. Un paciente llamaría a un desconocido."""
+    company = _sanatorio("Sanatorio Sin Teléfono")
+    cid = company["id"]
+
+    fake, _ = _mock_llm([
+        {"content": "Podés llamarnos al 📞 021 214-400 y te ayudamos."},
+    ])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": "+595981900001", "text": "cuál es su teléfono?"})
+    reply = resp.json()["reply"]
+
+    assert "214-400" not in reply and "214400" not in reply
+    assert "📞" not in reply
+
+
+def test_el_telefono_REAL_de_la_empresa_si_se_puede_dar(monkeypatch):
+    from app.models import Company
+
+    company = _sanatorio("Sanatorio Con Teléfono")
+    cid = company["id"]
+    db = SessionLocal()
+    try:
+        c = db.get(Company, cid)
+        c.phone = "021 555-100"
+        db.commit()
+    finally:
+        db.close()
+
+    fake, _ = _mock_llm([{"content": "Llamanos al 021 555-100."}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": "+595981900002", "text": "teléfono?"})
+    assert "555-100" in resp.json()["reply"]
+
+
+def test_repetirle_al_cliente_SU_propio_numero_es_legitimo(monkeypatch):
+    """Confirmar el teléfono que el paciente acaba de dar no es inventarlo."""
+    company = _sanatorio("Sanatorio Confirma Teléfono")
+    cid = company["id"]
+    tel = "+595981900003"
+
+    fake, _ = _mock_llm([{"content": f"Perfecto, confirmo tu número {tel}. ¿Es correcto?"}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": tel, "text": f"mi numero es {tel}"})
+    assert "981900003" in resp.json()["reply"]
