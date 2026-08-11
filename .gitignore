@@ -41,3 +41,8 @@ ACCESO-PANEL.txt
 
 # Grafo de conocimiento generado (graphify) - no versionar
 graphify-out/
+
+# Padrón de profesionales: datos personales reales. Va a la base de datos,
+# no al repositorio.
+medicos_certificados_cpm.csv
+*_cpm.csv

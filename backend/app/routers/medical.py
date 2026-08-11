@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels, job_handlers, whatsapp
+from .. import channels, job_handlers, registry, whatsapp
 from ..config import TIMEZONE
 from ..db import get_db
 from ..models import Appointment, Company, Doctor
@@ -41,8 +41,34 @@ class DoctorIn(BaseModel):
 
 class DoctorOut(DoctorIn):
     id: int
+    # Verificación contra el padrón público de especialistas certificados.
+    verification: str = "unverified"
+    cert_number: str = ""
+    cert_specialty: str = ""
+    cert_expires_at: date | None = None
 
     model_config = {"from_attributes": True}
+
+
+@router.post("/companies/{company_id}/doctors/verify")
+def verify_doctors(company_id: int, db: Session = Depends(get_db)):
+    """Contrasta los profesionales de la empresa con el padrón del CPM.
+
+    Devuelve cuántos están certificados y vigentes, a cuántos se les venció y
+    cuántos no figuran. `not_found` no significa "trucho": el padrón es solo
+    de médicos especialistas, así que una bioquímica o un veterinario no van a
+    estar ahí.
+    """
+    _get_company(company_id, db)
+    resumen = registry.verificar_empresa(db, company_id)
+    return {
+        **resumen,
+        "nota": (
+            "El padrón cubre médicos especialistas certificados. Que un "
+            "profesional no figure puede significar que no es médico "
+            "especialista, no que su matrícula sea inválida."
+        ),
+    }
 
 
 @router.post("/companies/{company_id}/doctors", response_model=DoctorOut, status_code=201)

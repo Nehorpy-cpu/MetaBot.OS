@@ -3,7 +3,7 @@
 Los montos monetarios se guardan como enteros en Guaraníes (₲ no tiene
 decimales). El formato con puntos de miles es responsabilidad del frontend.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -154,6 +154,15 @@ class Doctor(Base):
     schedule: Mapped[str] = mapped_column(String(100), default="")
     phone: Mapped[str] = mapped_column(String(50), default="")
     email: Mapped[str] = mapped_column(String(200), default="")
+    # Verificación contra el padrón público de especialistas certificados.
+    # "unverified" = todavía no se buscó; "not_found" = se buscó y no figura.
+    # La diferencia importa: no es lo mismo no haber mirado que haber mirado
+    # y no encontrar nada.
+    verification: Mapped[str] = mapped_column(String(15), default="unverified")
+    cert_number: Mapped[str] = mapped_column(String(30), default="")
+    cert_specialty: Mapped[str] = mapped_column(String(120), default="")
+    cert_expires_at: Mapped[date | None] = mapped_column(nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     company: Mapped[Company] = relationship(back_populates="doctors")
     appointments: Mapped[list["Appointment"]] = relationship(back_populates="doctor")
@@ -294,6 +303,35 @@ class ChannelSession(Base):
     last_heartbeat: Mapped[datetime] = mapped_column(default=utcnow)
     status: Mapped[str] = mapped_column(String(20), default="disconnected")
     phone: Mapped[str] = mapped_column(String(40), default="")
+
+
+class MedicalRegistry(Base):
+    """Registro público de especialistas certificados (CPM, Paraguay).
+
+    NO es de ningún tenant: es una tabla de referencia de la plataforma, como
+    un padrón. Sirve para UNA cosa: cuando una clínica carga un profesional,
+    verificar que su certificación existe y sigue vigente. Ese es el motivo
+    por el que la certificación médica es pública.
+
+    Lo que NO hace: poblar plantillas de clínicas. Estos son profesionales
+    reales e identificables; afirmar que trabajan en una clínica donde nunca
+    pisaron sería fabricar un dato sobre una persona.
+    """
+
+    __tablename__ = "medical_registry"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    full_name: Mapped[str] = mapped_column(String(200), index=True)
+    # Nombre normalizado con los tokens ORDENADOS: el padrón mezcla
+    # "Nombre Apellido" con "Apellido, Nombre", así que ordenar las palabras
+    # hace que las dos formas colisionen en la misma clave.
+    match_key: Mapped[str] = mapped_column(String(200), index=True)
+    specialty: Mapped[str] = mapped_column(String(120), index=True)
+    cert_number: Mapped[str] = mapped_column(String(30), default="")
+    accredited_at: Mapped[date | None] = mapped_column(nullable=True)
+    expires_at: Mapped[date | None] = mapped_column(nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(40), default="CPM")
+    imported_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class Insurer(Base):
