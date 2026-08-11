@@ -5,7 +5,15 @@ decimales). El formato con puntos de miles es responsabilidad del frontend.
 """
 from datetime import date, datetime, timezone
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, String, Text, UniqueConstraint
+from sqlalchemy import (
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -524,6 +532,125 @@ class PrescriptionItem(Base):
     every_hours: Mapped[int] = mapped_column(default=0)
     duration_days: Mapped[int] = mapped_column(default=0)
     instructions: Mapped[str] = mapped_column(Text, default="")
+
+
+class AgentPromptVersion(Base):
+    """Historial del system prompt de un agente. Fuente de verdad ÚNICA.
+
+    `Agent.system_prompt` pasa a ser una proyección de solo lectura que
+    escribe SOLO la activación. Un rollback deja de ser "pegar el texto viejo
+    que ojalá alguien haya guardado" y pasa a ser cambiar un rol.
+
+    Los índices únicos parciales garantizan en el MOTOR que hay a lo sumo una
+    versión activa y una candidata por agente. Con dos activas, cuál gana
+    dependería del orden de las filas.
+    """
+
+    __tablename__ = "agent_prompt_versions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "agent_id"], ["agents.company_id", "agents.id"],
+            name="fk_prompt_versions_agent_tenant",
+        ),
+        UniqueConstraint("company_id", "agent_id", "version", name="uq_prompt_version_num"),
+        Index(
+            "uq_prompt_version_active", "company_id", "agent_id", unique=True,
+            sqlite_where=text("role = 'active'"), postgresql_where=text("role = 'active'"),
+        ),
+        Index(
+            "uq_prompt_version_candidate", "company_id", "agent_id", unique=True,
+            sqlite_where=text("role = 'candidate'"), postgresql_where=text("role = 'candidate'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    agent_id: Mapped[int] = mapped_column(index=True)
+    version: Mapped[int]                      # monotónico por agente
+    body: Mapped[str] = mapped_column(Text)
+    body_sha: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(10), default="archived")  # active|candidate|archived
+    source: Mapped[str] = mapped_column(String(12), default="human")   # human|optimizer|seed
+    suggestion_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Corrida de evaluación que habilitó esta versión. Sin evidencia, nulo.
+    eval_run_id: Mapped[int | None] = mapped_column(nullable=True)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    activated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class GoldenCase(Base):
+    """Un caso con respuesta VERIFICABLE, sin que opine ningún modelo.
+
+    Cada caso dice qué tiene que pasar en términos comprobables: qué
+    herramienta hay que llamar, cuál está prohibida, qué texto tiene que
+    aparecer y cuál no. Nada de "¿está bien la respuesta?" preguntado a otro
+    LLM, que es como este proyecto ya se comió un auditor que aprobaba todo.
+
+    `critical=True` marca los casos que son GUARDRAIL: si uno falla, el
+    candidato se rechaza aunque el resto haya mejorado. Una urgencia que no se
+    deriva no se compensa con mejor tono.
+    """
+
+    __tablename__ = "golden_cases"
+    __table_args__ = (UniqueConstraint("company_id", "slug", name="uq_golden_case_slug"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # company_id = 0 → caso de plataforma, aplica a todos los tenants del pack.
+    company_id: Mapped[int] = mapped_column(default=0, index=True)
+    slug: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(200))
+    # Qué pack tiene que tener la empresa para que el caso aplique.
+    pack: Mapped[str] = mapped_column(String(20), default="")
+    agent_slug: Mapped[str] = mapped_column(String(30), default="cx")
+    user_message: Mapped[str] = mapped_column(Text)
+    setup: Mapped[str] = mapped_column(Text, default="{}")   # JSON: datos previos
+    # Comprobaciones determinísticas, JSON:
+    #   expect_tools / forbid_tools: nombres de herramientas
+    #   expect_patterns / forbid_patterns: regex sobre la respuesta
+    checks: Mapped[str] = mapped_column(Text, default="{}")
+    critical: Mapped[bool] = mapped_column(default=False)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(20), default="regresion")
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class EvalRun(Base):
+    """Una corrida del conjunto dorado contra una versión de prompt."""
+
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    agent_id: Mapped[int] = mapped_column(index=True)
+    prompt_version_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    total: Mapped[int] = mapped_column(default=0)
+    passed: Mapped[int] = mapped_column(default=0)
+    critical_failed: Mapped[int] = mapped_column(default=0)
+    # El veredicto lo calcula el servidor con una regla fija, no un modelo.
+    verdict: Mapped[str] = mapped_column(String(12), default="pending")  # pass|fail|pending
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    latency_ms: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class EvalResult(Base):
+    """Resultado de UN caso dorado dentro de una corrida."""
+
+    __tablename__ = "eval_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    eval_run_id: Mapped[int] = mapped_column(index=True)
+    case_slug: Mapped[str] = mapped_column(String(80), index=True)
+    passed: Mapped[bool] = mapped_column(default=False)
+    critical: Mapped[bool] = mapped_column(default=False)
+    # Qué comprobación falló, en texto legible. Sin esto, "falló" no sirve.
+    failures: Mapped[str] = mapped_column(Text, default="")
+    tools_used: Mapped[str] = mapped_column(String(300), default="")
+    reply: Mapped[str] = mapped_column(Text, default="")
+    latency_ms: Mapped[int] = mapped_column(default=0)
 
 
 class Supervision(Base):
