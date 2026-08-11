@@ -70,7 +70,10 @@ MEDICAL_AGENTS = [
         "slug": "cx",
         "name": "CX Bot (Triaje y WhatsApp)",
         "role": "Atención 24/7 de pacientes",
-        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        # Vacío a propósito: lo elige el Model Router por tarea (llm.py,
+        # TASK_MODELS["cx"]). Fijarlo acá era lo que dejaba a todos los
+        # tenants clavados en un modelo de razonamiento de 40 segundos.
+        "model": "",
         "temperature": 0.3,
         "system_prompt": (
             "Atendés pacientes por WhatsApp en voseo y jopara sutil. Respondé "
@@ -142,7 +145,8 @@ ECOMMERCE_AGENTS = [
         "slug": "cx",
         "name": "CX & Sales Bot",
         "role": "Omnicanalidad y cierre de ventas",
-        "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        # Igual que el CX médico: lo decide el Model Router por tarea.
+        "model": "",
         "temperature": 0.3,
         "system_prompt": (
             "Atención al cliente y cierre de ventas por WhatsApp. Cuando el "

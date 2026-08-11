@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from . import job_handlers, packs, supervisor
 from .config import TIMEZONE
-from .llm import chat_raw
+from .llm import cadena_para, chat_raw
 from .models import (
     Agent,
     AgentRun,
@@ -1068,6 +1068,11 @@ async def handle_incoming(
         messages.append({"role": "user" if m.direction == "in" else "assistant", "content": m.body})
 
     tools = _tools_for(company)
+    # Cadena de modelos, no uno solo: si el primero no está o se queda sin
+    # cupo, se pasa al siguiente en vez de caer al modelo por defecto del
+    # proveedor equivocado. `agent.model` sigue mandando si el tenant lo fijó.
+    cadena = cadena_para("cx", agent.model)
+    modelo_usado = ""
     actions: list[dict] = []
     media: list[dict] = []  # fotos reales de catálogo a enviar al cliente
     # Bloques que salen TAL CUAL de la base (recetas). No pasan por el modelo
@@ -1078,8 +1083,10 @@ async def handle_incoming(
     booking_blocked = False  # tras un choque de agenda, no se agenda más en este turno
     for _ in range(MAX_TOOL_ROUNDS):
         assistant = await chat_raw(
-            messages, tools=tools, model=agent.model, temperature=agent.temperature
+            messages, tools=tools, models=cadena, temperature=agent.temperature
         )
+        modelo_usado = assistant.pop("_modelo_usado", modelo_usado)
+        assistant.pop("_proveedor_usado", None)
         tool_calls = assistant.get("tool_calls")
         if not tool_calls:
             reply_text = (assistant.get("content") or "").strip()
@@ -1132,7 +1139,8 @@ async def handle_incoming(
                 ),
             }
         )
-        final = await chat_raw(messages, model=agent.model, temperature=agent.temperature)
+        final = await chat_raw(messages, models=cadena, temperature=agent.temperature)
+        modelo_usado = final.get("_modelo_usado", modelo_usado)
         reply_text = (final.get("content") or "").strip()
 
     reply_text = _sanitize_reply(reply_text)
@@ -1188,7 +1196,10 @@ async def handle_incoming(
         company_id=company.id,
         agent_slug="cx",
         conversation_id=conversation.id,
-        model=agent.model,
+        # El modelo que contestó DE VERDAD, no el que se pidió: con fallback
+        # entre proveedores, guardar el pedido hacía que las métricas de
+        # latencia midieran un modelo que quizá nunca corrió.
+        model=(modelo_usado or agent.model)[:120],
         question=text[:2000],
         answer=reply_text[:2000],
         tools_used=",".join(tools_used)[:300],

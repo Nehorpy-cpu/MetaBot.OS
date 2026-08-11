@@ -30,6 +30,29 @@ LEASE_MINUTES = 5
 POLL_SECONDS = 20
 BACKOFF_BASE_MINUTES = 2  # 2, 4, 8, 16… minutos
 
+# El worker dormía POLL_SECONDS fijos entre pasadas, así que un mensaje de
+# WhatsApp recién encolado esperaba hasta 20 segundos ANTES de que el bot
+# empezara siquiera a pensar. Con este aviso, encolar algo que ya vence
+# despierta al worker en el acto; el poll queda como red de seguridad para lo
+# programado a futuro y para lo que encole otro proceso.
+_hay_trabajo: asyncio.Event | None = None
+
+
+def _avisar_al_worker() -> None:
+    """Despierta al worker si está durmiendo. No falla si no hay bucle."""
+    if _hay_trabajo is None:
+        return
+    try:
+        bucle = _hay_trabajo._loop  # type: ignore[attr-defined]
+    except AttributeError:
+        bucle = None
+    if bucle and bucle.is_running():
+        # enqueue() se llama desde código sincrónico dentro del request; el
+        # Event pertenece al bucle del worker, así que hay que cruzarlo.
+        bucle.call_soon_threadsafe(_hay_trabajo.set)
+    else:
+        _hay_trabajo.set()
+
 # kind → handler. El handler recibe (db, company_id, payload) y puede fallar:
 # si lanza, el trabajo se reintenta.
 HANDLERS: dict[str, Callable[[Session, int, dict], Awaitable[None]]] = {}
@@ -74,6 +97,8 @@ def enqueue(
     db.add(job)
     db.commit()
     db.refresh(job)
+    if run_at <= _now():
+        _avisar_al_worker()
     return job
 
 
@@ -179,10 +204,19 @@ async def process_due(worker_id: str, limit: int = 10) -> int:
 
 async def worker_loop(worker_id: str) -> None:
     """Bucle del worker: al arrancar recupera lo que quedó pendiente."""
+    global _hay_trabajo
+    _hay_trabajo = asyncio.Event()
     logger.info("worker de trabajos durables iniciado (%s)", worker_id)
     while True:
         try:
             await process_due(worker_id)
         except Exception:
             logger.exception("fallo en el bucle de trabajos")
-        await asyncio.sleep(POLL_SECONDS)
+        # Espera hasta POLL_SECONDS, pero se corta apenas alguien encola algo
+        # que ya vence. Un mensaje entrante no puede quedar 20s en la cola
+        # mientras el paciente mira el celular.
+        _hay_trabajo.clear()
+        try:
+            await asyncio.wait_for(_hay_trabajo.wait(), timeout=POLL_SECONDS)
+        except asyncio.TimeoutError:
+            pass

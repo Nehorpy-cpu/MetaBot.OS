@@ -4,9 +4,13 @@ Se usa el primer proveedor con API key configurada; si falla (error de red,
 rate limit, 5xx), se intenta el siguiente. Así el sistema no queda atado a
 NVIDIA NIM: sirve Groq u OpenRouter con el mismo código.
 """
+import logging
+
 import httpx
 
 from .config import LLM_PROVIDERS
+
+logger = logging.getLogger("metabot.llm")
 
 
 class LLMError(Exception):
@@ -18,28 +22,73 @@ class LLMError(Exception):
 # Regla explícita del proyecto: quien audita no debe ser el mismo modelo que
 # produjo la salida. Un proveedor entra o sale según resultados, cambiando
 # solo esta tabla.
-TASK_MODELS: dict[str, str] = {
-    # Conversación con cliente: baja latencia + buen tool-calling
-    "cx": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    # Razonamiento/planificación
-    "reasoning": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-    # Auditoría: modelo DISTINTO al que produce, para no auto-aprobarse
-    "audit": "meta/llama-3.3-70b-instruct",
-    # Supervisión de turnos: también distinto al del CX, pero además rápido.
-    # Medido en el VPS con el mismo prompt y 900 tokens: llama-3.1-70b tarda
-    # ~25s contra ~100s del modelo de auditoría. Corre fuera de la espera del
-    # cliente, pero comparte el worker de trabajos con los recordatorios.
-    "supervision": "meta/llama-3.1-70b-instruct",
+#
+# Cada modelo declara EN QUÉ PROVEEDOR vive. Sin esto el router era
+# decorativo: `chat_raw` recorría los proveedores en orden fijo y, si el
+# primero no conocía el modelo, reintentaba con el modelo por defecto de ESE
+# MISMO proveedor antes de pasar al siguiente. Medido en el VPS el
+# 11-ago-2026: pedir "openai/gpt-oss-120b" (que solo existe en Groq, donde
+# responde en 0,8s) tardaba 58,9s porque terminaba corriendo el modelo de
+# NVIDIA, y nadie se enteraba.
+PROVEEDOR_DE_MODELO: dict[str, str] = {
+    "openai/gpt-oss-120b": "groq",
+    "openai/gpt-oss-20b": "groq",
+    "llama-3.3-70b-versatile": "groq",
+    "llama-3.1-8b-instant": "groq",
+    "qwen/qwen3.6-27b": "groq",
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5": "nvidia",
+    "meta/llama-3.3-70b-instruct": "nvidia",
+    "meta/llama-3.1-70b-instruct": "nvidia",
+    "meta/llama-3.1-8b-instruct": "nvidia",
+    "mistralai/mistral-large-2-instruct": "nvidia",
+}
+
+# Cadena de candidatos por tarea, en orden de preferencia. Si el primero no
+# está disponible (sin API key, caído, o sin cupo) se pasa al siguiente, que
+# es un modelo DISTINTO en otro proveedor —no el default silencioso de antes.
+TASK_MODELS: dict[str, list[str]] = {
+    # Conversación con cliente: manda la latencia. Medido en producción con el
+    # prompt real y las 7 herramientas, turno completo (rondas + respuesta):
+    #   groq/gpt-oss-120b            0,8s – 2,2s
+    #   nvidia/nemotron-super-49b   17,3s – 71,4s   (el que estaba)
+    #   nvidia/llama-3.1-70b        82,2s – 164,6s
+    # El nemotron es un modelo de razonamiento: gasta el presupuesto pensando
+    # antes de contestar "¿te refieres a una consulta?". En WhatsApp eso es
+    # medio minuto mirando el celular.
+    "cx": ["openai/gpt-oss-120b", "llama-3.3-70b-versatile",
+           "nvidia/llama-3.3-nemotron-super-49b-v1.5"],
+    # Razonamiento/planificación: acá sí conviene el que piensa.
+    "reasoning": ["nvidia/llama-3.3-nemotron-super-49b-v1.5", "openai/gpt-oss-120b"],
+    # Auditoría: modelo DISTINTO al que produce, para no auto-aprobarse.
+    "audit": ["meta/llama-3.3-70b-instruct", "llama-3.3-70b-versatile"],
+    # Supervisión de turnos: también distinto al del CX. Corre fuera de la
+    # espera del cliente, pero comparte el worker con los recordatorios.
+    "supervision": ["meta/llama-3.1-70b-instruct", "llama-3.3-70b-versatile"],
     # Redacción creativa
-    "creative": "mistralai/mistral-large-2-instruct",
+    "creative": ["mistralai/mistral-large-2-instruct", "openai/gpt-oss-120b"],
     # Extracción estructurada de datos (catálogo, perfiles)
-    "extraction": "meta/llama-3.3-70b-instruct",
+    "extraction": ["meta/llama-3.3-70b-instruct", "openai/gpt-oss-120b"],
 }
 
 
 def model_for(task: str, override: str | None = None) -> str | None:
     """Modelo a usar para una tarea. `override` (config del agente) gana."""
-    return override or TASK_MODELS.get(task)
+    if override:
+        return override
+    candidatos = TASK_MODELS.get(task) or []
+    return candidatos[0] if candidatos else None
+
+
+def cadena_para(task: str, override: str | None = None) -> list[str]:
+    """Modelos a intentar, en orden. El override del agente va primero pero NO
+    anula la cadena: si ese modelo falla, se sigue con los de la tarea."""
+    candidatos = list(TASK_MODELS.get(task) or [])
+    if override and override not in candidatos:
+        candidatos.insert(0, override)
+    elif override:
+        candidatos.remove(override)
+        candidatos.insert(0, override)
+    return candidatos
 
 
 def available_providers() -> list[dict]:
@@ -51,6 +100,7 @@ async def chat_raw(
     *,
     tools: list[dict] | None = None,
     model: str | None = None,
+    models: list[str] | None = None,
     temperature: float = 0.3,
     max_tokens: int = 1024,
     # 120s: los modelos serverless de NIM pueden tardar ~1 min en arrancar
@@ -58,19 +108,50 @@ async def chat_raw(
     timeout: float = 120.0,
     json_mode: bool = False,
 ) -> dict:
-    """Devuelve el mensaje completo del asistente (puede incluir tool_calls)
-    del primer proveedor que funcione."""
+    """Devuelve el mensaje completo del asistente (puede incluir tool_calls).
+
+    `models` es la cadena de candidatos en orden; `model` es el atajo de uno
+    solo. El mensaje devuelto trae `_modelo_usado` y `_proveedor_usado`: si
+    hubo fallback, hay que registrar quién contestó de verdad.
+    """
     providers = available_providers()
     if not providers:
         raise LLMError(
             "Ningún proveedor LLM configurado. Definí NVIDIA_API_KEY, "
             "GROQ_API_KEY u OPENROUTER_API_KEY en .env"
         )
+    por_nombre = {p["name"]: p for p in providers}
+    # Un intento = (proveedor, modelo). Cada modelo va a SU proveedor; si no
+    # sabemos dónde vive, se prueba en todos. Lo que ya no pasa es sustituirlo
+    # en silencio por el modelo por defecto de otro proveedor.
+    pedidos = models or ([model] if model else [])
+    intentos: list[tuple[dict, str]] = []
+    for candidato in pedidos:
+        duenio = PROVEEDOR_DE_MODELO.get(candidato)
+        if duenio and duenio in por_nombre:
+            intentos.append((por_nombre[duenio], candidato))
+        elif duenio:
+            continue  # su proveedor no tiene API key: ni lo intentamos
+        else:
+            intentos.extend((p, candidato) for p in providers)
+    if not intentos:
+        if pedidos:
+            # Se pidieron modelos concretos y ninguno tiene proveedor
+            # disponible. Caer al modelo por defecto de cualquiera sería la
+            # sustitución silenciosa que este módulo dejó de hacer: el
+            # llamador cree que corrió lo que pidió y las métricas mienten.
+            raise LLMError(
+                "Ningún proveedor configurado tiene los modelos pedidos "
+                f"({', '.join(pedidos)}). Configurá su API key o cambiá la "
+                "cadena en TASK_MODELS."
+            )
+        intentos = [(p, p["default_model"]) for p in providers]
+
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for p in providers:
+        for p, modelo in intentos:
             payload: dict = {
-                "model": model or p["default_model"],
+                "model": modelo,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
@@ -95,25 +176,22 @@ async def chat_raw(
                         json=payload,
                     )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]
+                mensaje = resp.json()["choices"][0]["message"]
+                # Quién contestó DE VERDAD. Antes se guardaba en agent_runs el
+                # modelo pedido, así que si hubo fallback la métrica mentía y
+                # las decisiones de latencia se tomaban sobre datos falsos.
+                mensaje["_modelo_usado"] = modelo
+                mensaje["_proveedor_usado"] = p["name"]
+                if errors:
+                    logger.warning(
+                        "LLM: respondió %s/%s tras fallar %s",
+                        p["name"], modelo, "; ".join(errors),
+                    )
+                return mensaje
             except (httpx.HTTPError, KeyError, IndexError) as exc:
                 # type(exc) SIEMPRE visible: str(ReadTimeout) es vacío y
                 # ocultaba la causa real en producción.
-                errors.append(f"{p['name']}: {type(exc).__name__}: {exc}")
-                # Si el modelo pedido no existe en este proveedor, probar con
-                # su modelo por defecto antes de pasar al siguiente.
-                if model and model != p["default_model"]:
-                    try:
-                        payload["model"] = p["default_model"]
-                        resp = await client.post(
-                            f"{p['base_url']}/chat/completions",
-                            headers={"Authorization": f"Bearer {p['api_key']}"},
-                            json=payload,
-                        )
-                        resp.raise_for_status()
-                        return resp.json()["choices"][0]["message"]
-                    except (httpx.HTTPError, KeyError, IndexError) as exc2:
-                        errors.append(f"{p['name']} (default): {type(exc2).__name__}: {exc2}")
+                errors.append(f"{p['name']}/{modelo}: {type(exc).__name__}: {exc}")
     raise LLMError("Todos los proveedores fallaron: " + "; ".join(errors))
 
 

@@ -35,6 +35,61 @@ def _cola_limpia():
     yield
 
 
+# --- El paciente no espera al reloj de la cola ---
+
+
+@pytest.mark.anyio
+async def test_el_worker_arranca_apenas_se_encola_algo_vencido():
+    """El worker dormía POLL_SECONDS=20 fijos entre pasadas, así que un
+    mensaje de WhatsApp recién encolado esperaba hasta 20 segundos ANTES de
+    que el bot empezara a pensar. Sobre una latencia ya de 40s, era un cuarto
+    del tiempo que el paciente miraba el celular, gastado durmiendo."""
+    import asyncio
+
+    company = _create_company(name="Empresa Cola Despierta")
+    jobs._hay_trabajo = asyncio.Event()
+
+    db = _db()
+    try:
+        jobs.enqueue(db, company["id"], "test_kind", _now(), {"a": 1})
+    finally:
+        db.close()
+
+    # El aviso ya tiene que estar puesto: el worker no espera el próximo poll.
+    assert jobs._hay_trabajo.is_set(), "encolar algo vencido no despertó al worker"
+
+
+@pytest.mark.anyio
+async def test_lo_programado_a_futuro_no_despierta_a_nadie():
+    """Un recordatorio para mañana no tiene por qué sacar al worker de la
+    siesta: para eso está el poll."""
+    import asyncio
+
+    company = _create_company(name="Empresa Cola Futura")
+    jobs._hay_trabajo = asyncio.Event()
+
+    db = _db()
+    try:
+        jobs.enqueue(db, company["id"], "test_kind", _now() + timedelta(hours=5), {})
+    finally:
+        db.close()
+
+    assert not jobs._hay_trabajo.is_set()
+
+
+def test_encolar_sin_worker_no_explota():
+    """El backend encola desde el request; en los tests y en los scripts no
+    hay bucle corriendo. Eso no puede tirar una excepción al usuario."""
+    jobs._hay_trabajo = None
+    company = _create_company(name="Empresa Sin Worker")
+    db = _db()
+    try:
+        job = jobs.enqueue(db, company["id"], "test_kind", _now(), {})
+        assert job is not None
+    finally:
+        db.close()
+
+
 # --- Contrato de la cola ---
 
 def test_job_survives_restart(monkeypatch):
