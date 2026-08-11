@@ -59,12 +59,21 @@ HEALTHCARE = Pack(
     key="healthcare",
     name="Salud (encima de Agenda)",
     description="Reglas sanitarias: sin diagnósticos, urgencias derivadas, datos sensibles.",
-    modules=("patients",),
-    tools=(),
+    modules=("patients", "insurance", "prescriptions"),
+    tools=("check_coverage", "get_prescription"),
     requires=("booking",),
     rules=(
         "REGLAS SANITARIAS (obligatorias, Ley 7593/2025 de datos personales):\n"
         "- JAMÁS des diagnósticos, dosis ni indicaciones médicas por chat.\n"
+        "- Si el paciente pide su receta, usá get_prescription. La receta se le "
+        "adjunta TAL CUAL la escribió el doctor: NO la repitas, NO la resumas, "
+        "NO la interpretes y NO agregues ni saques nada. Vos solo avisás que se "
+        "la mandaste.\n"
+        "- Si el paciente pregunta si puede cambiar una dosis, dejar el "
+        "tratamiento, o te cuenta que un remedio le cayó mal: NO opines. "
+        "Escalá a humano.\n"
+        "- Antes de un estudio, avisá siempre la preparación previa (ayuno, "
+        "vejiga llena, traer estudios anteriores): sale de list_services.\n"
         "- Ante síntomas: empatía y ofrecer turno; nunca interpretar clínicamente.\n"
         "- Ante urgencia (dolor de pecho, dificultad para respirar, sangrado fuerte): "
         "indicá acudir a urgencias YA y escalá a humano.\n"
@@ -90,8 +99,11 @@ PACKS: dict[str, Pack] = {p.key: p for p in (COMMERCE, BOOKING, HEALTHCARE, TRAV
 # Qué packs propone el Arquitecto de Negocio según el rubro detectado.
 VERTICAL_PACKS: dict[str, tuple[str, ...]] = {
     "medical": ("booking", "healthcare"),
+    "hospital": ("booking", "healthcare"),   # sanatorio: internación y quirófano
     "dental": ("booking", "healthcare"),
     "veterinary": ("booking", "healthcare"),
+    "laboratory": ("booking", "healthcare"),  # análisis clínicos
+    "imaging": ("booking", "healthcare"),     # diagnóstico por imágenes
     "ecommerce": ("commerce",),
     "retail": ("commerce",),
     "construction": ("commerce",),

@@ -219,6 +219,16 @@ class Service(Base):
     price_gs: Mapped[int] = mapped_column(default=0)
     duration_min: Mapped[int] = mapped_column(default=30)
     active: Mapped[bool] = mapped_column(default=True)
+    specialty: Mapped[str] = mapped_column(String(100), default="")
+    # Preparación previa: lo que hay que avisarle al paciente ANTES de que
+    # viaje (ayuno, vejiga llena, suspender medicación). Sin esto el paciente
+    # viene al vicio y hay que reprogramarlo.
+    prep: Mapped[str] = mapped_column(Text, default="")
+    sample: Mapped[str] = mapped_column(String(80), default="")  # sangre, orina…
+    # Código del nomenclador de la ASEGURADORA del cliente. Vacío a propósito
+    # en el catálogo curado: CPT y CDT son propietarios y cada aseguradora usa
+    # el suyo; es el único que le sirve al cliente para facturar.
+    code: Mapped[str] = mapped_column(String(50), default="")
 
 
 class DoctorService(Base):
@@ -284,6 +294,87 @@ class ChannelSession(Base):
     last_heartbeat: Mapped[datetime] = mapped_column(default=utcnow)
     status: Mapped[str] = mapped_column(String(20), default="disconnected")
     phone: Mapped[str] = mapped_column(String(40), default="")
+
+
+class Insurer(Base):
+    """Convenio de la empresa con una aseguradora o prepaga.
+
+    Es del tenant: cada clínica carga los convenios que ELLA tiene. No es una
+    base de aseguradoras compartida —eso sería inventar acuerdos comerciales
+    que no existen— sino lo que este cliente firmó y puede facturar.
+    """
+
+    __tablename__ = "insurers"
+    __table_args__ = (UniqueConstraint("company_id", "name", "plan"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    plan: Mapped[str] = mapped_column(String(80), default="")  # "Plan Oro", "Básico"
+    coverage_pct: Mapped[int] = mapped_column(default=0)   # cobertura por defecto 0-100
+    copay_gs: Mapped[int] = mapped_column(default=0)       # copago fijo por defecto
+    active: Mapped[bool] = mapped_column(default=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ServiceCoverage(Base):
+    """Cobertura distinta a la del convenio para un servicio puntual."""
+
+    __tablename__ = "service_coverages"
+    __table_args__ = (UniqueConstraint("insurer_id", "service_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    insurer_id: Mapped[int] = mapped_column(ForeignKey("insurers.id"), index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    coverage_pct: Mapped[int] = mapped_column(default=0)
+    copay_gs: Mapped[int] = mapped_column(default=0)
+    # Hay estudios que el convenio directamente no cubre: decirlo es mejor que
+    # que el paciente se entere en la caja.
+    excluded: Mapped[bool] = mapped_column(default=False)
+
+
+class Prescription(Base):
+    """Receta cargada POR EL DOCTOR. El sistema la relata, nunca la genera.
+
+    El bot puede entregársela al paciente palabra por palabra cuando el
+    paciente la pide. Lo que NO hace es redactarla, resumirla, interpretarla
+    ni sugerir cambios: eso sería ejercicio de la medicina por un modelo de
+    lenguaje.
+    """
+
+    __tablename__ = "prescriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True)
+    patient_name: Mapped[str] = mapped_column(String(120))
+    patient_phone: Mapped[str] = mapped_column(String(30), index=True)
+    diagnosis: Mapped[str] = mapped_column(Text, default="")
+    indications: Mapped[str] = mapped_column(Text, default="")  # reposo, dieta, control
+    issued_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    status: Mapped[str] = mapped_column(String(15), default="active")  # active|completed|cancelled
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PrescriptionItem(Base):
+    """Un medicamento de la receta, tal cual lo escribió el doctor."""
+
+    __tablename__ = "prescription_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    prescription_id: Mapped[int] = mapped_column(ForeignKey("prescriptions.id"), index=True)
+    medication: Mapped[str] = mapped_column(String(200))
+    dose: Mapped[str] = mapped_column(String(120))          # "1 comprimido", "5 ml"
+    route: Mapped[str] = mapped_column(String(60), default="vía oral")
+    frequency: Mapped[str] = mapped_column(String(120), default="")  # texto del doctor
+    # `every_hours` = 0 significa que NO es un horario fijo (ej. "si tenés
+    # dolor"). Nunca se convierte una pauta a demanda en tomas programadas.
+    every_hours: Mapped[int] = mapped_column(default=0)
+    duration_days: Mapped[int] = mapped_column(default=0)
+    instructions: Mapped[str] = mapped_column(Text, default="")
 
 
 class Supervision(Base):

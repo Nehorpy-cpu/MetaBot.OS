@@ -30,9 +30,13 @@ from .models import (
     Doctor,
     DoctorService,
     GlossaryTerm,
+    Insurer,
     Message,
+    Prescription,
+    PrescriptionItem,
     Product,
     Service,
+    ServiceCoverage,
 )
 
 
@@ -101,6 +105,37 @@ TOOL_SPECS: dict[str, dict] = {
             },
         },
     },
+    "check_coverage": {
+        "type": "function",
+        "function": {
+            "name": "check_coverage",
+            "description": (
+                "Cuánto le sale un estudio o consulta al paciente CON SU SEGURO, según los "
+                "convenios que este negocio tiene cargados. Usar siempre antes de dar un "
+                "precio a alguien que menciona su seguro o prepaga."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "service": {"type": "string", "description": "Nombre del estudio o consulta"},
+                    "insurer": {"type": "string", "description": "Seguro o prepaga que dijo el paciente"},
+                },
+                "required": ["service", "insurer"],
+            },
+        },
+    },
+    "get_prescription": {
+        "type": "function",
+        "function": {
+            "name": "get_prescription",
+            "description": (
+                "Le manda al paciente su última receta TAL CUAL la cargó el doctor. "
+                "Usar cuando el paciente pide su receta o pregunta qué le recetaron. "
+                "La receta se adjunta sola: vos NO la repetís ni la resumís."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
     "list_doctors": {
         "type": "function",
         "function": {
@@ -163,9 +198,45 @@ def _tools_for(company: Company) -> list[dict]:
     return [TOOL_SPECS[k] for k in TOOL_SPECS if k in keys]
 
 
+def _receta_verbatim(receta, doctor, items: list, company: Company) -> str:
+    """Arma el texto de la receta con los campos de la base, sin modelo.
+
+    Esto es lo que le llega al paciente. Que lo arme `format` y no un LLM es
+    la única garantía real de que nadie parafrasee una dosis: un prompt que
+    dice "no cambies nada" es una intención, esto es un hecho.
+    """
+    lineas = [
+        f"*Receta — {company.name}*",
+        f"Paciente: {receta.patient_name}",
+        f"Profesional: {doctor.name if doctor else 'no registrado'}"
+        + (f" ({doctor.specialty})" if doctor and doctor.specialty else ""),
+        f"Fecha: {receta.issued_at.strftime('%d/%m/%Y')}",
+    ]
+    if receta.diagnosis:
+        lineas.append(f"Diagnóstico: {receta.diagnosis}")
+    lineas.append("")
+    for n, it in enumerate(items, 1):
+        pauta = it.frequency or (f"cada {it.every_hours} horas" if it.every_hours else "")
+        detalle = " · ".join(x for x in (it.dose, it.route, pauta) if x)
+        if it.duration_days:
+            detalle += f" · por {it.duration_days} días"
+        lineas.append(f"{n}. *{it.medication}* — {detalle}")
+        if it.instructions:
+            lineas.append(f"   {it.instructions}")
+    if receta.indications:
+        lineas.extend(["", f"Indicaciones: {receta.indications}"])
+    lineas.extend([
+        "",
+        "Esta receta es la que cargó tu profesional, copiada tal cual. "
+        "Ante cualquier duda o si algo te cae mal, hablá con el consultorio: "
+        "por acá no podemos cambiar ni interpretar una indicación médica.",
+    ])
+    return "\n".join(lineas)
+
+
 def _execute_tool(
     name: str, args: dict, db: Session, company: Company, conversation: Conversation,
-    media_out: list | None = None,
+    media_out: list | None = None, verbatim_out: list | None = None,
 ) -> dict:
     if name == "search_catalog":
         # Vendedor consultivo: el LLM traduce el pedido del cliente a
@@ -246,6 +317,119 @@ def _execute_tool(
                     "Decíselo con honestidad al cliente."
                 )
         return {"products": [], "note": note}
+    if name == "check_coverage":
+        # El convenio lo cargó ESTA empresa: no hay base compartida de
+        # aseguradoras, porque eso sería inventar acuerdos que no existen.
+        pedido = str(args.get("insurer", "")).strip().lower()
+        insurer = next(
+            (
+                i
+                for i in db.query(Insurer)
+                .filter(Insurer.company_id == company.id, Insurer.active)
+                .all()
+                if pedido and (pedido in i.name.lower() or i.name.lower() in pedido)
+            ),
+            None,
+        )
+        if not insurer:
+            disponibles = [
+                f"{i.name} {i.plan}".strip()
+                for i in db.query(Insurer)
+                .filter(Insurer.company_id == company.id, Insurer.active)
+                .limit(15)
+                .all()
+            ]
+            return {
+                "covered": False,
+                "note": (
+                    "No tenemos convenio con ese seguro. Decíselo con honestidad "
+                    "y pasale el precio particular."
+                ),
+                "convenios_disponibles": disponibles,
+            }
+
+        buscado = str(args.get("service", "")).strip().lower()
+        candidatos = (
+            db.query(Service)
+            .filter(Service.company_id == company.id, Service.active)
+            .all()
+        )
+        service = next((s for s in candidatos if buscado and buscado in s.name.lower()), None)
+        if not service:
+            return {"error": f"No encontré '{args.get('service')}' en el catálogo. Usá list_services."}
+
+        cobertura, copago, excluido = insurer.coverage_pct, insurer.copay_gs, False
+        override = (
+            db.query(ServiceCoverage)
+            .filter(
+                ServiceCoverage.company_id == company.id,
+                ServiceCoverage.insurer_id == insurer.id,
+                ServiceCoverage.service_id == service.id,
+            )
+            .first()
+        )
+        if override:
+            cobertura, copago, excluido = override.coverage_pct, override.copay_gs, override.excluded
+
+        if excluido:
+            return {
+                "service": service.name, "insurer": f"{insurer.name} {insurer.plan}".strip(),
+                "covered": False, "patient_pays": _fmt_gs(service.price_gs),
+                "note": "Este estudio NO está cubierto por ese convenio: se abona particular.",
+            }
+        # El cálculo lo hace el servidor, no el modelo: un porcentaje mal
+        # calculado en un precio es una discusión en la caja.
+        a_pagar = max(0, round(service.price_gs * (100 - cobertura) / 100) + copago)
+        return {
+            "service": service.name,
+            "insurer": f"{insurer.name} {insurer.plan}".strip(),
+            "covered": True,
+            "list_price": _fmt_gs(service.price_gs),
+            "coverage_pct": cobertura,
+            "patient_pays": _fmt_gs(a_pagar) if a_pagar else "sin costo",
+            "prep": service.prep,
+        }
+
+    if name == "get_prescription":
+        # Se busca por el teléfono DE ESTA conversación, nunca por un nombre
+        # que cualquiera podría escribir: es un dato de salud.
+        receta = (
+            db.query(Prescription)
+            .filter(
+                Prescription.company_id == company.id,
+                Prescription.patient_phone == conversation.contact_phone,
+                Prescription.status == "active",
+            )
+            .order_by(Prescription.issued_at.desc())
+            .first()
+        )
+        if not receta:
+            return {
+                "found": False,
+                "note": (
+                    "No hay receta cargada a nombre de este número. Ofrecé "
+                    "consultarlo con el consultorio; NO inventes ninguna indicación."
+                ),
+            }
+        doctor = db.get(Doctor, receta.doctor_id)
+        items = (
+            db.query(PrescriptionItem)
+            .filter(PrescriptionItem.prescription_id == receta.id)
+            .order_by(PrescriptionItem.id)
+            .all()
+        )
+        if verbatim_out is not None:
+            verbatim_out.append(_receta_verbatim(receta, doctor, items, company))
+        return {
+            "found": True,
+            "sent_verbatim": True,
+            "note": (
+                "La receta ya se le adjuntó al paciente palabra por palabra. "
+                "NO la repitas, NO la resumas y NO la interpretes: solo avisale "
+                "que se la mandaste y ofrecé ayudarlo con otra cosa."
+            ),
+        }
+
     if name == "escalate_to_human":
         conversation.status = "needs_human"
         db.commit()
@@ -533,6 +717,9 @@ async def handle_incoming(
     tools = _tools_for(company)
     actions: list[dict] = []
     media: list[dict] = []  # fotos reales de catálogo a enviar al cliente
+    # Bloques que salen TAL CUAL de la base (recetas). No pasan por el modelo
+    # ni por el supervisor: se anexan a la respuesta ya terminada.
+    verbatim: list[str] = []
     reply_text = ""
     rondas_agotadas = False
     booking_blocked = False  # tras un choque de agenda, no se agenda más en este turno
@@ -565,7 +752,10 @@ async def handle_incoming(
                     )
                 }
             else:
-                result = _execute_tool(name, args, db, company, conversation, media_out=media)
+                result = _execute_tool(
+                    name, args, db, company, conversation,
+                    media_out=media, verbatim_out=verbatim,
+                )
                 if name == "book_appointment" and "solapa" in result.get("error", ""):
                     booking_blocked = True
             actions.append({"tool": name, "args": args, "result": result})
@@ -610,6 +800,11 @@ async def handle_incoming(
         reply_text = revision["reply"]
     if revision.get("escalate"):
         conversation.status = "needs_human"
+
+    # La receta se anexa DESPUÉS de la supervisión, a propósito: ni el CX ni el
+    # CEO pueden reescribirla. Lo que el doctor cargó es lo que el paciente lee.
+    if verbatim:
+        reply_text = "\n\n".join([reply_text, *verbatim])
 
     db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="out", body=reply_text))
     tools_used = [a["tool"] for a in actions]
