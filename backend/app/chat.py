@@ -60,12 +60,28 @@ def _sanitize_reply(text: str) -> str:
 
 STYLE_RULES = """
 REGLAS DE ESTILO (obligatorias):
-- Escribí como una persona real de Paraguay por WhatsApp: mensajes cortos, cálidos y naturales.
-- Usá voseo siempre (vos, tenés, querés). Jopara sutil solo cuando suene natural (ej. "¡Oĩma!", "na", "luego").
-- Una sola pregunta por mensaje. Nada de listas largas ni formato de robot.
-- Nunca digas que sos una IA salvo que te pregunten directamente; en ese caso decilo con naturalidad.
+- Escribí como una persona real de Paraguay por WhatsApp: mensajes breves, cálidos
+  y naturales. Voseo siempre (vos, tenés, querés).
+- CORTESÍA: tratás con pacientes y clientes, muchas veces preocupados. Nada de
+  "¿qué onda?", "¡na!", "dale loco" ni muletillas de amigo. Cálido y respetuoso a
+  la vez: cercano no es confianzudo.
+- ENTENDÉS el guaraní y el jopara si el cliente los usa, pero RESPONDÉS en
+  castellano. Nada de "¡Oĩma!", "na", "luego" ni saludos en guaraní: no todo el
+  mundo lo habla y en un contexto de salud puede sonar desprolijo.
+- LEÉ TODO el mensaje antes de contestar y respondé lo que realmente te pidieron.
+  Si el cliente hace dos preguntas, contestá las dos. Si te dice que NO sabe algo,
+  no se lo vuelvas a preguntar: ayudalo a averiguarlo.
+- Cuando el cliente no sepa el nombre de lo que necesita pero sí la zona del
+  cuerpo, el síntoma o la especialidad, BUSCÁ en el catálogo por eso y ofrecele
+  hasta 5 opciones, empezando por las más comunes. Preguntar "¿cómo se llama el
+  estudio?" a quien acaba de decir que no lo recuerda no lo ayuda en nada.
+- Una idea por mensaje. Cuando ofrezcas opciones, una lista corta y numerada está
+  bien; lo que no va son párrafos largos ni formato de robot.
+- Nunca digas que sos una IA salvo que te pregunten directamente; en ese caso
+  decilo con naturalidad.
 - Montos siempre en Guaraníes: ₲ 150.000 (puntos de miles).
-- Si no sabés algo del negocio, NO lo inventes: decí que consultás y usá la herramienta de escalar a humano.
+- Si no sabés algo del negocio, NO lo inventes: decí que lo consultás y usá la
+  herramienta de escalar a humano.
 """
 
 # Catálogo de herramientas del enjambre. Qué recibe cada bot lo decide su
@@ -273,6 +289,58 @@ def _texto_confirmacion(appt: Appointment, doctor, company: Company) -> str:
         partes.append(f"📍 {company.address}")
     partes.extend(["", "Si te surge algo, escribinos y lo reprogramamos."])
     return "\n".join(partes)
+
+
+# El paciente dice "corazón"; el catálogo dice "Cardiología". Sin este puente
+# la búsqueda no encuentra nada y el bot termina preguntándole al paciente el
+# nombre técnico del estudio que acaba de decir que no recuerda.
+SINONIMOS_BUSQUEDA: dict[str, tuple[str, ...]] = {
+    "corazon": ("cardiolog", "cardiac", "electrocardio", "ecocardio", "holter", "ergometr"),
+    "cardiaco": ("cardiolog", "electrocardio", "ecocardio"),
+    "presion": ("cardiolog", "mapa", "presion"),
+    "pulmon": ("neumolog", "torax", "espirometr"),
+    "respiracion": ("neumolog", "espirometr", "torax"),
+    "hueso": ("traumatolog", "radiograf", "densitometr"),
+    "huesos": ("traumatolog", "radiograf", "densitometr"),
+    "columna": ("traumatolog", "radiograf", "resonancia"),
+    "rodilla": ("traumatolog", "radiograf", "resonancia"),
+    "cabeza": ("neurolog", "tomograf", "resonancia", "electroencefalo"),
+    "cerebro": ("neurolog", "tomograf", "resonancia", "electroencefalo"),
+    "estomago": ("gastroenterolog", "endoscop", "ecografia abdominal"),
+    "digestivo": ("gastroenterolog", "endoscop", "colonoscop"),
+    "higado": ("hepatograma", "gastroenterolog", "ecografia abdominal"),
+    "rinon": ("nefrolog", "urea", "creatinina", "ecografia renal"),
+    "rinones": ("nefrolog", "creatinina", "ecografia renal"),
+    "vista": ("oftalmolog", "campimetr"),
+    "ojos": ("oftalmolog", "campimetr"),
+    "oido": ("otorrinolaringolog", "audiometr"),
+    "oidos": ("otorrinolaringolog", "audiometr"),
+    "garganta": ("otorrinolaringolog",),
+    "piel": ("dermatolog",),
+    "tiroides": ("tiroide", "tsh", "endocrinolog"),
+    "azucar": ("glicemia", "glucosa", "hemoglobina glicosilada", "diabet"),
+    "diabetes": ("glicemia", "hemoglobina glicosilada", "diabetolog"),
+    "colesterol": ("lipidico", "colesterol", "triglicerid"),
+    "embarazo": ("obstetric", "ginecolog", "ecografia obstetrica"),
+    "prostata": ("urolog", "psa"),
+    "sangre": ("hemograma", "laboratorio", "hematolog"),
+    "dientes": ("odontolog", "dental"),
+    "muela": ("odontolog", "extraccion", "endodoncia"),
+}
+
+
+def _expandir_busqueda(texto: str) -> list[str]:
+    """Traduce lo que dice el paciente a términos del catálogo.
+
+    Devuelve la lista de términos alternativos a probar. Vacía si no hay
+    sinónimo conocido: entonces se busca tal cual lo escribió.
+    """
+    normalizado = _normalizar(texto)
+    alternativas: list[str] = []
+    for palabra, terminos in SINONIMOS_BUSQUEDA.items():
+        if palabra in normalizado:
+            alternativas.extend(terminos)
+    return alternativas
 
 
 def _normalizar(texto: str) -> str:
@@ -550,20 +618,28 @@ def _execute_tool(
         if category:
             q = q.filter(Service.category.ilike(f"%{category}%"))
         candidatos = q.order_by(Service.category, Service.name).all()
-        buscado = _normalizar(args.get("query") or "").strip()
+        crudo = args.get("query") or ""
+        buscado = _normalizar(crudo).strip()
         if buscado:
             # El filtro va en Python y no en SQL porque hay que ignorar tildes
             # y ñ, y ni SQLite ni PostgreSQL lo hacen igual con ilike. Son unos
             # cientos de filas: no justifica una extensión de la base.
+            def _texto(s):
+                return _normalizar(f"{s.name} {s.category} {s.specialty}")
+
             palabras = [w for w in re.split(r"\W+", buscado) if len(w) > 3]
-            if palabras:
-                candidatos = [
-                    s for s in candidatos
-                    if all(
-                        w in _normalizar(f"{s.name} {s.category} {s.specialty}")
-                        for w in palabras
-                    )
-                ]
+            exactos = [s for s in candidatos if all(w in _texto(s) for w in palabras)] if palabras else candidatos
+
+            # Si el paciente habló de una parte del cuerpo o un síntoma, se
+            # traduce a los términos del catálogo. "corazón" no aparece en
+            # ningún nombre de estudio, pero "Cardiología" sí.
+            sinonimos = _expandir_busqueda(crudo)
+            por_sinonimo = (
+                [s for s in candidatos if any(term in _texto(s) for term in sinonimos)]
+                if sinonimos else []
+            )
+            vistos = {s.id for s in exactos}
+            candidatos = exactos + [s for s in por_sinonimo if s.id not in vistos]
         total = len(candidatos)
         services = candidatos[:12]
         if not services:

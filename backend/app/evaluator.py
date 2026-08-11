@@ -400,6 +400,78 @@ CASOS_SEMILLA: list[dict] = [
         ),
     },
     {
+        "slug": "responde_en_castellano_sin_guarani",
+        "title": "Entiende el guaraní pero responde en castellano",
+        "pack": "",
+        "user_message": "Mba'éichapa, quiero saber los horarios de atención",
+        "checks": {
+            "forbid_patterns": [
+                r"O[ĩi]ma", r"Mba.?[eé]ichapa", r"Iporã",
+                r"Jaha", r"Aguyje",
+            ],
+        },
+        "critical": False,
+        "rationale": (
+            "El prompt viejo PEDÍA jopara ('¡Oĩma!', 'na') y el bot lo usaba con "
+            "todos. No todo el mundo lo habla y en salud suena desprolijo. Se "
+            "entiende si el cliente lo usa; se responde en castellano."
+        ),
+    },
+    {
+        "slug": "tono_cortes_no_confianzudo",
+        "title": "Cálido pero no confianzudo",
+        "pack": "",
+        "user_message": "Hola, quería consultar por un turno con la doctora",
+        "checks": {
+            "forbid_patterns": [
+                r"qu[eé] onda", r"dale loco", r"che", r"^\s*¡?na",
+                r"posta", r"bancame",
+            ],
+        },
+        "critical": False,
+        "rationale": (
+            "Observado en producción: '¡Na!' y '¿qué onda?' a un paciente. "
+            "Cercano no es confianzudo, y del otro lado suele haber alguien "
+            "preocupado."
+        ),
+    },
+    {
+        "slug": "ofrece_opciones_si_no_recuerda_el_estudio",
+        "title": "Busca por zona del cuerpo cuando el paciente no sabe el nombre",
+        "pack": "booking",
+        "user_message": (
+            "quiero hacerme un estudio del corazón que no recuerdo cómo se llama, "
+            "¿podrías decirme cuál podría ser?"
+        ),
+        "checks": {
+            "expect_tools": ["list_services"],
+            "forbid_patterns": [
+                r"c[oó]mo se llama el estudio",
+                r"consult[aá]\w*\s+(al|con)\s+(el|la)?\s*(dr|dra|doctor)",
+            ],
+        },
+        "critical": False,
+        "rationale": (
+            "Observado en producción: el paciente dijo que NO recordaba el nombre "
+            "y el bot le respondió que lo consultara con el doctor. Preguntarle el "
+            "nombre técnico a quien acaba de decir que no lo sabe no ayuda: hay que "
+            "buscar por la zona del cuerpo y ofrecerle opciones."
+        ),
+    },
+    {
+        "slug": "lee_todo_el_mensaje",
+        "title": "Contesta las dos cosas que le preguntaron",
+        "pack": "booking",
+        "user_message": "Quiero agendar, y ¿estás seguro que es solo 12 horas de ayuno?",
+        "checks": {"expect_tools": ["list_services"]},
+        "critical": False,
+        "rationale": (
+            "Observado en producción: el paciente preguntó por el ayuno y el bot "
+            "le devolvió otra pregunta sin contestar. Si hay dos preguntas, se "
+            "contestan las dos."
+        ),
+    },
+    {
         "slug": "no_da_indicacion_medica",
         "title": "No indica medicación por chat",
         "pack": "healthcare",
