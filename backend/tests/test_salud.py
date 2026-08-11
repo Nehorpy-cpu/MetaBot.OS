@@ -318,3 +318,124 @@ def test_busqueda_de_estudios_ignora_tildes_y_acota_el_catalogo(monkeypatch):
     assert "Ecografía abdominal total" in nombres
     assert len(result["services"]) <= 12, "el catálogo entero no entra en el contexto"
     assert result["services"][0]["preparacion"] == "Ayuno de 8 horas."
+
+
+# --- Confirmación de la próxima visita ---
+
+
+def _cita_pendiente(cid: int, telefono: str, dias: int = 5):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.config import TIMEZONE
+    from app.models import Appointment
+
+    db = SessionLocal()
+    try:
+        doc = Doctor(company_id=cid, name="Dr. Riveros", specialty="Cardiología")
+        db.add(doc)
+        db.flush()
+        cuando = (datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None) + timedelta(days=dias)
+                  ).replace(hour=10, minute=30, second=0, microsecond=0)
+        appt = Appointment(company_id=cid, doctor_id=doc.id, patient_name="Rosa Ortiz",
+                           patient_phone=telefono, scheduled_at=cuando, status="pending")
+        db.add(appt)
+        db.commit()
+        db.refresh(appt)
+        return appt.id
+    finally:
+        db.close()
+
+
+def test_un_si_confirma_la_cita_sin_llamar_al_modelo(monkeypatch):
+    """Que una cita quede confirmada no puede depender de que un LLM
+    interprete bien un 'dale'. Además este turno sale gratis y sin espera."""
+    from app.models import Appointment
+
+    company = _sanatorio("Sanatorio Confirma")
+    cid = company["id"]
+    telefono = "+595981400001"
+    appt_id = _cita_pendiente(cid, telefono)
+
+    async def explota(*args, **kwargs):
+        raise AssertionError("confirmar no debe llamar al modelo")
+
+    monkeypatch.setattr(chat_engine, "chat_raw", explota)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": telefono, "text": "dale"})
+    data = resp.json()
+
+    assert data["actions"][0]["tool"] == "confirm_appointment"
+    assert "confirmada" in data["reply"]
+    assert "Dr. Riveros" in data["reply"]
+
+    db = SessionLocal()
+    try:
+        assert db.get(Appointment, appt_id).status == "confirmed"
+    finally:
+        db.close()
+
+
+def test_un_si_con_peticion_NO_dispara_la_guardia(monkeypatch):
+    """'sí, pero quiero cambiar la hora' no es una confirmación. Ante la duda,
+    la guardia no actúa y lo maneja el bot."""
+    from app.models import Appointment
+
+    company = _sanatorio("Sanatorio Ambiguo")
+    cid = company["id"]
+    telefono = "+595981400002"
+    appt_id = _cita_pendiente(cid, telefono)
+
+    fake, _ = _mock_llm([{"content": "Claro, ¿qué horario te queda mejor?"}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    resp = client.post(f"/api/companies/{cid}/chat",
+                       json={"contact_phone": telefono, "text": "si pero quiero cambiar la hora"})
+
+    assert resp.json()["actions"] == []
+    db = SessionLocal()
+    try:
+        assert db.get(Appointment, appt_id).status == "pending", "no se confirmó sola"
+    finally:
+        db.close()
+
+
+def test_un_no_cancela_y_el_bot_ofrece_alternativas(monkeypatch):
+    from app.models import Appointment
+
+    company = _sanatorio("Sanatorio Rechaza")
+    cid = company["id"]
+    telefono = "+595981400003"
+    appt_id = _cita_pendiente(cid, telefono)
+
+    fake, calls = _mock_llm([{"content": "Sin problema, ¿te va el jueves a las 15:00?"}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    client.post(f"/api/companies/{cid}/chat",
+                json={"contact_phone": telefono, "text": "no puedo"})
+
+    db = SessionLocal()
+    try:
+        assert db.get(Appointment, appt_id).status == "cancelled"
+    finally:
+        db.close()
+    # Y al bot se le avisa para que ofrezca alternativas en vez de repreguntar.
+    assert "ya quedó cancelada" in calls[0]["messages"][0]["content"]
+
+
+def test_la_confirmacion_no_alcanza_a_la_cita_de_otra_empresa(monkeypatch):
+    from app.models import Appointment
+
+    a = _sanatorio("Sanatorio Cita Propia")
+    b = _sanatorio("Sanatorio Cita Ajena")
+    telefono = "+595981400004"
+    ajena = _cita_pendiente(a["id"], telefono)
+
+    fake, _ = _mock_llm([{"content": "¿En qué te ayudo?"}])
+    monkeypatch.setattr(chat_engine, "chat_raw", fake)
+    client.post(f"/api/companies/{b['id']}/chat",
+                json={"contact_phone": telefono, "text": "dale"})
+
+    db = SessionLocal()
+    try:
+        assert db.get(Appointment, ajena).status == "pending"
+    finally:
+        db.close()

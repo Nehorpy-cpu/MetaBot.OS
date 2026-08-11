@@ -5,7 +5,7 @@ decimales). El formato con puntos de miles es responsabilidad del frontend.
 """
 from datetime import date, datetime, timezone
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -146,6 +146,9 @@ class Agent(Base):
 
 class Doctor(Base):
     __tablename__ = "doctors"
+    # Necesario para que otras tablas puedan referenciar (company_id, id) como
+    # clave foránea compuesta: sin este UNIQUE, PostgreSQL no lo permite.
+    __table_args__ = (UniqueConstraint("company_id", "id", name="uq_doctor_company_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
@@ -218,7 +221,12 @@ class Service(Base):
     Precio en Guaraníes como entero; 0 = 'consultar'."""
 
     __tablename__ = "services"
-    __table_args__ = (UniqueConstraint("company_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "name"),
+        # Igual que en doctors: habilita la clave foránea compuesta desde
+        # doctor_services.
+        UniqueConstraint("company_id", "id", name="uq_service_company_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
@@ -241,14 +249,32 @@ class Service(Base):
 
 
 class DoctorService(Base):
-    """Qué doctores/profesionales atienden cada servicio."""
+    """Qué doctores/profesionales atienden cada servicio.
+
+    Las claves foráneas son COMPUESTAS con `company_id`: el motor mismo impide
+    ligar el doctor de una empresa con el servicio de otra. Antes esta tabla
+    ni siquiera tenía dueño, así que era imposible preguntar de qué empresa
+    era una fila —y el bot podía terminar diciéndole a un cliente el nombre
+    del profesional de otra clínica.
+    """
 
     __tablename__ = "doctor_services"
-    __table_args__ = (UniqueConstraint("doctor_id", "service_id"),)
+    __table_args__ = (
+        UniqueConstraint("doctor_id", "service_id"),
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_doctor_services_doctor_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "service_id"], ["services.company_id", "services.id"],
+            name="fk_doctor_services_service_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True)
-    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    company_id: Mapped[int] = mapped_column(index=True)
+    doctor_id: Mapped[int] = mapped_column(index=True)
+    service_id: Mapped[int] = mapped_column(index=True)
 
 
 class Conversation(Base):

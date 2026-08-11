@@ -298,3 +298,45 @@ def test_el_webhook_entrega_el_mensaje_a_la_empresa_duena_del_numero(monkeypatch
     de_la_vecina = client.get(f"/api/companies/{vecina['id']}/conversations").json()
     assert any(c["contact_phone"].endswith("595981000777") for c in de_la_duena)
     assert not de_la_vecina, "la empresa vecina no puede ver la conversación ajena"
+
+
+# --- Aislamiento a nivel motor: claves foráneas compuestas ---
+
+
+def test_la_base_rechaza_ligar_doctor_de_una_empresa_con_servicio_de_otra():
+    """Principio innegociable #1: el aislamiento vive en la CAPA DE DATOS, no
+    en la disciplina del programador. Esta prueba no pasa por la API: escribe
+    directo contra la base para que quien responda sea el motor."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.db import SessionLocal
+    from app.models import Doctor, DoctorService, Service
+
+    a = _create_company(name="Sanatorio FK Origen")
+    b = _create_company(name="Sanatorio FK Ajeno")
+
+    db = SessionLocal()
+    try:
+        doc_a = Doctor(company_id=a["id"], name="Dra. Propia")
+        srv_b = Service(company_id=b["id"], name="Estudio Ajeno", price_gs=100000)
+        db.add_all([doc_a, srv_b])
+        db.commit()
+
+        # El vínculo legítimo (todo de la misma empresa) sí entra.
+        srv_a = Service(company_id=a["id"], name="Estudio Propio", price_gs=100000)
+        db.add(srv_a)
+        db.commit()
+        db.add(DoctorService(company_id=a["id"], doctor_id=doc_a.id, service_id=srv_a.id))
+        db.commit()
+
+        # El cruce entre empresas lo rechaza el motor, no un `if`.
+        db.add(DoctorService(company_id=a["id"], doctor_id=doc_a.id, service_id=srv_b.id))
+        try:
+            db.commit()
+            raise AssertionError(
+                "la base aceptó ligar un doctor con el servicio de otra empresa"
+            )
+        except IntegrityError:
+            db.rollback()
+    finally:
+        db.close()

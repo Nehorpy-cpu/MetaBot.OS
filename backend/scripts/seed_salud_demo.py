@@ -163,7 +163,7 @@ def _vincular_doctores(db, company: Company) -> int:
                 continue
             if esp_srv in especialidad or especialidad in esp_srv:
                 if (doc.id, srv.id) not in ya:
-                    db.add(DoctorService(doctor_id=doc.id, service_id=srv.id))
+                    db.add(DoctorService(company_id=company.id, doctor_id=doc.id, service_id=srv.id))
                     ya.add((doc.id, srv.id))
                     n += 1
     return n

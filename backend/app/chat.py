@@ -207,6 +207,65 @@ def _tools_for(company: Company) -> list[dict]:
     return [TOOL_SPECS[k] for k in TOOL_SPECS if k in keys]
 
 
+# Confirmación de cita: se resuelve en el servidor, no interpretando el
+# mensaje con un modelo. Solo dispara con mensajes CORTOS e inequívocos —un
+# "sí, pero quiero cambiar la hora" no entra acá y lo maneja el bot.
+_MAX_CHARS_CONFIRMACION = 28
+_AFIRMATIVO = re.compile(
+    r"^\W*(si|sii+|sisi|dale|ok|oka?y|listo|confirmo|confirmado|confirmar|perfecto|"
+    r"de acuerdo|correcto|asi es|va|buenisimo|barbaro|joya|obvio|claro|"
+    r"si confirmo|si dale|todo bien|me sirve|me viene bien)\b[\s\.\!]*$"
+)
+_NEGATIVO = re.compile(
+    r"^\W*(no|nop|nel|no puedo|no me sirve|no me viene|cancelar|cancelo|"
+    r"cancela|anular|anulo|no voy|no podre|no podre ir|otro dia|otro horario|"
+    r"no gracias)\b[\s\.\!]*$"
+)
+
+
+def _es_afirmativo(texto: str) -> bool:
+    limpio = _normalizar(texto).strip()
+    return len(limpio) <= _MAX_CHARS_CONFIRMACION and bool(_AFIRMATIVO.match(limpio))
+
+
+def _es_negativo(texto: str) -> bool:
+    limpio = _normalizar(texto).strip()
+    return len(limpio) <= _MAX_CHARS_CONFIRMACION and bool(_NEGATIVO.match(limpio))
+
+
+def _cita_por_confirmar(db: Session, company: Company, conversation: Conversation):
+    """La próxima cita de este paciente que todavía espera confirmación."""
+    ahora = datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None)
+    return (
+        db.query(Appointment)
+        .filter(
+            Appointment.company_id == company.id,
+            Appointment.patient_phone == conversation.contact_phone,
+            Appointment.status == "pending",
+            Appointment.scheduled_at > ahora,
+        )
+        .order_by(Appointment.scheduled_at)
+        .first()
+    )
+
+
+def _texto_confirmacion(appt: Appointment, doctor, company: Company) -> str:
+    """Confirmación armada desde la base. La fecha no la escribe un modelo."""
+    dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    cuando = appt.scheduled_at
+    partes = [
+        "¡Listo! Tu cita quedó *confirmada*. 🙌",
+        "",
+        f"📅 {dias[cuando.weekday()]} {cuando.strftime('%d/%m/%Y')} a las {cuando.strftime('%H:%M')}",
+    ]
+    if doctor:
+        partes.append(f"👩‍⚕️ {doctor.name}" + (f" — {doctor.specialty}" if doctor.specialty else ""))
+    if company.address:
+        partes.append(f"📍 {company.address}")
+    partes.extend(["", "Si te surge algo, escribinos y lo reprogramamos."])
+    return "\n".join(partes)
+
+
 def _normalizar(texto: str) -> str:
     """Minúsculas sin tildes ni ñ, para comparar lo que la gente escribe.
 
@@ -775,6 +834,42 @@ async def handle_incoming(
                    body=text, external_id=external_id or None))
     db.commit()
 
+    # Confirmación de cita: guardia determinística ANTES del modelo. Que una
+    # cita quede confirmada no puede depender de que un LLM interprete bien un
+    # "dale". Además sale gratis y sin espera: este turno no llama al modelo.
+    por_confirmar = _cita_por_confirmar(db, company, conversation)
+    if por_confirmar and _es_afirmativo(text):
+        por_confirmar.status = "confirmed"
+        doctor = db.get(Doctor, por_confirmar.doctor_id)
+        reply_confirmacion = _texto_confirmacion(por_confirmar, doctor, company)
+        db.add(Message(company_id=company.id, conversation_id=conversation.id,
+                       direction="out", body=reply_confirmacion))
+        db.add(AgentRun(
+            company_id=company.id, agent_slug="cx", conversation_id=conversation.id,
+            model="(determinístico)", question=text[:2000], answer=reply_confirmacion[:2000],
+            tools_used="confirm_appointment",
+            latency_ms=int((time.monotonic() - started) * 1000),
+            tool_rounds=0, escalated=False, booked=False,
+        ))
+        db.commit()
+        return {
+            "conversation_id": conversation.id, "reply": reply_confirmacion,
+            "status": conversation.status,
+            "actions": [{"tool": "confirm_appointment", "args": {},
+                         "result": {"ok": True, "appointment_id": por_confirmar.id}}],
+            "media": [], "supervision": None,
+        }
+    aviso_cancelacion = ""
+    if por_confirmar and _es_negativo(text):
+        por_confirmar.status = "cancelled"
+        job_handlers.cancel_appointment_reminder(db, por_confirmar.id)
+        db.commit()
+        aviso_cancelacion = (
+            f"[SISTEMA] El paciente rechazó la cita del "
+            f"{por_confirmar.scheduled_at.strftime('%d/%m a las %H:%M')}: ya quedó cancelada. "
+            "Ofrecele 1 o 2 horarios alternativos y esperá que elija."
+        )
+
     agent = (
         db.query(Agent)
         .filter(Agent.company_id == company.id, Agent.slug == "cx", Agent.active)
@@ -799,6 +894,8 @@ async def handle_incoming(
     directive = conversation.pending_directive or ""
     if directive:
         conversation.pending_directive = ""
+    if aviso_cancelacion:
+        directive = f"{directive}\n{aviso_cancelacion}".strip()
     messages: list[dict] = [
         {"role": "system", "content": _build_system_prompt(db, company, agent, directive)}
     ]

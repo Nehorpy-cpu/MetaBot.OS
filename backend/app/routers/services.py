@@ -46,17 +46,26 @@ def _validate_doctors(company_id: int, doctor_ids: list[int], db: Session):
 
 
 def _set_doctors(service: Service, doctor_ids: list[int], db: Session):
-    db.query(DoctorService).filter(DoctorService.service_id == service.id).delete()
+    db.query(DoctorService).filter(
+        DoctorService.service_id == service.id,
+        DoctorService.company_id == service.company_id,
+    ).delete()
     for did in doctor_ids:
-        db.add(DoctorService(doctor_id=did, service_id=service.id))
+        # company_id sale del SERVICIO, que ya está atado al tenant: con la
+        # clave foránea compuesta, un doctor de otra empresa hace fallar el
+        # INSERT en el motor, no en un `if`.
+        db.add(DoctorService(company_id=service.company_id, doctor_id=did, service_id=service.id))
 
 
 def _serialize(service: Service, db: Session) -> dict:
-    links = db.query(DoctorService).filter(DoctorService.service_id == service.id).all()
+    links = db.query(DoctorService).filter(
+        DoctorService.service_id == service.id,
+        DoctorService.company_id == service.company_id,
+    ).all()
     doctors = []
     for link in links:
         doctor = db.get(Doctor, link.doctor_id)
-        if doctor:
+        if doctor and doctor.company_id == service.company_id:
             doctors.append({"id": doctor.id, "name": doctor.name})
     return {
         "id": service.id,
