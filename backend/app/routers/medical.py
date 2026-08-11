@@ -5,10 +5,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels, importador_profesionales, job_handlers, outbound, registry, whatsapp
+from zoneinfo import ZoneInfo
+
+from .. import (
+    agenda, channels, importador_profesionales, job_handlers, outbound, registry, whatsapp,
+)
 from ..config import TIMEZONE
 from ..db import get_db
-from ..models import Appointment, Company, Doctor
+from ..models import (
+    Appointment, Company, Doctor, DoctorAbsence, DoctorSchedule, Service,
+)
 
 router = APIRouter(tags=["medical"])
 
@@ -442,3 +448,241 @@ def confirmar_planilla(
     if len(payload.profesionales) > 500:
         raise HTTPException(422, "Máximo 500 profesionales por importación")
     return importador_profesionales.confirmar(db, company_id, payload.profesionales)
+
+
+# --- Horario del profesional: lo que el servidor usa para validar turnos ---
+
+
+class FranjaIn(BaseModel):
+    # 0=lunes … 6=domingo, igual que Python.
+    weekday: int = Field(ge=0, le=6)
+    desde: str = Field(pattern=r"^\d{1,2}:\d{2}$", description="HH:MM")
+    hasta: str = Field(pattern=r"^\d{1,2}:\d{2}$", description="HH:MM")
+    # Vacío = vale para todo. Con servicio, vale SOLO para ese: así se carga al
+    # profesional que atiende consulta toda la semana pero hace ecografías los
+    # martes a la tarde.
+    service_id: int | None = None
+    lugar: str = Field(default="", max_length=120)
+
+
+class HorarioIn(BaseModel):
+    franjas: list[FranjaIn]
+
+
+def _minutos(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _franja_out(f: DoctorSchedule) -> dict:
+    return {
+        "id": f.id, "weekday": f.weekday,
+        "desde": f"{f.hora_inicio // 60:02d}:{f.hora_inicio % 60:02d}",
+        "hasta": f"{f.hora_fin // 60:02d}:{f.hora_fin % 60:02d}",
+        "service_id": f.service_id, "lugar": f.lugar,
+    }
+
+
+def _citas_que_quedan_afuera(db: Session, company: Company, doctor: Doctor) -> list[dict]:
+    """Turnos futuros que el horario nuevo ya no admite.
+
+    Se DEVUELVEN, no se cancelan ni se mueven: son personas que ya reservaron y
+    a las que hay que llamar. Que el sistema las borre solo sería peor que el
+    problema que estamos arreglando.
+    """
+    ahora = datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None)
+    futuras = (
+        db.query(Appointment)
+        .filter(
+            Appointment.company_id == company.id,
+            Appointment.doctor_id == doctor.id,
+            Appointment.scheduled_at >= ahora,
+            Appointment.status.notin_(["cancelled"]),
+        )
+        .order_by(Appointment.scheduled_at)
+        .all()
+    )
+    afuera = []
+    for cita in futuras:
+        veredicto = agenda.verificar_turno(
+            db, company, doctor, cita.scheduled_at,
+            service_id=cita.service_id, ignorar_cita_id=cita.id, ahora=ahora,
+        )
+        if not veredicto["ok"] and veredicto["codigo"] != "muy_pronto":
+            afuera.append({
+                "id": cita.id, "paciente": cita.patient_name,
+                "telefono": cita.patient_phone,
+                "cuando": cita.scheduled_at.strftime("%d/%m/%Y %H:%M"),
+                "motivo": veredicto["motivo"],
+            })
+    return afuera
+
+
+@router.get("/companies/{company_id}/doctors/{doctor_id}/schedule")
+def ver_horario(company_id: int, doctor_id: int, db: Session = Depends(get_db)):
+    _get_company(company_id, db)
+    doctor = db.get(Doctor, doctor_id)
+    if not doctor or doctor.company_id != company_id:
+        raise HTTPException(404, "Doctor no encontrado")
+    franjas = (
+        db.query(DoctorSchedule)
+        .filter(DoctorSchedule.company_id == company_id,
+                DoctorSchedule.doctor_id == doctor_id)
+        .order_by(DoctorSchedule.weekday, DoctorSchedule.hora_inicio)
+        .all()
+    )
+    return {
+        "agenda_mode": doctor.agenda_mode,
+        # El texto libre que cargó la clínica, para mostrarlo al lado y que una
+        # persona lo transcriba. NO se parsea para validar nada.
+        "texto_libre": doctor.schedule,
+        "franjas": [_franja_out(f) for f in franjas],
+        "nota": (
+            "Mientras no cargues el horario, los turnos de este profesional se "
+            "toman como PEDIDO y el bot avisa que recepción confirma."
+            if doctor.agenda_mode != "estructurado"
+            else "El bot valida los turnos contra este horario."
+        ),
+    }
+
+
+@router.put("/companies/{company_id}/doctors/{doctor_id}/schedule")
+def guardar_horario(
+    company_id: int, doctor_id: int, payload: HorarioIn, db: Session = Depends(get_db)
+):
+    """Reemplaza el horario del profesional y pasa su agenda a verificada."""
+    company = _get_company(company_id, db)
+    doctor = db.get(Doctor, doctor_id)
+    if not doctor or doctor.company_id != company_id:
+        raise HTTPException(404, "Doctor no encontrado")
+    for f in payload.franjas:
+        if _minutos(f.hasta) <= _minutos(f.desde):
+            raise HTTPException(422, f"La franja {f.desde}-{f.hasta} termina antes de empezar")
+        if f.service_id and not db.query(Service.id).filter(
+                Service.company_id == company_id, Service.id == f.service_id).first():
+            raise HTTPException(422, f"El servicio {f.service_id} no es de esta empresa")
+
+    db.query(DoctorSchedule).filter(
+        DoctorSchedule.company_id == company_id,
+        DoctorSchedule.doctor_id == doctor_id).delete()
+    for f in payload.franjas:
+        db.add(DoctorSchedule(
+            company_id=company_id, doctor_id=doctor_id, weekday=f.weekday,
+            hora_inicio=_minutos(f.desde), hora_fin=_minutos(f.hasta),
+            service_id=f.service_id, lugar=f.lugar,
+        ))
+    # Sin franjas se vuelve a "libre": marcarlo estructurado y dejarlo vacío
+    # haría que el profesional no pueda recibir NINGÚN turno.
+    doctor.agenda_mode = "estructurado" if payload.franjas else "libre"
+    db.commit()
+
+    return {
+        "agenda_mode": doctor.agenda_mode,
+        "franjas": len(payload.franjas),
+        # Personas que ya tenían turno y ahora quedan fuera del horario. Hay
+        # que llamarlas: el sistema no las toca.
+        "citas_fuera_de_horario": _citas_que_quedan_afuera(db, company, doctor),
+    }
+
+
+@router.get("/companies/{company_id}/clinic-schedule")
+def ver_horario_de_la_clinica(company_id: int, db: Session = Depends(get_db)):
+    _get_company(company_id, db)
+    franjas = (
+        db.query(DoctorSchedule)
+        .filter(DoctorSchedule.company_id == company_id,
+                DoctorSchedule.doctor_id.is_(None))
+        .order_by(DoctorSchedule.weekday, DoctorSchedule.hora_inicio)
+        .all()
+    )
+    return {
+        "franjas": [_franja_out(f) for f in franjas],
+        "nota": (
+            "Es cuándo abre el centro. Acota los turnos de TODOS los "
+            "profesionales —con esto el bot deja de aceptar un domingo a las "
+            "23:00— pero no confirma que cada profesional esté: eso sale del "
+            "horario de cada uno."
+        ),
+    }
+
+
+@router.put("/companies/{company_id}/clinic-schedule")
+def guardar_horario_de_la_clinica(
+    company_id: int, payload: HorarioIn, db: Session = Depends(get_db)
+):
+    """Cinco filas que cubren a los 40 médicos. Es lo primero que conviene
+    cargar: mata el "domingo a las 23:00" el día uno, sin esperar a que cada
+    profesional declare su horario."""
+    _get_company(company_id, db)
+    for f in payload.franjas:
+        if _minutos(f.hasta) <= _minutos(f.desde):
+            raise HTTPException(422, f"La franja {f.desde}-{f.hasta} termina antes de empezar")
+    db.query(DoctorSchedule).filter(
+        DoctorSchedule.company_id == company_id,
+        DoctorSchedule.doctor_id.is_(None)).delete()
+    for f in payload.franjas:
+        db.add(DoctorSchedule(
+            company_id=company_id, doctor_id=None, weekday=f.weekday,
+            hora_inicio=_minutos(f.desde), hora_fin=_minutos(f.hasta), lugar=f.lugar,
+        ))
+    db.commit()
+    return {"franjas": len(payload.franjas)}
+
+
+class AusenciaIn(BaseModel):
+    # Vacío = cierra la institución entera esos días.
+    doctor_id: int | None = None
+    desde: date
+    hasta: date
+    motivo: str = Field(default="", max_length=120)
+
+
+@router.get("/companies/{company_id}/absences")
+def listar_ausencias(company_id: int, db: Session = Depends(get_db)):
+    _get_company(company_id, db)
+    hoy = date.today()
+    filas = (
+        db.query(DoctorAbsence)
+        .filter(DoctorAbsence.company_id == company_id, DoctorAbsence.hasta >= hoy)
+        .order_by(DoctorAbsence.desde)
+        .all()
+    )
+    return [
+        {"id": a.id, "doctor_id": a.doctor_id, "desde": a.desde.isoformat(),
+         "hasta": a.hasta.isoformat(), "motivo": a.motivo}
+        for a in filas
+    ]
+
+
+@router.post("/companies/{company_id}/absences", status_code=201)
+def crear_ausencia(company_id: int, payload: AusenciaIn, db: Session = Depends(get_db)):
+    """Licencia, vacaciones o feriado. El bot deja de dar turnos esos días."""
+    company = _get_company(company_id, db)
+    if payload.hasta < payload.desde:
+        raise HTTPException(422, "La fecha de vuelta es anterior a la de salida")
+    doctor = None
+    if payload.doctor_id:
+        doctor = db.get(Doctor, payload.doctor_id)
+        if not doctor or doctor.company_id != company_id:
+            raise HTTPException(404, "Doctor no encontrado")
+    ausencia = DoctorAbsence(
+        company_id=company_id, doctor_id=payload.doctor_id,
+        desde=payload.desde, hasta=payload.hasta, motivo=payload.motivo,
+    )
+    db.add(ausencia)
+    db.commit()
+    return {
+        "id": ausencia.id,
+        # Igual que al cambiar el horario: se listan, no se cancelan.
+        "citas_afectadas": _citas_que_quedan_afuera(db, company, doctor) if doctor else [],
+    }
+
+
+@router.delete("/companies/{company_id}/absences/{absence_id}", status_code=204)
+def borrar_ausencia(company_id: int, absence_id: int, db: Session = Depends(get_db)):
+    _get_company(company_id, db)
+    ausencia = db.get(DoctorAbsence, absence_id)
+    if not ausencia or ausencia.company_id != company_id:
+        raise HTTPException(404, "Ausencia no encontrada")
+    db.delete(ausencia)
+    db.commit()

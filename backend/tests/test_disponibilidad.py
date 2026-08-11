@@ -407,3 +407,132 @@ def test_agenda_no_toca_el_texto_libre_del_horario():
     assert "Doctor.schedule" not in cuerpo
     assert "doctor.schedule" not in cuerpo
     assert "import re" not in cuerpo
+
+
+# --- La clínica carga su horario desde el panel ---
+
+
+def test_cargar_el_horario_pasa_la_agenda_a_verificada():
+    company = _create_company(name="Clínica Panel Horario")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors",
+                      json={"name": "Dr. Panel", "schedule": "Lun a Vie 08-14"}).json()
+
+    antes = client.get(f"/api/companies/{cid}/doctors/{doc['id']}/schedule").json()
+    assert antes["agenda_mode"] == "libre"
+    assert antes["franjas"] == []
+    assert "recepción confirma" in antes["nota"]
+    # El texto libre se muestra para transcribirlo, no se interpreta.
+    assert antes["texto_libre"] == "Lun a Vie 08-14"
+
+    r = client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": d, "desde": "08:00", "hasta": "14:00"} for d in range(5)]})
+    assert r.status_code == 200
+    assert r.json()["agenda_mode"] == "estructurado"
+    assert r.json()["franjas"] == 5
+
+    despues = client.get(f"/api/companies/{cid}/doctors/{doc['id']}/schedule").json()
+    assert len(despues["franjas"]) == 5
+    assert despues["franjas"][0]["desde"] == "08:00"
+
+
+def test_al_cambiar_el_horario_se_listan_las_citas_que_quedan_afuera():
+    """Son personas que ya reservaron: se avisan, no se cancelan solas."""
+    company = _create_company(name="Clínica Reprogramar")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Cambio"}).json()
+    domingo = _proximo(DOM, 11, 0)
+    db = SessionLocal()
+    try:
+        db.add(Appointment(company_id=cid, doctor_id=doc["id"], patient_name="Ya Reservó",
+                           patient_phone="595981555444", scheduled_at=domingo,
+                           duration_min=30, status="confirmed"))
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": d, "desde": "08:00", "hasta": "14:00"} for d in range(5)]})
+    afuera = r.json()["citas_fuera_de_horario"]
+    assert len(afuera) == 1
+    assert afuera[0]["paciente"] == "Ya Reservó"
+    assert afuera[0]["telefono"] == "595981555444"
+
+    # Y la cita SIGUE ahí: la decisión de moverla es de una persona.
+    citas = client.get(f"/api/companies/{cid}/appointments").json()
+    assert len(citas) == 1
+
+
+def test_dejar_el_horario_vacio_vuelve_a_modo_libre():
+    """Marcarlo estructurado y sin franjas dejaría al profesional sin poder
+    recibir ningún turno."""
+    company = _create_company(name="Clínica Vacía Panel")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Vacío"}).json()
+    client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule",
+               json={"franjas": [{"weekday": 0, "desde": "08:00", "hasta": "14:00"}]})
+    r = client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={"franjas": []})
+    assert r.json()["agenda_mode"] == "libre"
+
+
+def test_una_franja_al_reves_se_rechaza():
+    company = _create_company(name="Clínica Franja Mala")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Mal"}).json()
+    r = client.put(f"/api/companies/{cid}/doctors/{doc['id']}/schedule", json={
+        "franjas": [{"weekday": 0, "desde": "14:00", "hasta": "08:00"}]})
+    assert r.status_code == 422
+
+
+def test_el_horario_de_la_clinica_se_carga_una_sola_vez():
+    """Cinco filas cubren a los 40 médicos y matan el domingo a las 23:00."""
+    company = _create_company(name="Clínica Horario General")
+    cid = company["id"]
+    r = client.put(f"/api/companies/{cid}/clinic-schedule", json={
+        "franjas": [{"weekday": d, "desde": "07:00", "hasta": "19:00"} for d in range(5)]})
+    assert r.status_code == 200 and r.json()["franjas"] == 5
+    visto = client.get(f"/api/companies/{cid}/clinic-schedule").json()
+    assert len(visto["franjas"]) == 5
+    assert "no confirma que cada profesional esté" in visto["nota"]
+
+
+def test_cargar_una_licencia_lista_a_quien_hay_que_llamar():
+    company = _create_company(name="Clínica Licencia Panel")
+    cid = company["id"]
+    doc = client.post(f"/api/companies/{cid}/doctors", json={"name": "Dr. Licencia"}).json()
+    cuando = _proximo(MIE, 10, 0)
+    db = SessionLocal()
+    try:
+        db.add(Appointment(company_id=cid, doctor_id=doc["id"], patient_name="Tenía Turno",
+                           patient_phone="595981666555", scheduled_at=cuando,
+                           duration_min=30, status="confirmed"))
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.post(f"/api/companies/{cid}/absences", json={
+        "doctor_id": doc["id"], "desde": cuando.date().isoformat(),
+        "hasta": (cuando.date() + timedelta(days=7)).isoformat(), "motivo": "congreso"})
+    assert r.status_code == 201
+    afectadas = r.json()["citas_afectadas"]
+    assert len(afectadas) == 1 and afectadas[0]["paciente"] == "Tenía Turno"
+
+    assert len(client.get(f"/api/companies/{cid}/absences").json()) == 1
+    client.delete(f"/api/companies/{cid}/absences/{r.json()['id']}")
+    assert client.get(f"/api/companies/{cid}/absences").json() == []
+
+
+def test_una_licencia_al_reves_se_rechaza():
+    company = _create_company(name="Clínica Licencia Mala")
+    cid = company["id"]
+    r = client.post(f"/api/companies/{cid}/absences", json={
+        "desde": "2026-09-10", "hasta": "2026-09-01", "motivo": "?"})
+    assert r.status_code == 422
+
+
+def test_el_horario_de_otra_empresa_no_se_ve():
+    a = _create_company(name="Clínica Aislada A")
+    b = _create_company(name="Clínica Aislada B")
+    doc_a = client.post(f"/api/companies/{a['id']}/doctors", json={"name": "Dr. A"}).json()
+    r = client.get(f"/api/companies/{b['id']}/doctors/{doc_a['id']}/schedule")
+    assert r.status_code == 404
