@@ -175,3 +175,59 @@ def test_quien_audita_no_es_quien_produce():
     """Regla del proyecto: el auditor no puede auto-aprobarse."""
     assert model_for("audit") != model_for("cx")
     assert model_for("supervision") != model_for("cx")
+
+
+@pytest.mark.anyio
+async def test_una_respuesta_vacia_pasa_al_siguiente_modelo(monkeypatch):
+    """Un modelo de razonamiento puede gastar todo max_tokens pensando y
+    devolver contenido vacío. Al llamador le llega como "no supo qué
+    contestar" y el paciente recibe "¿me repetís eso último?"."""
+    monkeypatch.setattr(llm, "available_providers", lambda: PROVEEDORES)
+
+    class ClienteVacio:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            if json["model"] == "openai/gpt-oss-120b":
+                return _RespuestaFalsa(200, "")  # razonó y no le quedó nada
+            return _RespuestaFalsa(200, "acá está la respuesta")
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", ClienteVacio)
+    msg = await chat_raw(
+        [{"role": "user", "content": "hola"}],
+        models=["openai/gpt-oss-120b", "llama-3.3-70b-versatile"],
+    )
+    assert msg["content"] == "acá está la respuesta"
+    assert msg["_modelo_usado"] == "llama-3.3-70b-versatile"
+
+
+@pytest.mark.anyio
+async def test_si_el_ultimo_tambien_viene_vacio_se_devuelve_igual(monkeypatch):
+    """Sin candidatos que queden, devolver lo que hay es mejor que un error:
+    el llamador ya tiene su propio texto de respaldo."""
+    monkeypatch.setattr(llm, "available_providers", lambda: PROVEEDORES)
+
+    class TodoVacio:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return _RespuestaFalsa(200, "")
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", TodoVacio)
+    msg = await chat_raw([{"role": "user", "content": "hola"}],
+                         models=["openai/gpt-oss-120b", "llama-3.3-70b-versatile"])
+    assert msg["content"] == ""

@@ -190,6 +190,16 @@ async def chat_raw(
                     )
                 resp.raise_for_status()
                 mensaje = resp.json()["choices"][0]["message"]
+                # Un modelo de razonamiento puede gastar todo `max_tokens`
+                # pensando y devolver contenido VACÍO sin tool_calls. Al
+                # llamador eso le llega como "no supo qué contestar" y el
+                # paciente recibe "¿me repetís eso último?". Si hay otro
+                # candidato, se prueba con ese en vez de dar por buena una
+                # respuesta que no existe.
+                vacio = not (mensaje.get("content") or "").strip() and not mensaje.get("tool_calls")
+                if vacio and (p, modelo) != intentos[-1]:
+                    errors.append(f"{p['name']}/{modelo}: respondió vacío")
+                    continue
                 # Quién contestó DE VERDAD. Antes se guardaba en agent_runs el
                 # modelo pedido, así que si hubo fallback la métrica mentía y
                 # las decisiones de latencia se tomaban sobre datos falsos.
