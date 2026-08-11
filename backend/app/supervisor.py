@@ -313,7 +313,7 @@ def modelo_para(company: Company, agente: Agent | None, agente_cx: Agent | None)
     del_cx = agente_cx.model if agente_cx else ""
     if propio and propio != del_cx:
         return propio
-    return model_for("audit")
+    return model_for("supervision")
 
 
 def _cifras_inventadas(propuesta: str, fuentes: str) -> list[str]:
@@ -419,8 +419,14 @@ async def ejecutar(
         tools=None,  # asesor sin herramientas: no puede reentrar al motor
         model=modelo_para(company, agentes.get(trigger.agent_slug), agentes.get("cx")),
         temperature=0.2,
+        # 900 tokens: con menos, un modelo de razonamiento gasta todo el
+        # presupuesto pensando y nunca emite el veredicto (pasó en producción).
         max_tokens=900,
         json_mode=True,
+        # Más corto que el default: si un proveedor no responde, conviene
+        # pasar al siguiente rápido. Este trabajo comparte el worker con los
+        # recordatorios de citas y no debe taparlos.
+        timeout=60.0,
     )
     veredicto = _parse_veredicto(salida.get("content") or "", respuesta, fuentes)
     latencia = int((time.monotonic() - empezo) * 1000)

@@ -25,6 +25,11 @@ TASK_MODELS: dict[str, str] = {
     "reasoning": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
     # Auditoría: modelo DISTINTO al que produce, para no auto-aprobarse
     "audit": "meta/llama-3.3-70b-instruct",
+    # Supervisión de turnos: también distinto al del CX, pero además rápido.
+    # Medido en el VPS con el mismo prompt y 900 tokens: llama-3.1-70b tarda
+    # ~25s contra ~100s del modelo de auditoría. Corre fuera de la espera del
+    # cliente, pero comparte el worker de trabajos con los recordatorios.
+    "supervision": "meta/llama-3.1-70b-instruct",
     # Redacción creativa
     "creative": "mistralai/mistral-large-2-instruct",
     # Extracción estructurada de datos (catálogo, perfiles)

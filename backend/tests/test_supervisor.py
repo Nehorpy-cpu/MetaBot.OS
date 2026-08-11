@@ -353,6 +353,14 @@ def test_el_supervisor_no_usa_el_modelo_del_agente_que_supervisa():
     assert supervisor.modelo_para(empresa, None, cx)
 
 
+def test_el_modelo_de_supervision_no_es_el_del_cx_por_defecto():
+    """La tabla de modelos por tarea no puede asignarle al supervisor el mismo
+    modelo que al CX: sería auto-aprobarse."""
+    from app.llm import TASK_MODELS
+
+    assert TASK_MODELS["supervision"] != TASK_MODELS["cx"]
+
+
 def test_accion_desconocida_no_toca_nada():
     v = supervisor._parse_veredicto('{"action": "borrar_todo", "reply": "x"}', "cx", "{}")
     assert v["action"] == "keep"
