@@ -129,7 +129,10 @@ class Agent(Base):
     """Un agente del enjambre. El system prompt vive acá, nunca en el frontend."""
 
     __tablename__ = "agents"
-    __table_args__ = (UniqueConstraint("company_id", "slug"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "slug"),
+        UniqueConstraint("company_id", "id", name="uq_agent_company_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
@@ -168,15 +171,33 @@ class Doctor(Base):
     verified_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     company: Mapped[Company] = relationship(back_populates="doctors")
-    appointments: Mapped[list["Appointment"]] = relationship(back_populates="doctor")
+    # viewonly: con la clave foránea COMPUESTA, company_id quedaría gobernado
+    # por esta relación y `cita.doctor = otro` movería la fila entera de
+    # empresa en silencio. De solo lectura no se puede: quien escribe pone los
+    # ids explícitos y el motor valida que sean de la misma empresa.
+    appointments: Mapped[list["Appointment"]] = relationship(
+        back_populates="doctor", viewonly=True
+    )
 
 
+# Nota sobre las claves foráneas de acá en adelante: las columnas que apuntan
+# a otra entidad del tenant NO llevan ForeignKey suelto. Llevan una
+# ForeignKeyConstraint COMPUESTA con company_id en __table_args__, para que sea
+# el motor —y no el programador— quien impida cruzar datos entre empresas.
+# Dejar además la simple crearía DOS caminos entre las mismas tablas y
+# SQLAlchemy no podría resolver el join.
 class Appointment(Base):
     __tablename__ = "appointments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_appointments_doctor_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True)
+    doctor_id: Mapped[int] = mapped_column(index=True)
     patient_name: Mapped[str] = mapped_column(String(200))
     patient_phone: Mapped[str] = mapped_column(String(50), default="")
     scheduled_at: Mapped[datetime] = mapped_column(index=True)
@@ -186,7 +207,7 @@ class Appointment(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     company: Mapped[Company] = relationship(back_populates="appointments")
-    doctor: Mapped[Doctor] = relationship(back_populates="appointments")
+    doctor: Mapped[Doctor] = relationship(back_populates="appointments", viewonly=True)
 
 
 class Product(Base):
@@ -281,6 +302,7 @@ class Conversation(Base):
     """Hilo de chat con un cliente/paciente por un canal (whatsapp, instagram)."""
 
     __tablename__ = "conversations"
+    __table_args__ = (UniqueConstraint("company_id", "id", name="uq_conversation_company_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
@@ -298,7 +320,12 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     company: Mapped[Company] = relationship(back_populates="conversations")
-    messages: Mapped[list["Message"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+    # viewonly por el mismo motivo que en citas. El borrado en cascada pasa a
+    # resolverlo la base (ON DELETE CASCADE en la clave compuesta), que es
+    # donde tiene que estar.
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="conversation", viewonly=True
+    )
 
 
 class Message(Base):
@@ -306,17 +333,23 @@ class Message(Base):
     # Deduplicación: WhatsApp reentrega mensajes al reconectar. El id del
     # mensaje en el canal es único por empresa, así una reentrega no genera
     # otra respuesta (ni otra cita).
-    __table_args__ = (UniqueConstraint("company_id", "external_id", name="uq_message_external_id"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "external_id", name="uq_message_external_id"),
+        ForeignKeyConstraint(
+            ["company_id", "conversation_id"], ["conversations.company_id", "conversations.id"],
+            name="fk_messages_conversation_tenant", ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True, default=0)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(index=True)
     direction: Mapped[str] = mapped_column(String(10))  # "in" | "out"
     body: Mapped[str] = mapped_column(Text)
     external_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    conversation: Mapped[Conversation] = relationship(back_populates="messages")
+    conversation: Mapped[Conversation] = relationship(back_populates="messages", viewonly=True)
 
 
 class ChannelSession(Base):
@@ -374,7 +407,10 @@ class Insurer(Base):
     """
 
     __tablename__ = "insurers"
-    __table_args__ = (UniqueConstraint("company_id", "name", "plan"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", "plan"),
+        UniqueConstraint("company_id", "id", name="uq_insurer_company_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
@@ -391,12 +427,22 @@ class ServiceCoverage(Base):
     """Cobertura distinta a la del convenio para un servicio puntual."""
 
     __tablename__ = "service_coverages"
-    __table_args__ = (UniqueConstraint("insurer_id", "service_id"),)
+    __table_args__ = (
+        UniqueConstraint("insurer_id", "service_id"),
+        ForeignKeyConstraint(
+            ["company_id", "insurer_id"], ["insurers.company_id", "insurers.id"],
+            name="fk_coverage_insurer_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "service_id"], ["services.company_id", "services.id"],
+            name="fk_coverage_service_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    insurer_id: Mapped[int] = mapped_column(ForeignKey("insurers.id"), index=True)
-    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    insurer_id: Mapped[int] = mapped_column(index=True)
+    service_id: Mapped[int] = mapped_column(index=True)
     coverage_pct: Mapped[int] = mapped_column(default=0)
     copay_gs: Mapped[int] = mapped_column(default=0)
     # Hay estudios que el convenio directamente no cubre: decirlo es mejor que
@@ -414,10 +460,17 @@ class Prescription(Base):
     """
 
     __tablename__ = "prescriptions"
+    __table_args__ = (
+        UniqueConstraint("company_id", "id", name="uq_prescription_company_id"),
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_prescriptions_doctor_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True)
+    doctor_id: Mapped[int] = mapped_column(index=True)
     patient_name: Mapped[str] = mapped_column(String(120))
     patient_phone: Mapped[str] = mapped_column(String(30), index=True)
     diagnosis: Mapped[str] = mapped_column(Text, default="")
@@ -440,10 +493,16 @@ class PrescriptionItem(Base):
     """Un medicamento de la receta, tal cual lo escribió el doctor."""
 
     __tablename__ = "prescription_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "prescription_id"], ["prescriptions.company_id", "prescriptions.id"],
+            name="fk_prescription_items_tenant", ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    prescription_id: Mapped[int] = mapped_column(ForeignKey("prescriptions.id"), index=True)
+    prescription_id: Mapped[int] = mapped_column(index=True)
     medication: Mapped[str] = mapped_column(String(200))
     dose: Mapped[str] = mapped_column(String(120))          # "1 comprimido", "5 ml"
     route: Mapped[str] = mapped_column(String(60), default="vía oral")
@@ -463,10 +522,16 @@ class Supervision(Base):
     """
 
     __tablename__ = "supervisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "conversation_id"], ["conversations.company_id", "conversations.id"],
+            name="fk_supervisions_conversation_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(index=True)
     trigger_key: Mapped[str] = mapped_column(String(40), index=True)
     agent_slug: Mapped[str] = mapped_column(String(30))
     mode: Mapped[str] = mapped_column(String(10))       # shadow | inline
@@ -549,10 +614,16 @@ class AuditFinding(Base):
     """Hallazgo del Auditor (Guard) sobre una conversación del CX Bot."""
 
     __tablename__ = "audit_findings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "conversation_id"], ["conversations.company_id", "conversations.id"],
+            name="fk_audit_findings_conversation_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(index=True)
     severity: Mapped[str] = mapped_column(String(10))  # "info" | "warning" | "critical"
     note: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -593,10 +664,16 @@ class PromptSuggestion(Base):
     """
 
     __tablename__ = "prompt_suggestions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "agent_id"], ["agents.company_id", "agents.id"],
+            name="fk_prompt_suggestions_agent_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), index=True)
+    agent_id: Mapped[int] = mapped_column(index=True)
     old_prompt: Mapped[str] = mapped_column(Text)
     suggested_prompt: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str] = mapped_column(Text, default="")
