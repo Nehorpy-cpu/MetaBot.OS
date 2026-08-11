@@ -46,7 +46,7 @@ class CompanyOut(BaseModel):
     industry: str
     address: str
     wa_mode: str
-    wa_phone_number_id: str
+    wa_phone_number_id: str | None
     supervision: str
     supervision_pct: int
 
@@ -159,7 +159,30 @@ def update_company(company_id: int, payload: CompanyUpdate, db: Session = Depend
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(404, "Empresa no encontrada")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "wa_phone_number_id" in data:
+        # Vacío significa "sin configurar", y eso es NULL: si se guardara como
+        # cadena vacía, la segunda empresa sin configurar chocaría contra la
+        # restricción de unicidad.
+        pnid = (data["wa_phone_number_id"] or "").strip() or None
+        if pnid:
+            ocupado = (
+                db.query(Company)
+                .filter(Company.wa_phone_number_id == pnid, Company.id != company_id)
+                .first()
+            )
+            if ocupado:
+                # 409 con mensaje claro en vez de dejar que reviente la base:
+                # este es el error que haría que una empresa reciba los mensajes
+                # de los pacientes de otra.
+                raise HTTPException(
+                    409,
+                    "Ese número de WhatsApp ya está conectado a otra empresa. "
+                    "Cada número puede pertenecer a una sola: si no, los mensajes "
+                    "entrantes se irían al tenant equivocado.",
+                )
+        data["wa_phone_number_id"] = pnid
+    for field, value in data.items():
         setattr(company, field, value)
     db.commit()
     db.refresh(company)

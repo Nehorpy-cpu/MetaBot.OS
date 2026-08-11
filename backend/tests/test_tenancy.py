@@ -222,3 +222,79 @@ def test_service_suggestions_do_not_leak_other_tenants():
     assert "Estudio Secreto Exclusivo" not in nombres  # no filtra la oferta ajena
     assert all(s["typical_price_gs"] == 0 for s in suggestions)  # ni sus precios
     assert "Consulta clínica" in nombres  # sí sugiere lo típico del rubro
+
+
+# --- Enrutamiento del webhook: un número de WhatsApp, una sola empresa ---
+
+
+def test_dos_empresas_no_pueden_compartir_el_numero_de_whatsapp():
+    """Hallazgo de auditoría adversarial: el webhook de la Cloud API resuelve
+    el tenant SOLO por wa_phone_number_id, con un `.first()`. Sin unicidad, la
+    empresa que saliera primera se quedaba con los mensajes de los pacientes de
+    la otra, y todas las filas quedaban perfectamente consistentes: ningún
+    chequeo de integridad lo detectaba."""
+    a = _create_company(name="Sanatorio Número A")
+    b = _create_company(name="Sanatorio Número B")
+
+    ok = client.patch(f"/api/companies/{a['id']}", json={"wa_phone_number_id": "555000111"})
+    assert ok.status_code == 200
+    assert ok.json()["wa_phone_number_id"] == "555000111"
+
+    choque = client.patch(f"/api/companies/{b['id']}", json={"wa_phone_number_id": "555000111"})
+    assert choque.status_code == 409, "el segundo tenant no puede quedarse con el mismo número"
+    assert "otra empresa" in choque.json()["detail"]
+
+    # Y el número siguió siendo de quien lo tenía.
+    assert client.get(f"/api/companies/{a['id']}").json()["wa_phone_number_id"] == "555000111"
+
+
+def test_varias_empresas_pueden_no_tener_numero_configurado():
+    """'Sin configurar' es NULL, no cadena vacía: si fuera cadena vacía, la
+    segunda empresa sin número chocaría contra la restricción de unicidad y no
+    se podría ni crear."""
+    x = _create_company(name="Sanatorio Sin Número X")
+    y = _create_company(name="Sanatorio Sin Número Y")
+    assert not client.get(f"/api/companies/{x['id']}").json()["wa_phone_number_id"]
+    assert not client.get(f"/api/companies/{y['id']}").json()["wa_phone_number_id"]
+
+    # Vaciarlo explícitamente tampoco debe chocar entre empresas.
+    assert client.patch(f"/api/companies/{x['id']}", json={"wa_phone_number_id": ""}).status_code == 200
+    assert client.patch(f"/api/companies/{y['id']}", json={"wa_phone_number_id": ""}).status_code == 200
+
+
+def test_una_empresa_puede_reconfigurar_su_propio_numero():
+    """La guardia no debe impedirle a una empresa volver a guardar el suyo."""
+    c = _create_company(name="Sanatorio Reconfigura")
+    assert client.patch(f"/api/companies/{c['id']}", json={"wa_phone_number_id": "555222333"}).status_code == 200
+    assert client.patch(f"/api/companies/{c['id']}", json={"wa_phone_number_id": "555222333"}).status_code == 200
+    assert client.patch(f"/api/companies/{c['id']}", json={"wa_phone_number_id": "555444555"}).status_code == 200
+
+
+def test_el_webhook_entrega_el_mensaje_a_la_empresa_duena_del_numero(monkeypatch):
+    """El mensaje de un paciente tiene que caer en la empresa dueña del número,
+    y en ninguna otra."""
+    from app import chat as chat_engine
+
+    duena = _create_company(name="Sanatorio Dueño del Número")
+    vecina = _create_company(name="Sanatorio Vecino")
+    client.patch(f"/api/companies/{duena['id']}", json={"wa_phone_number_id": "555777888", "wa_mode": "meta"})
+
+    async def fake_chat_raw(messages, **kwargs):
+        return {"content": "Buenas, ¿en qué te ayudo?"}
+
+    monkeypatch.setattr(chat_engine, "chat_raw", fake_chat_raw)
+
+    payload = {
+        "entry": [{"changes": [{"value": {
+            "metadata": {"phone_number_id": "555777888"},
+            "messages": [{"from": "595981000777", "id": "wamid.RUTEO1",
+                          "type": "text", "text": {"body": "hola"}}],
+        }}]}]
+    }
+    resp = client.post("/api/webhooks/whatsapp", json=payload)
+    assert resp.status_code == 200
+
+    de_la_duena = client.get(f"/api/companies/{duena['id']}/conversations").json()
+    de_la_vecina = client.get(f"/api/companies/{vecina['id']}/conversations").json()
+    assert any(c["contact_phone"].endswith("595981000777") for c in de_la_duena)
+    assert not de_la_vecina, "la empresa vecina no puede ver la conversación ajena"

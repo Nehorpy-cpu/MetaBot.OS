@@ -6,7 +6,7 @@ import { card, input, btnPrimary } from "../ui";
 export function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCompanyUpdated: (c: Company) => void }) {
   const [status, setStatus] = useState<WaStatus | null>(null);
   const [address, setAddress] = useState(company.address);
-  const [pnid, setPnid] = useState(company.wa_phone_number_id);
+  const [pnid, setPnid] = useState(company.wa_phone_number_id ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 

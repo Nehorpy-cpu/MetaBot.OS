@@ -38,3 +38,6 @@ Thumbs.db
 .vscode/
 .idea/
 ACCESO-PANEL.txt
+
+# Grafo de conocimiento generado (graphify) - no versionar
+graphify-out/

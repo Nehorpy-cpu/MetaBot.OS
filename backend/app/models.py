@@ -107,7 +107,16 @@ class Company(Base):
     wa_mode: Mapped[str] = mapped_column(String(10), default="none")
     # phone_number_id de WhatsApp Cloud API: identifica a qué tenant llega
     # cada mensaje entrante del webhook (solo modo "meta")
-    wa_phone_number_id: Mapped[str] = mapped_column(String(50), default="", index=True)
+    # Identificador del número en la Cloud API de Meta. ÚNICO a nivel motor: el
+    # webhook resuelve a qué empresa pertenece un mensaje entrante SOLO por este
+    # valor. Dos empresas con el mismo número harían que una reciba los mensajes
+    # de los pacientes de la otra —y todas las filas quedarían perfectamente
+    # consistentes, así que ningún chequeo de integridad lo detectaría.
+    # Nulo (no cadena vacía) cuando no está configurado: en SQL varios NULL no
+    # chocan entre sí, así que muchas empresas pueden no tenerlo.
+    wa_phone_number_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default=None, index=True, unique=True
+    )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     agents: Mapped[list["Agent"]] = relationship(back_populates="company", cascade="all, delete-orphan")

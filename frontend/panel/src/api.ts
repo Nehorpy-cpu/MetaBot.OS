@@ -6,7 +6,9 @@ export interface Company {
   industry: string;
   address: string;
   wa_mode: "none" | "meta" | "qr";
-  wa_phone_number_id: string;
+  // null = sin configurar. No es cadena vacía: el número es único entre
+  // empresas, y varias sin configurar no pueden chocar entre sí.
+  wa_phone_number_id: string | null;
   supervision: "off" | "shadow" | "inline";
   supervision_pct: number;
 }
