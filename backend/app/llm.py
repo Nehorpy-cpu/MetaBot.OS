@@ -55,7 +55,12 @@ TASK_MODELS: dict[str, list[str]] = {
     # El nemotron es un modelo de razonamiento: gasta el presupuesto pensando
     # antes de contestar "¿te refieres a una consulta?". En WhatsApp eso es
     # medio minuto mirando el celular.
-    "cx": ["openai/gpt-oss-120b", "llama-3.3-70b-versatile",
+    # El cupo del free tier de Groq es POR MODELO (8.000 tokens/minuto cada
+    # uno, medido en los headers x-ratelimit el 11-ago-2026), así que poner
+    # dos modelos de Groq no es redundante: es duplicar el presupuesto antes
+    # de caer al proveedor lento. `llama-3.3-70b-versatile` va último de los
+    # tres porque a veces rechaza el esquema de herramientas con un 400.
+    "cx": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile",
            "nvidia/llama-3.3-nemotron-super-49b-v1.5"],
     # Razonamiento/planificación: acá sí conviene el que piensa.
     "reasoning": ["nvidia/llama-3.3-nemotron-super-49b-v1.5", "openai/gpt-oss-120b"],

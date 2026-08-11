@@ -45,7 +45,8 @@ BOOKING = Pack(
     name="Agenda / Reservas",
     description="Servicios, profesionales, disponibilidad, citas y recordatorios.",
     modules=("services", "agenda", "reminders"),
-    tools=("list_services", "list_doctors", "check_agenda", "book_appointment"),
+    tools=("list_services", "list_doctors", "check_agenda", "book_appointment",
+           "my_appointments"),
     rules=(
         "REGLAS DE AGENDA (obligatorias):\n"
         "- Consultá la disponibilidad real antes de ofrecer un horario. Nunca la inventes.\n"

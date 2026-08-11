@@ -180,6 +180,19 @@ TOOL_SPECS: dict[str, dict] = {
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    "my_appointments": {
+        "type": "function",
+        "function": {
+            "name": "my_appointments",
+            "description": (
+                "Los turnos que YA tiene este paciente con nosotros, con fecha, hora, "
+                "profesional y si están confirmados. Usar cuando pregunte por SU turno "
+                "('¿cuándo tengo?', '¿a qué hora era?', 'quiero cambiar mi turno'). "
+                "No confundir con check_agenda, que es la agenda del doctor."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
     "check_agenda": {
         "type": "function",
         "function": {
@@ -834,6 +847,53 @@ def _execute_tool(
             ]
         }
 
+    if name == "my_appointments":
+        # El paciente preguntó "¿cuándo es mi turno?" y el bot le contestó con
+        # los horarios OCUPADOS del doctor, diciéndole que su propio turno
+        # estaba ocupado. Eran dos preguntas distintas sin dos herramientas.
+        ahora = datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None)
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        propias = (
+            db.query(Appointment)
+            .filter(
+                Appointment.company_id == company.id,
+                Appointment.patient_phone == conversation.contact_phone,
+                Appointment.scheduled_at >= ahora - timedelta(hours=2),
+                Appointment.status.notin_(["cancelled"]),
+            )
+            .order_by(Appointment.scheduled_at)
+            .limit(10)
+            .all()
+        )
+        if not propias:
+            return {
+                "appointments": [],
+                "note": "Este paciente no tiene ningún turno futuro con nosotros.",
+            }
+        doctores = {
+            d.id: d
+            for d in db.query(Doctor).filter(Doctor.company_id == company.id).all()
+        }
+        return {
+            "appointments": [
+                {
+                    "id": a.id,
+                    "cuando": (
+                        f"{dias[a.scheduled_at.weekday()]} "
+                        f"{a.scheduled_at.strftime('%d/%m/%Y a las %H:%M')}"
+                    ),
+                    "doctor": (doctores.get(a.doctor_id).name if doctores.get(a.doctor_id) else ""),
+                    "paciente": a.patient_name,
+                    "estado": (
+                        "confirmado" if a.status == "confirmed"
+                        else "pendiente de que el paciente confirme"
+                    ),
+                    "motivo": a.notes,
+                }
+                for a in propias
+            ]
+        }
+
     if name == "check_agenda":
         doctor = db.get(Doctor, args.get("doctor_id"))
         if not doctor or doctor.company_id != company.id:
@@ -933,12 +993,26 @@ def _execute_tool(
         # El recordatorio T-24h queda programado de forma durable: sobrevive
         # a un reinicio del servidor y se reintenta si el envío falla.
         job_handlers.schedule_appointment_reminder(db, appt)
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
         return {
             "ok": True,
             "appointment_id": appt.id,
             "doctor": doctor.name,
             "when": when.strftime("%d/%m/%Y %H:%M"),
-            "message": "Cita agendada como pendiente de confirmación.",
+            # El día de la semana lo calcula el servidor. El modelo se
+            # equivocaba: agendó el 12/08/2026 y se lo anunció al paciente
+            # como "martes 12 de agosto" cuando el 12 era miércoles.
+            "dia_de_la_semana": dias[when.weekday()],
+            "decirle_al_paciente": (
+                f"{dias[when.weekday()]} {when.strftime('%d/%m/%Y')} a las "
+                f"{when.strftime('%H:%M')}"
+            ),
+            "message": (
+                "Cita agendada como PENDIENTE DE CONFIRMACIÓN. Repetile la "
+                "fecha usando exactamente el texto de `decirle_al_paciente`, "
+                "pedile que confirme respondiendo, y avisale que un día antes "
+                "le vas a mandar el recordatorio por acá."
+            ),
         }
 
     return {"error": f"Herramienta desconocida: {name}"}
@@ -998,6 +1072,21 @@ def _build_system_prompt(
         f"Negocio: {company.name} ({company.niche}).",
         f"Ahora es {days[now.weekday()]} {now.strftime('%d/%m/%Y %H:%M')} en Paraguay. "
         f"Toda cita se agenda en fecha futura, con año {now.year} o posterior.",
+        # El calendario ya resuelto. Sin esto el modelo hace la aritmética de
+        # fechas y se equivoca: medido el martes 11/08/2026, a "el martes a
+        # las 10" contestó "martes 12 de agosto", y el 12 era miércoles.
+        # Sale casi gratis en tokens y le saca de encima la única cuenta que
+        # no sabe hacer.
+        "Calendario de los próximos días (usá ESTAS fechas, no las calcules):\n"
+        + "\n".join(
+            f"- {days[(now + timedelta(days=i)).weekday()]} "
+            f"{(now + timedelta(days=i)).strftime('%d/%m/%Y')}"
+            + (" (hoy)" if i == 0 else " (mañana)" if i == 1 else "")
+            for i in range(8)
+        )
+        + "\nSi el paciente dice un día de la semana sin fecha, es el PRÓXIMO "
+        "que viene en esta lista. Si dice el día de hoy y la hora ya pasó, es "
+        "el de la semana que viene: confirmáselo con la fecha completa.",
     ]
     # Anclaje al catálogo real: el bot solo vende lo que el negocio vende.
     try:
