@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link2 } from "lucide-react";
-import { ALL_CAPABILITIES, CAPABILITY_ES, waApi, type Company, type WaStatus } from "../api";
+import { AlertTriangle, Check, CircleHelp, Link2 as _L } from "lucide-react";
+import { ALL_CAPABILITIES, CAPABILITY_ES, waApi, type Company, type DiagnosticoCanal, type WaStatus } from "../api";
 import { card, input, btnPrimary } from "../ui";
 
 export function ConnectionsView({ company, onCompanyUpdated }: { company: Company; onCompanyUpdated: (c: Company) => void }) {
   const [status, setStatus] = useState<WaStatus | null>(null);
+  const [diag, setDiag] = useState<DiagnosticoCanal | null>(null);
   const [address, setAddress] = useState(company.address);
   const [pnid, setPnid] = useState(company.wa_phone_number_id ?? "");
   const [error, setError] = useState("");
@@ -12,6 +14,10 @@ export function ConnectionsView({ company, onCompanyUpdated }: { company: Compan
 
   const refresh = useCallback(() => {
     waApi.status(company.id).then((s) => { setStatus(s); setError(""); }).catch((e) => setError(e.message));
+    // Qué falta para que este canal funcione. Sin esto, "el bot no responde"
+    // es una adivinanza entre cinco causas que se arreglan en lugares
+    // distintos.
+    waApi.diagnostico(company.id).then(setDiag).catch(() => setDiag(null));
   }, [company.id]);
 
   useEffect(() => {
@@ -57,6 +63,53 @@ export function ConnectionsView({ company, onCompanyUpdated }: { company: Compan
           </button>
         ))}
       </div>
+
+      {/* Qué falta para que este canal funcione. Cada paso dice DÓNDE se
+          arregla: el modo, el puente, el QR y los datos de Meta se cargan en
+          cuatro lugares distintos, y "no anda" no distingue cuál es. */}
+      {diag && (
+        <div className={`${card} p-5 space-y-3`}>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="text-sm font-bold text-zinc-200 uppercase tracking-widest">
+              Estado de la conexión
+            </h3>
+            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+              diag.listo
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+            }`}>
+              {diag.listo ? "Listo para recibir mensajes" : "Falta configurar"}
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {diag.pasos.map((p, i) => (
+              <div key={i} className="flex items-start gap-2.5">
+                <span className="shrink-0 mt-0.5">
+                  {p.ok === true && <Check size={14} className="text-emerald-400" />}
+                  {p.ok === false && <AlertTriangle size={14} className="text-amber-400" />}
+                  {p.ok === null && <CircleHelp size={14} className="text-zinc-600" />}
+                </span>
+                <div className="min-w-0">
+                  <p className={`text-xs font-medium ${p.ok === false ? "text-amber-200" : "text-zinc-200"}`}>
+                    {p.paso}
+                  </p>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">{p.detalle}</p>
+                  {p.ok !== true && p.donde && (
+                    <p className="text-[11px] text-cyan-400/80 mt-0.5">→ {p.donde}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {diag.advertencia && (
+            <p className="text-[11px] text-amber-300/90 leading-relaxed bg-amber-500/[0.06] border border-amber-500/20 rounded-xl p-3">
+              {diag.advertencia}
+            </p>
+          )}
+        </div>
+      )}
 
       {status?.capabilities && (
         <div className={`${card} p-5 space-y-3`}>

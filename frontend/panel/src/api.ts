@@ -541,12 +541,35 @@ export interface ChatResponse {
   error?: string;
 }
 
+export interface PasoDeCanal {
+  paso: string;
+  // null = no se puede verificar desde el servidor (ej. el webhook en Meta).
+  ok: boolean | null;
+  detalle: string;
+  donde: string;
+}
+
+export interface DiagnosticoCanal {
+  mode: string;
+  canal: string;
+  oficial: boolean;
+  advertencia: string;
+  listo: boolean;
+  pasos: PasoDeCanal[];
+  // Lo que el canal permite DE VERDAD. WhatsApp Web no manda campañas ni
+  // plantillas: prometerlo termina con el número del cliente restringido.
+  puede_enviar_proactivo: boolean;
+  puede_plantillas: boolean;
+}
+
 export const waApi = {
   updateCompany: (companyId: number, data: { wa_mode?: string; wa_phone_number_id?: string; address?: string; supervision?: string; supervision_pct?: number }) =>
     request<Company>(`/companies/${companyId}`, { method: "PATCH", body: JSON.stringify(data) }),
   status: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/status`),
   start: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/start`, { method: "POST" }),
   logout: (companyId: number) => request<WaStatus>(`/companies/${companyId}/wa/logout`, { method: "POST" }),
+  diagnostico: (companyId: number) =>
+    request<DiagnosticoCanal>(`/companies/${companyId}/wa/diagnostico`),
 };
 
 export const clinicalApi = {

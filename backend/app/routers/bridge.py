@@ -149,3 +149,104 @@ async def wa_start(company_id: int, db: Session = Depends(get_db)):
 async def wa_logout(company_id: int, db: Session = Depends(get_db)):
     _qr_company(company_id, db)
     return await _bridge_call("POST", f"/sessions/{company_id}/logout")
+
+
+@router.get("/companies/{company_id}/wa/diagnostico")
+async def wa_diagnostico(company_id: int, db: Session = Depends(get_db)):
+    """Qué falta para que este canal funcione, dicho sin rodeos.
+
+    Sin esto, "el bot no responde" es una adivinanza: puede ser el modo mal
+    puesto, el bridge caído, el QR sin escanear, un token que Meta venció o el
+    webhook que nunca se configuró. Cada una se arregla en un lugar distinto.
+    """
+    from ..config import (
+        WHATSAPP_APP_SECRET, WHATSAPP_TOKEN, WHATSAPP_VERIFY_TOKEN,
+    )
+
+    company = _qr_company(company_id, db)
+    perfil = channels.profile_for(company.wa_mode)
+    pasos: list[dict] = []
+
+    def paso(titulo: str, ok: bool, detalle: str, donde: str = ""):
+        pasos.append({"paso": titulo, "ok": ok, "detalle": detalle, "donde": donde})
+
+    if company.wa_mode == "none":
+        paso("Canal elegido", False,
+             "Esta empresa todavía no tiene canal: el bot solo responde en el "
+             "simulador del panel. Elegí WhatsApp Web (QR) o Meta.",
+             "Conexiones → elegir canal")
+        return {"mode": "none", "listo": False, "canal": perfil.name, "pasos": pasos}
+
+    if company.wa_mode == "qr":
+        paso("Canal elegido", True, f"{perfil.name}.", "")
+        try:
+            info = await _bridge_call("GET", f"/sessions/{company_id}/status")
+            bridge_ok = True
+        except HTTPException:
+            info = {}
+            bridge_ok = False
+        paso("Puente WhatsApp Web activo", bridge_ok,
+             "El servicio del puente responde."
+             if bridge_ok else
+             "El puente no responde. Es un contenedor aparte: revisá que "
+             "`bridge` esté levantado.",
+             "servidor: docker compose up -d bridge")
+        estado = info.get("status", "desconocido")
+        conectado = estado == "connected"
+        paso("Sesión de WhatsApp vinculada", conectado,
+             f"Conectado como {info.get('phone') or 'número no informado'}."
+             if conectado else
+             "Falta escanear el QR desde el celular que tiene el WhatsApp del "
+             "negocio: Dispositivos vinculados → Vincular dispositivo.",
+             "Conexiones → Conectar / Generar QR")
+        listo = bridge_ok and conectado
+    else:
+        paso("Canal elegido", True, f"{perfil.name}.", "")
+        # El token es de la app de Meta, uno para toda la plataforma; el
+        # phone_number_id es de cada empresa.
+        paso("Token de la app cargado", bool(WHATSAPP_TOKEN),
+             "Definido en el servidor."
+             if WHATSAPP_TOKEN else
+             "Falta WHATSAPP_TOKEN en el .env del servidor. Sin eso no se "
+             "puede responder ningún mensaje.",
+             "servidor: .env → WHATSAPP_TOKEN")
+        paso("Token de verificación del webhook", bool(WHATSAPP_VERIFY_TOKEN),
+             "Definido."
+             if WHATSAPP_VERIFY_TOKEN else
+             "Falta WHATSAPP_VERIFY_TOKEN. Meta lo usa una sola vez, al dar de "
+             "alta el webhook: sin él la verificación falla.",
+             "servidor: .env → WHATSAPP_VERIFY_TOKEN")
+        paso("Firma de la app (app secret)", bool(WHATSAPP_APP_SECRET),
+             "Definido: cada mensaje entrante se valida."
+             if WHATSAPP_APP_SECRET else
+             "Falta WHATSAPP_APP_SECRET. El webhook RECHAZA todo hasta que "
+             "esté: sin firma no hay forma de saber que el mensaje lo mandó "
+             "Meta y no cualquiera que conozca la URL.",
+             "servidor: .env → WHATSAPP_APP_SECRET")
+        tiene_pnid = bool(company.wa_phone_number_id)
+        paso("Número asignado a esta empresa", tiene_pnid,
+             f"phone_number_id {company.wa_phone_number_id}."
+             if tiene_pnid else
+             "Falta el phone_number_id. Es lo que enruta cada mensaje a la "
+             "empresa correcta: sin él no se sabe de quién es la conversación.",
+             "Conexiones → phone_number_id")
+        listo = all(p["ok"] for p in pasos)
+        pasos.append({
+            "paso": "Webhook configurado en Meta", "ok": None,
+            "detalle": "Esto no se puede verificar desde acá: se comprueba "
+                       "mandando un mensaje real al número.",
+            "donde": "developers.facebook.com → tu app → WhatsApp → Configuración",
+        })
+
+    return {
+        "mode": company.wa_mode,
+        "canal": perfil.name,
+        "oficial": perfil.official,
+        "advertencia": perfil.warning,
+        "listo": listo,
+        "pasos": pasos,
+        # Lo que el canal permite de verdad. El QR NO manda plantillas ni
+        # campañas: prometerlo es lo que termina con el número restringido.
+        "puede_enviar_proactivo": perfil.can(channels.Capability.SEND_PROACTIVE),
+        "puede_plantillas": perfil.can(channels.Capability.SEND_TEMPLATE),
+    }
