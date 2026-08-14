@@ -14,17 +14,19 @@ Dos reglas gobiernan todo este archivo:
    ver lo que recetó otro. Todas las consultas de este archivo llevan
    `doctor_id` además de `company_id`.
 """
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import previsita
+from .. import honorarios, previsita
 from ..auth import Identity, audit, get_identity, hash_password
 from ..db import get_db
 from ..models import (
-    Appointment, Company, Doctor, Membership, Prescription, PrescriptionItem, User,
+    Appointment, Company, Doctor, FeeBatch, FeeBatchItem, Membership, Prescription,
+    PrescriptionItem, User,
 )
 from ..permissions import Perm, Role, role_has
 
@@ -390,3 +392,365 @@ def listar_accesos(
         }
         for m, u, d in filas
     ]
+
+
+# ─── Honorarios: preparar, firmar, entregar, cobrar ──────────────────────
+#
+# El circuito real de un profesional en Paraguay: junta las atenciones del
+# período, las separa POR ASEGURADORA, firma cada planilla y la entrega.
+# Recién después cobra. El sistema no "paga" nada: prepara el papel que se
+# firma y deja registrado en qué punto del circuito está cada planilla.
+
+
+def _planilla(db: Session, company_id: int, batch_id: int, doctor: Doctor) -> FeeBatch:
+    """La planilla, si es de este profesional y de esta empresa."""
+    planilla = db.get(FeeBatch, batch_id)
+    if not planilla or planilla.company_id != company_id or planilla.doctor_id != doctor.id:
+        raise HTTPException(404, "Planilla no encontrada")
+    return planilla
+
+
+def _items(db: Session, company_id: int, batch_id: int) -> list[FeeBatchItem]:
+    return (
+        db.query(FeeBatchItem)
+        .filter(
+            FeeBatchItem.company_id == company_id,
+            FeeBatchItem.batch_id == batch_id,
+        )
+        .order_by(FeeBatchItem.atendido_at)
+        .all()
+    )
+
+
+def _salida(planilla: FeeBatch, items: list[FeeBatchItem] | None = None) -> dict:
+    datos = {
+        "id": planilla.id,
+        "aseguradora": planilla.insurer_nombre,
+        "insurer_id": planilla.insurer_id,
+        "desde": planilla.desde.isoformat(),
+        "hasta": planilla.hasta.isoformat(),
+        "estado": planilla.estado,
+        "atenciones": len(items) if items is not None else None,
+        "total_facturado_gs": planilla.total_facturado_gs,
+        "total_honorario_gs": planilla.total_honorario_gs,
+        "honorario_pct": planilla.honorario_pct,
+        "firmada_at": planilla.firmada_at.isoformat() if planilla.firmada_at else None,
+        "entregada_at": planilla.entregada_at.isoformat() if planilla.entregada_at else None,
+        "cobrada_at": planilla.cobrada_at.isoformat() if planilla.cobrada_at else None,
+        "notas": planilla.notas,
+    }
+    if items is not None:
+        datos["items"] = [
+            {
+                "fecha": i.atendido_at.isoformat(),
+                "paciente": i.paciente,
+                "servicio": i.servicio,
+                "precio_lista_gs": i.precio_lista_gs,
+                "facturado_gs": i.facturado_gs,
+                "honorario_gs": i.honorario_gs,
+                "origen_arancel": i.origen_arancel,
+            }
+            for i in items
+        ]
+    return datos
+
+
+def _periodo(desde: str, hasta: str) -> tuple[date, date]:
+    try:
+        d, h = date.fromisoformat(desde), date.fromisoformat(hasta)
+    except ValueError:
+        raise HTTPException(422, "Fechas inválidas: se esperan AAAA-MM-DD")
+    if d > h:
+        raise HTTPException(422, "El período empieza después de terminar")
+    if (h - d).days > 366:
+        # Un período de años no es una liquidación: es un error de tipeo que
+        # arma una planilla imposible de revisar a mano.
+        raise HTTPException(422, "El período no puede pasar de un año")
+    return d, h
+
+
+@router.get("/honorarios/preview")
+def preview_honorarios(
+    company_id: int,
+    desde: str,
+    hasta: str,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Qué se liquidaría en ese período, sin guardar nada.
+
+    Incluye lo que NO entra y por qué. Una planilla que omite en silencio los
+    turnos sin marcar hace que el profesional cobre de menos y lo firme.
+    """
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    d, h = _periodo(desde, hasta)
+    return honorarios.preview(db, _company(db, company_id), doctor, d, h)
+
+
+@router.post("/honorarios", status_code=201)
+def armar_honorarios(
+    company_id: int,
+    desde: str,
+    hasta: str,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Arma las planillas del período: una por aseguradora.
+
+    Si alguna atención ya estaba en otra planilla, la base lo rechaza y NO se
+    guarda nada: media liquidación es peor que ninguna.
+    """
+    company = _company(db, company_id)
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    d, h = _periodo(desde, hasta)
+    creadas = honorarios.crear(db, company, doctor, d, h, identity.user_id)
+    if not creadas:
+        db.rollback()
+        raise HTTPException(
+            409,
+            {
+                "motivo": "No hay atenciones para liquidar en ese período.",
+                "codigo": "sin_atenciones",
+            },
+        )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            {
+                "motivo": (
+                    "Alguna de esas atenciones ya está en otra planilla. "
+                    "Revisá el período: una atención se cobra una sola vez."
+                ),
+                "codigo": "atencion_ya_liquidada",
+            },
+        )
+    audit(
+        db, "honorarios.armar", user_id=identity.user_id, company_id=company_id,
+        detail={
+            "doctor_id": doctor.id,
+            "periodo": f"{d}..{h}",
+            "planillas": [p.id for p in creadas],
+            "total_honorario_gs": sum(p.total_honorario_gs for p in creadas),
+        },
+    )
+    return [_salida(p, _items(db, company_id, p.id)) for p in creadas]
+
+
+@router.get("/honorarios")
+def listar_honorarios(
+    company_id: int,
+    estado: str = "",
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    q = (
+        db.query(FeeBatch)
+        .filter(FeeBatch.company_id == company_id, FeeBatch.doctor_id == doctor.id)
+    )
+    if estado:
+        q = q.filter(FeeBatch.estado == estado)
+    return [_salida(p) for p in q.order_by(FeeBatch.desde.desc(), FeeBatch.id.desc()).all()]
+
+
+@router.get("/honorarios/{batch_id}")
+def ver_honorarios(
+    company_id: int,
+    batch_id: int,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    planilla = _planilla(db, company_id, batch_id, doctor)
+    items = _items(db, company_id, batch_id)
+    datos = _salida(planilla, items)
+    # El papel que se imprime y se firma de puño. Se arma con lo guardado, sin
+    # pasar por ningún modelo: una línea redactada por un LLM no puede entrar
+    # en algo que alguien firma.
+    datos["texto"] = honorarios.texto(
+        _company(db, company_id), doctor, planilla, items
+    )
+    return datos
+
+
+@router.delete("/honorarios/{batch_id}", status_code=204)
+def borrar_honorarios(
+    company_id: int,
+    batch_id: int,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Descarta un borrador para rearmarlo. Lo firmado no se borra."""
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    planilla = _planilla(db, company_id, batch_id, doctor)
+    if planilla.estado != "borrador":
+        raise HTTPException(
+            409,
+            {
+                "motivo": (
+                    f"Esta planilla ya está {planilla.estado}: es un documento, "
+                    "no se borra."
+                ),
+                "codigo": "planilla_cerrada",
+            },
+        )
+    # Los ítems se van con ella (ondelete CASCADE) y las atenciones quedan
+    # libres para entrar en la planilla que se arme después.
+    db.delete(planilla)
+    db.commit()
+    audit(db, "honorarios.borrar", user_id=identity.user_id, company_id=company_id,
+          detail={"planilla": batch_id})
+    return Response(status_code=204)
+
+
+class AvancePlanilla(BaseModel):
+    notas: str = Field(default="", max_length=500)
+
+
+# El circuito es una escalera de un solo sentido: cada paso exige el anterior.
+# Sin esto, "entregada" podría preceder a "firmada" y la planilla que llega a
+# la aseguradora no tendría firma.
+_ANTERIOR = {"firmada": "borrador", "entregada": "firmada", "cobrada": "entregada"}
+_SELLO = {"firmada": "firmada_at", "entregada": "entregada_at", "cobrada": "cobrada_at"}
+
+
+def _avanzar(db: Session, planilla: FeeBatch, a: str, user_id: int | None,
+             notas: str = "") -> dict:
+    if planilla.estado != _ANTERIOR[a]:
+        raise HTTPException(
+            409,
+            {
+                "motivo": (
+                    f"Para marcarla {a} tiene que estar {_ANTERIOR[a]}, "
+                    f"y está {planilla.estado}."
+                ),
+                "codigo": "estado_invalido",
+                "estado_actual": planilla.estado,
+            },
+        )
+    planilla.estado = a
+    setattr(planilla, _SELLO[a], datetime.now(timezone.utc).replace(tzinfo=None))
+    if a == "firmada":
+        planilla.firmada_por = user_id
+    if notas:
+        planilla.notas = notas[:500]
+    db.commit()
+    db.refresh(planilla)
+    return _salida(planilla)
+
+
+@router.post("/honorarios/{batch_id}/firmar")
+def firmar(
+    company_id: int,
+    batch_id: int,
+    payload: AvancePlanilla | None = None,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """El profesional da por buena la planilla y la congela.
+
+    Esto NO es una firma digital y no se le llama así en ninguna parte de la
+    interfaz: no hay certificado ni valor legal. Es una constancia de que el
+    profesional revisó y aceptó los montos. La firma de puño va en el papel
+    que se imprime desde acá.
+    """
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    planilla = _planilla(db, company_id, batch_id, doctor)
+    salida = _avanzar(db, planilla, "firmada", identity.user_id,
+                      payload.notas if payload else "")
+    audit(db, "honorarios.firmar", user_id=identity.user_id, company_id=company_id,
+          detail={"planilla": batch_id, "total_gs": planilla.total_honorario_gs})
+    return salida
+
+
+@router.post("/honorarios/{batch_id}/entregar")
+def entregar(
+    company_id: int,
+    batch_id: int,
+    payload: AvancePlanilla | None = None,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Se entregó a la aseguradora (o a administración)."""
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    planilla = _planilla(db, company_id, batch_id, doctor)
+    return _avanzar(db, planilla, "entregada", identity.user_id,
+                    payload.notas if payload else "")
+
+
+# ─── El otro lado del mostrador: la clínica ──────────────────────────────
+#
+# Marcar una planilla como cobrada NO puede hacerlo el profesional: sería
+# firmar que le pagaron a sí mismo. Lo hace quien administra la empresa.
+
+
+def _puede_administrar(db: Session, company_id: int, identity: Identity) -> None:
+    if identity.is_platform:
+        return
+    miembro = (
+        db.query(Membership)
+        .filter(
+            Membership.user_id == identity.user_id,
+            Membership.company_id == company_id,
+            Membership.status == "active",
+        )
+        .first()
+    )
+    if not miembro or not role_has(miembro.role, Perm.OPERATE):
+        raise HTTPException(403, "Solo la administración de la empresa hace esto")
+
+
+@router.get("/honorarios-a-pagar")
+def honorarios_a_pagar(
+    company_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Lo que la clínica le debe a sus profesionales, entregado y sin cobrar.
+
+    Es la vista de administración: todas las planillas de todos los
+    profesionales, no las de uno. Por eso no pasa por `_doctor_pedido`.
+    """
+    _puede_administrar(db, company_id, identity)
+    filas = (
+        db.query(FeeBatch, Doctor)
+        .join(Doctor, Doctor.id == FeeBatch.doctor_id)
+        .filter(
+            FeeBatch.company_id == company_id,
+            FeeBatch.estado.in_(("firmada", "entregada")),
+        )
+        .order_by(FeeBatch.hasta.desc())
+        .all()
+    )
+    return [{**_salida(p), "doctor": d.name, "doctor_id": d.id} for p, d in filas]
+
+
+@router.post("/honorarios/{batch_id}/pagar")
+def pagar(
+    company_id: int,
+    batch_id: int,
+    payload: AvancePlanilla | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """La clínica registra que le pagó al profesional."""
+    _puede_administrar(db, company_id, identity)
+    planilla = db.get(FeeBatch, batch_id)
+    if not planilla or planilla.company_id != company_id:
+        raise HTTPException(404, "Planilla no encontrada")
+    salida = _avanzar(db, planilla, "cobrada", identity.user_id,
+                      payload.notas if payload else "")
+    audit(db, "honorarios.pagar", user_id=identity.user_id, company_id=company_id,
+          detail={"planilla": batch_id, "doctor_id": planilla.doctor_id,
+                  "total_gs": planilla.total_honorario_gs})
+    return salida

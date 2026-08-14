@@ -14,7 +14,7 @@ from .. import (
 from ..config import TIMEZONE
 from ..db import get_db
 from ..models import (
-    Appointment, Company, Doctor, DoctorAbsence, DoctorSchedule, Service,
+    Appointment, Company, Doctor, DoctorAbsence, DoctorSchedule, Insurer, Service,
 )
 
 router = APIRouter(tags=["medical"])
@@ -44,6 +44,10 @@ class DoctorIn(BaseModel):
     schedule: str = ""
     phone: str = ""
     email: str = ""
+    # Qué porcentaje de lo facturado le corresponde. 100 = cobra todo (su
+    # propio consultorio). El rango cerrado no es cosmético: un 150 guardado
+    # por error sale como plata en una planilla que alguien va a firmar.
+    honorario_pct: int = Field(default=100, ge=0, le=100)
 
 
 class DoctorOut(DoctorIn):
@@ -118,6 +122,9 @@ class AppointmentIn(BaseModel):
     # Qué se va a hacer: define cuánto ocupa el turno. Sin esto todo dura 30
     # minutos y una ecografía de 45 se pisa con el siguiente paciente.
     service_id: int | None = None
+    # Por qué convenio viene. None = particular, que no es un dato faltante:
+    # es la mitad de la agenda y se liquida en su propia planilla.
+    insurer_id: int | None = None
     notes: str = ""
 
 
@@ -160,6 +167,13 @@ def create_appointment(
         raise HTTPException(404, "Doctor no encontrado en esta empresa")
 
     datos = payload.model_dump()
+    if datos.get("insurer_id") is not None:
+        # Se valida acá y no se confía en la clave foránea: el error de la
+        # base es un 500 ilegible, y esta atención después se convierte en
+        # una planilla que alguien va a cobrar.
+        convenio = db.get(Insurer, datos["insurer_id"])
+        if not convenio or convenio.company_id != company_id:
+            raise HTTPException(404, "Ese convenio no es de esta empresa")
     veredicto = agenda.verificar_turno(
         db, company, doctor, payload.scheduled_at,
         service_id=datos.get("service_id"),

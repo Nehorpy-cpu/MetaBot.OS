@@ -100,7 +100,13 @@ HEALTHCARE = Pack(
         "- Ante síntomas: empatía y ofrecer turno; nunca interpretar clínicamente.\n"
         "- Ante urgencia (dolor de pecho, dificultad para respirar, sangrado fuerte): "
         "indicá acudir a urgencias YA y escalá a humano.\n"
-        "- Los datos de salud son sensibles: no los repitas ni los compartas fuera de lo necesario."
+        "- Los datos de salud son sensibles: no los repitas ni los compartas fuera de lo necesario.\n"
+        # Sin esto la atención queda como particular y el profesional no la
+        # puede incluir en la planilla de su prepaga: cobra de menos por un
+        # dato que el paciente habría dado si se lo preguntaban.
+        "- AL AGENDAR preguntá una sola vez si viene con seguro o particular, "
+        "y pasá lo que te diga tal cual en `seguro`. Si ya lo dijo antes en "
+        "la conversación, no se lo vuelvas a preguntar."
     ),
 )
 

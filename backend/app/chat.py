@@ -12,7 +12,6 @@ import json
 import logging
 import re
 import time
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -22,8 +21,9 @@ DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solape
 
 from sqlalchemy.orm import Session
 
-from . import agenda, job_handlers, packs, supervisor
+from . import agenda, aranceles, job_handlers, packs, supervisor
 from .config import TIMEZONE
+from .textos import formato_gs, normalizar
 from .llm import cadena_para, chat_raw
 from .models import (
     Agent,
@@ -45,7 +45,8 @@ from .models import (
 
 
 def _fmt_gs(amount: int) -> str:
-    return f"₲ {amount:,}".replace(",", ".") if amount else "consultar"
+    """Para el bot, 0 no es "₲ 0": es que hay que preguntar."""
+    return formato_gs(amount) if amount else "consultar"
 
 HISTORY_LIMIT = 20
 MAX_TOOL_ROUNDS = 4
@@ -239,6 +240,10 @@ TOOL_SPECS: dict[str, dict] = {
                         "type": "integer",
                         "description": "El service_id que devolvió list_services. Pasalo SIEMPRE que sepas qué se va a hacer: define cuánto dura el turno.",
                     },
+                    "seguro": {
+                        "type": "string",
+                        "description": "El seguro o prepaga que dijo el paciente, TAL CUAL lo dijo. Vacío si va como particular o si no lo mencionó. No lo inventes ni lo supongas.",
+                    },
                     "notes": {"type": "string", "description": "Motivo"},
                 },
                 "required": ["doctor_id", "patient_name", "datetime_iso"],
@@ -386,15 +391,9 @@ def _expandir_busqueda(texto: str) -> list[str]:
     return alternativas
 
 
-def _normalizar(texto: str) -> str:
-    """Minúsculas sin tildes ni ñ, para comparar lo que la gente escribe.
-
-    En WhatsApp nadie pone tildes: "Seguro Nanduti" tiene que encontrar
-    "Seguro Ñandutí". Sin esto el sistema le dice al paciente que no hay
-    convenio mientras se lo lista entre los disponibles.
-    """
-    limpio = unicodedata.normalize("NFD", (texto or "").lower())
-    return "".join(c for c in limpio if unicodedata.category(c) != "Mn")
+# Vive en `textos.py`: el mismo criterio con el que el bot busca un convenio
+# tiene que usar la planilla de honorarios cuando lo busca de nuevo.
+_normalizar = normalizar
 
 
 # Formatos de teléfono que se usan en Paraguay: 021 214-400, 0981 123456,
@@ -624,45 +623,20 @@ def _execute_tool(
                 )
         return {"products": [], "note": note}
     if name == "check_coverage":
-        # El convenio lo cargó ESTA empresa: no hay base compartida de
-        # aseguradoras, porque eso sería inventar acuerdos que no existen.
-        pedido = _normalizar(args.get("insurer", "")).strip()
-        convenios = (
-            db.query(Insurer)
-            .filter(Insurer.company_id == company.id, Insurer.active)
-            .all()
-        )
-        # Se compara sin tildes ni ñ, y también contra el plan: el paciente
-        # escribe "Nanduti Plan Oro" y el convenio se llama "Seguro Ñandutí".
-        insurer = None
-        if pedido:
-            for i in convenios:
-                nombre = _normalizar(i.name)
-                completo = _normalizar(f"{i.name} {i.plan}").strip()
-                plan = _normalizar(i.plan)
-                if nombre in pedido or pedido in completo:
-                    # Si el paciente nombró un plan, tiene que coincidir: los
-                    # planes de una misma prepaga cubren distinto.
-                    if not plan or plan in pedido or not any(
-                        _normalizar(o.plan) in pedido for o in convenios if _normalizar(o.name) == nombre
-                    ):
-                        insurer = i
-                        break
+        # Buscar el convenio y calcular lo que paga el paciente son las DOS
+        # cosas que la planilla de honorarios vuelve a hacer sobre la misma
+        # atención. Están en `aranceles.py` para que den el mismo número: si
+        # no, la diferencia no aparece como error sino como una discusión en
+        # la caja o una planilla que la aseguradora rechaza.
+        insurer = aranceles.buscar_convenio(db, company.id, args.get("insurer", ""))
         if not insurer:
-            disponibles = [
-                f"{i.name} {i.plan}".strip()
-                for i in db.query(Insurer)
-                .filter(Insurer.company_id == company.id, Insurer.active)
-                .limit(15)
-                .all()
-            ]
             return {
                 "covered": False,
                 "note": (
                     "No tenemos convenio con ese seguro. Decíselo con honestidad "
                     "y pasale el precio particular."
                 ),
-                "convenios_disponibles": disponibles,
+                "convenios_disponibles": aranceles.convenios_activos(db, company.id),
             }
 
         buscado = _normalizar(args.get("service", "")).strip()
@@ -683,35 +657,26 @@ def _execute_tool(
         if not service:
             return {"error": f"No encontré '{args.get('service')}' en el catálogo. Usá list_services."}
 
-        cobertura, copago, excluido = insurer.coverage_pct, insurer.copay_gs, False
-        override = (
-            db.query(ServiceCoverage)
-            .filter(
-                ServiceCoverage.company_id == company.id,
-                ServiceCoverage.insurer_id == insurer.id,
-                ServiceCoverage.service_id == service.id,
-            )
-            .first()
-        )
-        if override:
-            cobertura, copago, excluido = override.coverage_pct, override.copay_gs, override.excluded
-
-        if excluido:
-            return {
-                "service": service.name, "insurer": f"{insurer.name} {insurer.plan}".strip(),
-                "covered": False, "patient_pays": _fmt_gs(service.price_gs),
-                "note": "Este estudio NO está cubierto por ese convenio: se abona particular.",
-            }
         # El cálculo lo hace el servidor, no el modelo: un porcentaje mal
         # calculado en un precio es una discusión en la caja.
-        a_pagar = max(0, round(service.price_gs * (100 - cobertura) / 100) + copago)
+        cobertura = aranceles.cobertura_de(db, company.id, insurer, service)
+        montos = aranceles.repartir(service.price_gs, cobertura)
+        if cobertura.excluido:
+            return {
+                "service": service.name, "insurer": f"{insurer.name} {insurer.plan}".strip(),
+                "covered": False, "patient_pays": _fmt_gs(montos.paga_el_paciente_gs),
+                "note": "Este estudio NO está cubierto por ese convenio: se abona particular.",
+            }
         return {
             "service": service.name,
             "insurer": f"{insurer.name} {insurer.plan}".strip(),
             "covered": True,
             "list_price": _fmt_gs(service.price_gs),
-            "coverage_pct": cobertura,
-            "patient_pays": _fmt_gs(a_pagar) if a_pagar else "sin costo",
+            "coverage_pct": cobertura.cobertura_pct,
+            "patient_pays": (
+                _fmt_gs(montos.paga_el_paciente_gs)
+                if montos.paga_el_paciente_gs else "sin costo"
+            ),
             "prep": service.prep,
         }
 
@@ -1000,6 +965,12 @@ def _execute_tool(
         conversation.patient_name = nombre[:200]
         if not args.get("para_otra_persona") and not conversation.stated_name:
             conversation.stated_name = nombre[:200]
+        # Por qué convenio viene. El modelo pasa lo que DIJO el paciente y el
+        # servidor lo resuelve contra los convenios de esta empresa: si el
+        # modelo mandara un id, una alucinación de un número le cargaría la
+        # atención a la aseguradora equivocada, y eso se descubre recién
+        # cuando rechazan la planilla dos meses después.
+        convenio = aranceles.buscar_convenio(db, company.id, args.get("seguro", ""))
         appt = Appointment(
             company_id=company.id,
             doctor_id=doctor.id,
@@ -1007,6 +978,7 @@ def _execute_tool(
             patient_phone=phone,
             scheduled_at=when,
             service_id=servicio_id or None,
+            insurer_id=convenio.id if convenio else None,
             duration_min=veredicto["duracion_min"],
             verificacion=veredicto["verificacion"],
             status="pending",

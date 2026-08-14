@@ -206,6 +206,11 @@ class Doctor(Base):
     agenda_mode: Mapped[str] = mapped_column(String(15), default="libre")
     phone: Mapped[str] = mapped_column(String(50), default="")
     email: Mapped[str] = mapped_column(String(200), default="")
+    # Qué porcentaje de lo facturado le corresponde al profesional. En un
+    # sanatorio cobra una parte y la institución retiene el resto; en su
+    # propio consultorio, 100. Es por profesional y no por clínica porque no
+    # todos arreglan igual.
+    honorario_pct: Mapped[int] = mapped_column(default=100)
     # Verificación contra el padrón público de especialistas certificados.
     # "unverified" = todavía no se buscó; "not_found" = se buscó y no figura.
     # La diferencia importa: no es lo mismo no haber mirado que haber mirado
@@ -235,9 +240,17 @@ class Doctor(Base):
 class Appointment(Base):
     __tablename__ = "appointments"
     __table_args__ = (
+        # Habilita que la planilla de honorarios cite una atención con clave
+        # compuesta, y así una planilla no pueda apuntar a la atención de
+        # otra empresa.
+        UniqueConstraint("company_id", "id", name="uq_appointment_company_id"),
         ForeignKeyConstraint(
             ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
             name="fk_appointments_doctor_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "insurer_id"], ["insurers.company_id", "insurers.id"],
+            name="fk_appointments_insurer_tenant",
         ),
     )
 
@@ -256,6 +269,9 @@ class Appointment(Base):
     # "sin_verificar" = el doctor no tiene horario estructurado; la cita vale
     # como PEDIDO de turno y recepción lo confirma. El bot no promete.
     verificacion: Mapped[str] = mapped_column(String(20), default="sin_verificar")
+    # Por qué convenio vino. NULL = particular, que no es un dato faltante:
+    # es la mitad de los pacientes y va en su propia planilla.
+    insurer_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|confirmed|cancelled|attended|no_show
     reminder_status: Mapped[str] = mapped_column(String(15), default="scheduled")
     notes: Mapped[str] = mapped_column(Text, default="")
@@ -589,6 +605,103 @@ class ServiceCoverage(Base):
     # Hay estudios que el convenio directamente no cubre: decirlo es mejor que
     # que el paciente se entere en la caja.
     excluded: Mapped[bool] = mapped_column(default=False)
+
+
+class FeeBatch(Base):
+    """Planilla de honorarios: lo que una aseguradora le debe a un profesional.
+
+    En Paraguay el profesional no cobra atención por atención: junta las del
+    período, las separa POR ASEGURADORA —cada una recibe su propia planilla,
+    con su formato y su circuito—, la firma y la entrega. Recién ahí cobra.
+
+    Por eso la planilla no es una consulta que se recalcula cada vez que se
+    abre: es un documento. Los montos quedan congelados en sus ítems al
+    armarla. Si mañana cambia el precio de la ecografía o el convenio pasa
+    de 80% a 70%, lo que ya se firmó y se entregó no puede moverse.
+
+    `insurer_id` NULL significa "particulares": no es un dato faltante, es la
+    planilla de lo que el profesional cobró de bolsillo del paciente.
+    """
+
+    __tablename__ = "fee_batches"
+    __table_args__ = (
+        UniqueConstraint("company_id", "id", name="uq_fee_batch_company_id"),
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_fee_batch_doctor_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "insurer_id"], ["insurers.company_id", "insurers.id"],
+            name="fk_fee_batch_insurer_tenant",
+        ),
+        CheckConstraint("desde <= hasta", name="ck_fee_batch_periodo"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    doctor_id: Mapped[int] = mapped_column(index=True)
+    insurer_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # Se guarda el nombre además del id: una aseguradora que se da de baja no
+    # puede dejar una planilla firmada sin saber a quién se le entregó.
+    insurer_nombre: Mapped[str] = mapped_column(String(200), default="Particulares")
+    desde: Mapped[date]
+    hasta: Mapped[date]
+    # borrador → firmada → entregada → cobrada. Solo un borrador se puede
+    # borrar o rearmar; lo firmado es un documento.
+    estado: Mapped[str] = mapped_column(String(12), default="borrador", index=True)
+    total_facturado_gs: Mapped[int] = mapped_column(default=0)
+    total_honorario_gs: Mapped[int] = mapped_column(default=0)
+    honorario_pct: Mapped[int] = mapped_column(default=100)
+    # "Firmar" acá NO es una firma digital: es que el profesional dio por
+    # buena la planilla y la congeló. La firma de puño va en el papel que se
+    # imprime. Decirle firma digital a esto sería mentir sobre su valor legal.
+    firmada_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    firmada_por: Mapped[int | None] = mapped_column(nullable=True)
+    entregada_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    cobrada_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    notas: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class FeeBatchItem(Base):
+    """Una atención dentro de una planilla, con los montos congelados.
+
+    La restricción única sobre (company_id, appointment_id) es la que sostiene
+    todo: una atención se cobra UNA vez. Sin ella, rearmar una planilla o
+    superponer dos períodos factura dos veces la misma consulta, y eso no es
+    un error de software: es una nota de crédito y una discusión con la
+    aseguradora.
+    """
+
+    __tablename__ = "fee_batch_items"
+    __table_args__ = (
+        UniqueConstraint("company_id", "appointment_id", name="uq_fee_item_atencion"),
+        ForeignKeyConstraint(
+            ["company_id", "batch_id"], ["fee_batches.company_id", "fee_batches.id"],
+            name="fk_fee_item_batch_tenant", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "appointment_id"],
+            ["appointments.company_id", "appointments.id"],
+            name="fk_fee_item_appointment_tenant",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    batch_id: Mapped[int] = mapped_column(index=True)
+    appointment_id: Mapped[int] = mapped_column(index=True)
+    # Copias, no referencias: la planilla tiene que poder leerse dentro de un
+    # año aunque el paciente se haya borrado o el estudio cambiado de nombre.
+    atendido_at: Mapped[datetime]
+    paciente: Mapped[str] = mapped_column(String(200))
+    servicio: Mapped[str] = mapped_column(String(200), default="")
+    precio_lista_gs: Mapped[int] = mapped_column(default=0)
+    facturado_gs: Mapped[int] = mapped_column(default=0)
+    honorario_gs: Mapped[int] = mapped_column(default=0)
+    # Por qué el monto es ese. Un profesional que ve un número que no espera
+    # tiene que poder saber si salió del convenio o de una excepción.
+    origen_arancel: Mapped[str] = mapped_column(String(40), default="")
 
 
 class Prescription(Base):
