@@ -235,7 +235,7 @@ export function MedicalAgendaView(
       </div>
 
       {showAddDoctor && (
-        <AddDoctorModal companyId={companyId} onClose={() => setShowAddDoctor(false)} onSaved={load} />
+        <AddDoctorModal companyId={companyId} modules={modules} onClose={() => setShowAddDoctor(false)} onSaved={load} />
       )}
       {showImport && (
         <DoctorImportModal companyId={companyId} onClose={() => setShowImport(false)} onSaved={load} />
@@ -267,13 +267,20 @@ export function MedicalAgendaView(
   );
 }
 
-export function AddDoctorModal({ companyId, onClose, onSaved }: { companyId: number; onClose: () => void; onSaved: () => void }) {
+export function AddDoctorModal({ companyId, modules = [], onClose, onSaved }: {
+  companyId: number; modules?: string[]; onClose: () => void; onSaved: () => void;
+}) {
   const [form, setForm] = useState({ name: "", specialty: "", schedule: "", phone: "", email: "" });
+  // Qué parte de lo facturado le queda al profesional. Solo aparece si la
+  // clínica compró el bloque que liquida honorarios: sin él, el número no
+  // afecta nada y preguntarlo es ruido.
+  const [honorarioPct, setHonorarioPct] = useState(100);
+  const liquidaHonorarios = modules.includes("portal");
   const [error, setError] = useState("");
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.createDoctor(companyId, form);
+      await api.createDoctor(companyId, { ...form, honorario_pct: honorarioPct });
       onSaved();
       onClose();
     } catch (err) {
@@ -290,6 +297,19 @@ export function AddDoctorModal({ companyId, onClose, onSaved }: { companyId: num
               onChange={(e) => setForm({ ...form, [k]: e.target.value })} />
           </div>
         ))}
+        {liquidaHonorarios && (
+          <div>
+            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block mb-1">
+              Honorario del profesional (%)
+            </label>
+            <input className={input} type="number" min={0} max={100} value={honorarioPct}
+              onChange={(e) => setHonorarioPct(Number(e.target.value))} />
+            <p className="text-[10px] text-zinc-600 mt-1">
+              Qué parte de lo facturado le queda a él. 100 = cobra todo (consultorio propio);
+              en un sanatorio suele ser menos porque la institución retiene una parte.
+            </p>
+          </div>
+        )}
         {error && <p className="text-red-400 text-xs">{error}</p>}
         <div className="flex justify-end gap-3 pt-3 border-t border-white/5">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white">Cancelar</button>

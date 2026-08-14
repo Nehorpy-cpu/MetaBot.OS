@@ -174,6 +174,8 @@ export interface Doctor {
   // "libre" = todavía no cargó su horario: sus turnos se toman como pedido y
   // el bot no puede rechazar un domingo a las 23:00.
   agenda_mode?: "libre" | "estructurado";
+  /** Qué parte de lo facturado le queda al profesional (0-100). */
+  honorario_pct?: number;
 }
 
 export interface Franja {
