@@ -8,6 +8,7 @@ Son datos clínicos, así que las pruebas cuidan dos cosas por igual: que la
 información esté, y que no llegue a quien no corresponde.
 """
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -19,6 +20,7 @@ que solo compró la agenda recibe 402 en estos endpoints, no el resumen."""
 
 
 from app import previsita
+from app.config import TIMEZONE
 from app.db import SessionLocal
 from app.models import (
     Appointment, Company, Doctor, Prescription, PrescriptionItem, Service,
@@ -584,3 +586,61 @@ def test_el_resumen_se_programa_aunque_el_turno_sea_para_hoy():
     antes_del_return = fuente.split("if run_at <= now")[0]
     assert "schedule_previsita" in antes_del_return, \
         "el resumen quedó detrás del early return del recordatorio"
+
+
+def test_la_receta_de_esta_manana_aparece_en_el_turno_de_la_tarde():
+    """Las citas se guardan en hora de Paraguay y las recetas en UTC.
+
+    Comparándolas crudas, una receta cargada a las 09:00 queda registrada como
+    12:00 y "todavía no existe" para un turno de las 10:00 del mismo día: el
+    doctor abre el resumen y no ve lo que él mismo acaba de recetar. No falla
+    nada — simplemente falta.
+    """
+    from datetime import timezone as _tz
+
+    company = _create_company(name="Clínica Dos Relojes", packs=PORTAL)
+    cid = company["id"]
+    doc = _doctor(cid)
+
+    hoy = datetime.now()
+    manana_temprano = hoy.replace(hour=9, minute=0, second=0, microsecond=0)
+    turno_tarde = hoy.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    db = SessionLocal()
+    try:
+        # Cargada a las 09:00 hora de Paraguay = 12:00 UTC, que es como se
+        # guarda. Con el turno de las 16:00 LOCAL, 12:00 < 16:00 y entra;
+        # sin la conversión se comparaba 12:00 contra 16:00 igual, pero un
+        # turno de las 10:00 quedaba afuera. Se prueba ese caso.
+        receta = Prescription(
+            company_id=cid, doctor_id=doc["id"], patient_name="Rosa Duarte",
+            patient_phone="595981447722", diagnosis="Hipertensión arterial leve",
+            issued_at=manana_temprano.replace(tzinfo=ZoneInfo(TIMEZONE))
+            .astimezone(_tz.utc).replace(tzinfo=None),
+        )
+        db.add(receta)
+        db.flush()
+        db.add(PrescriptionItem(
+            company_id=cid, prescription_id=receta.id,
+            medication="Enalapril 10mg", dose="1 comprimido", every_hours=24,
+        ))
+        # Una visita anterior, para que no sea "primera vez".
+        db.add(Appointment(
+            company_id=cid, doctor_id=doc["id"], patient_name="Rosa Duarte",
+            patient_phone="595981447722", scheduled_at=hoy - timedelta(days=40),
+            status="attended",
+        ))
+        db.add(Appointment(
+            company_id=cid, doctor_id=doc["id"], patient_name="Rosa Duarte",
+            patient_phone="595981447722", scheduled_at=turno_tarde, status="confirmed",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.get(f"/api/companies/{cid}/doctors/{doc['id']}/pre-visit",
+                   params={"on_date": hoy.date().isoformat()})
+    assert r.status_code == 200, r.text
+    ficha = next(f for f in r.json()["pacientes"] if f["paciente"] == "Rosa Duarte")
+    assert ficha["ultima_receta"], "la receta de esta mañana no llegó al resumen"
+    assert ficha["ultima_receta"]["diagnostico"] == "Hipertensión arterial leve"

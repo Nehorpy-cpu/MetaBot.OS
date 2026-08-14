@@ -51,6 +51,14 @@ def _mi_doctor(db: Session, company_id: int, identity: Identity) -> Doctor:
         .first()
     )
     if not miembro or not miembro.doctor_id:
+        if identity.is_platform:
+            # El operador de la plataforma no ES un médico. Que el mensaje lo
+            # diga: si no, parece que se rompió algo del vínculo.
+            raise HTTPException(
+                403,
+                "Sos el operador de la plataforma, no un profesional: "
+                "indicá de quién querés ver el portal con ?doctor_id=",
+            )
         raise HTTPException(
             403, "Tu usuario no está vinculado a ningún profesional de esta empresa."
         )

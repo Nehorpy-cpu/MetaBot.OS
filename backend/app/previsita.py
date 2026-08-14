@@ -24,7 +24,7 @@ personas que comparten un celular comparten historial. Por eso el resumen dice
 import logging
 import re
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
@@ -68,6 +68,20 @@ def _telefono(valor: str) -> str:
     elif d.startswith("0"):
         d = d[1:]
     return d
+
+
+def _a_utc(local_ingenuo: datetime) -> datetime:
+    """Hora de la agenda (Paraguay) → UTC, para comparar contra `issued_at`.
+
+    La agenda se guarda en hora local —es lo que el paciente dice y lo que el
+    panel muestra— y las recetas en UTC. Mezclar los dos relojes es un error
+    silencioso: no falla nada, simplemente falta una receta.
+    """
+    return (
+        local_ingenuo.replace(tzinfo=ZoneInfo(TIMEZONE))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
 
 
 def _clave_de_nombre(nombre: str) -> str:
@@ -159,6 +173,12 @@ def _ultima_receta(db: Session, company_id: int, telefono: str, nombre: str,
     digitos = _telefono(telefono)
     if len(digitos) < 6:
         return None, []
+    # `antes_de` viene de `Appointment.scheduled_at`, que se guarda en hora de
+    # Paraguay; `Prescription.issued_at` se guarda en UTC. Compararlos crudos
+    # es mezclar dos relojes: la receta que el doctor cargó ESTA mañana queda
+    # "3 horas en el futuro" y desaparece del resumen del turno de la tarde,
+    # que es justo cuando más la necesita.
+    antes_de = _a_utc(antes_de)
     desde = antes_de - timedelta(days=MESES_DE_HISTORIAL * 30)
     recetas = (
         db.query(Prescription)
