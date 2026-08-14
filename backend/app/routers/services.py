@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Company, Doctor, DoctorService, Service
+from ..models import Appointment, Company, Doctor, DoctorService, Service
 from .. import industry_catalog
 from ..packs import industry_services
 
@@ -162,6 +162,37 @@ def delete_service(company_id: int, service_id: int, db: Session = Depends(get_d
     service = db.get(Service, service_id)
     if not service or service.company_id != company_id:
         raise HTTPException(404, "Servicio no encontrado")
+
+    # Un servicio con atenciones cargadas NO se borra: se desactiva.
+    #
+    # `Appointment.service_id` no tiene clave foránea —se guarda suelto—, así
+    # que borrarlo dejaba las citas apuntando a la nada. Nada fallaba: la
+    # liquidación del mes pasado simplemente no encontraba el precio y le
+    # facturaba ₲ 0 al profesional por una ecografía que sí cobró la clínica.
+    # Desactivarlo saca el servicio del catálogo y del bot igual, y conserva
+    # el precio de lo ya atendido.
+    usado = (
+        db.query(Appointment)
+        .filter(
+            Appointment.company_id == company_id,
+            Appointment.service_id == service_id,
+        )
+        .count()
+    )
+    if usado:
+        raise HTTPException(
+            409,
+            {
+                "motivo": (
+                    f"Este servicio ya tiene {usado} turno(s) cargados. Borrarlo "
+                    "les sacaría el precio y el profesional cobraría de menos. "
+                    "Desactivalo: sale del catálogo y del bot igual."
+                ),
+                "codigo": "servicio_en_uso",
+                "turnos": usado,
+            },
+        )
+
     db.query(DoctorService).filter(DoctorService.service_id == service_id).delete()
     db.delete(service)
     db.commit()

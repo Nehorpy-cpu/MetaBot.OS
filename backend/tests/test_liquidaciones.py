@@ -16,7 +16,9 @@ from tests.test_portal import _acceso, _doctor
 from tests.test_tenancy import _login, _make_user
 
 from app.db import SessionLocal
-from app.models import Appointment, Doctor, Insurer, Service
+from app.models import (
+    Appointment, Doctor, FeeBatch, FeeBatchItem, Insurer, Service, ServiceCoverage,
+)
 
 PORTAL = ["booking", "healthcare", "practitioner"]
 
@@ -413,3 +415,159 @@ def test_el_copago_no_se_le_factura_a_la_aseguradora():
     assert grupo["total_facturado_gs"] == 70_000
     item = grupo["items"][0]
     assert item["paga_el_paciente_gs"] == 30_000 + 15_000
+
+
+# ─── Lo que encontró la auditoría adversaria ─────────────────────────────
+
+
+def _excluir(cid: int, insurer_id: int, service_id: int):
+    """El convenio existe pero ESE estudio no está cubierto."""
+    db = SessionLocal()
+    try:
+        db.add(ServiceCoverage(company_id=cid, insurer_id=insurer_id,
+                               service_id=service_id, coverage_pct=0,
+                               copay_gs=0, excluded=True))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_un_estudio_excluido_se_liquida_como_particular():
+    """El caso más caro que encontró la auditoría.
+
+    El convenio cubre 80% en general, pero ESE estudio está excluido: el
+    paciente lo abona entero en caja, como cualquier particular. Que la
+    atención tenga `insurer_id` solo dice por qué convenio vino la persona,
+    no quién pagó.
+
+    Antes se tomaba `paga_el_seguro_gs`, que para un excluido vale 0: el
+    profesional cobraba CERO por una resonancia de 850.000 que el paciente ya
+    había pagado, y el renglón se le entregaba a la aseguradora que
+    justamente no la cubre. No fallaba nada — la planilla salía prolija, en
+    cero, y se firmaba.
+    """
+    c = _clinica("Sanatorio Excluido")
+    cid = c["id"]
+    doc = _doctor(cid, "Dra. Excluida")
+    _pct(cid, doc["id"], 60)
+    reso = _servicio(cid, "Resonancia", 850_000)
+    nanduti = _convenio(cid, "Seguro Ñandutí", "Plan Oro", pct=80)
+    _excluir(cid, nanduti, reso)
+    _atencion(cid, doc["id"], "Paciente Excluido", 9, reso, nanduti)
+
+    portal = _acceso(cid, doc["id"], "excluida@test.py")
+    datos = _preview(portal, cid)
+
+    assert datos["total_facturado_gs"] == 850_000, "el paciente pagó todo y se liquidó 0"
+    assert datos["total_honorario_gs"] == 510_000, "60% de 850.000"
+    # Y va con los particulares, que es de donde salió la plata: no en la
+    # planilla que se le entrega a Ñandutí.
+    assert [g["aseguradora"] for g in datos["grupos"]] == ["Particulares"]
+    item = datos["grupos"][0]["items"][0]
+    assert item["origen_arancel"] == "excluido del convenio: se abona particular"
+
+
+def test_no_se_borra_un_servicio_que_ya_tiene_turnos():
+    """`Appointment.service_id` se guarda suelto, sin clave foránea.
+
+    Borrar el servicio dejaba las citas apuntando a la nada y la liquidación
+    del mes pasado le facturaba ₲ 0 al profesional por un estudio que la
+    clínica sí cobró. Nada fallaba.
+    """
+    c = _clinica("Sanatorio Catálogo")
+    cid = c["id"]
+    doc = _doctor(cid, "Dr. Catálogo")
+    eco = _servicio(cid, "Ecografía", 250_000)
+    _atencion(cid, doc["id"], "Paciente Con Eco", 11, eco)
+
+    r = client.delete(f"/api/companies/{cid}/services/{eco}")
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["codigo"] == "servicio_en_uso"
+
+    # Se desactiva, que saca el servicio del catálogo y del bot igual y le
+    # conserva el precio a lo ya atendido.
+    assert client.patch(f"/api/companies/{cid}/services/{eco}",
+                        json={"active": False}).status_code == 200
+    portal = _acceso(cid, doc["id"], "catalogo@test.py")
+    assert _preview(portal, cid)["total_facturado_gs"] == 250_000
+
+
+def test_un_servicio_sin_turnos_se_sigue_borrando():
+    """La guarda es para lo que tiene historia, no para todo."""
+    c = _clinica("Sanatorio Catálogo Limpio")
+    cid = c["id"]
+    sobra = _servicio(cid, "Servicio Cargado Por Error", 1_000)
+    assert client.delete(f"/api/companies/{cid}/services/{sobra}").status_code == 204
+
+
+def test_el_choque_con_dos_aseguradoras_da_409_y_no_500(monkeypatch):
+    """La ventana entre el preview y el insert, con más de una aseguradora.
+
+    `crear` hace un flush por grupo, así que el choque contra
+    `uq_fee_item_atencion` de un grupo que no es el último se levanta DENTRO
+    de `crear`. Envolviendo solo el `commit`, el `except IntegrityError` era
+    código muerto ahí: dos clics en "Armar" devolvían un 500 sin explicación
+    en vez del 409 que dice qué pasó.
+
+    La carrera se reproduce dejando ciega la consulta de lo ya liquidado, que
+    es exactamente lo que le pasa a la segunda transacción: leyó antes de que
+    la primera commiteara.
+    """
+    c = _clinica("Sanatorio Carrera")
+    cid = c["id"]
+    doc = _doctor(cid, "Dra. Carrera")
+    consulta = _servicio(cid, "Consulta", 100_000)
+    # Se ordenan alfabéticamente: "Aseguradora Dos" arma el primer grupo, y el
+    # error tiene que caer ahí para levantarse en el flush del segundo.
+    dos = _convenio(cid, "Aseguradora Dos", pct=100)
+    uno = _convenio(cid, "Aseguradora Uno", pct=100)
+    choca = _atencion(cid, doc["id"], "Paciente Dos", 13, consulta, dos)
+    _atencion(cid, doc["id"], "Paciente Uno", 14, consulta, uno)
+
+    portal = _acceso(cid, doc["id"], "carrera@test.py")
+
+    # Esa atención ya está en otra planilla…
+    db = SessionLocal()
+    try:
+        otra = FeeBatch(company_id=cid, doctor_id=doc["id"], insurer_id=None,
+                        insurer_nombre="Particulares", desde=DESDE, hasta=HASTA,
+                        estado="borrador", honorario_pct=100)
+        db.add(otra)
+        db.flush()
+        db.add(FeeBatchItem(company_id=cid, batch_id=otra.id, appointment_id=choca,
+                            atendido_at=datetime(2026, 7, 13, 10, 0),
+                            paciente="Paciente Dos", servicio="Consulta",
+                            precio_lista_gs=100_000, facturado_gs=100_000,
+                            honorario_gs=100_000, origen_arancel="particular"))
+        db.commit()
+    finally:
+        db.close()
+
+    # …pero esta transacción no la ve, como en la carrera real.
+    from app import honorarios as _h
+
+    monkeypatch.setattr(_h, "_ya_liquidadas", lambda *a, **k: set())
+
+    r = _armar(portal, cid)
+    assert r.status_code == 409, f"dio {r.status_code}, no el 409 que explica qué pasó"
+    assert r.json()["detail"]["codigo"] == "atencion_ya_liquidada"
+
+
+def test_un_profesional_no_lista_los_accesos_de_sus_colegas():
+    """El POST exigía permiso y el GET quedó abierto: el modo de falla clásico
+    de mirar solo la escritura. Lo que se filtraba era el padrón interno de
+    cuentas de la clínica: nombre y correo de cada médico."""
+    c = _clinica("Sanatorio Accesos")
+    cid = c["id"]
+    ana = _doctor(cid, "Dra. Ana Accesos")
+    beto = _doctor(cid, "Dr. Beto Accesos")
+    _acceso(cid, ana["id"], "ana.accesos@test.py")
+    portal_beto = _acceso(cid, beto["id"], "beto.accesos@test.py")
+
+    assert portal_beto.get(f"/api/companies/{cid}/portal/accesos").status_code == 403
+
+    # El dueño sí, que es quien los administra.
+    _make_user("dueno-accesos@test.py", cid, role="owner")
+    dueno = _login("dueno-accesos@test.py")
+    correos = [a["email"] for a in dueno.get(f"/api/companies/{cid}/portal/accesos").json()]
+    assert "ana.accesos@test.py" in correos

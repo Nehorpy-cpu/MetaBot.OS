@@ -281,6 +281,27 @@ class AccesoNuevo(BaseModel):
     email: str = Field(min_length=5, max_length=320)
 
 
+def _puede_dar_accesos(db: Session, company_id: int, identity: Identity) -> None:
+    """Administrar los logins de los profesionales es de la empresa.
+
+    En UNA función y usada por el alta Y por el listado: tenerlo escrito dos
+    veces es cómo se llega a que uno lo chequee y el otro no.
+    """
+    if identity.is_platform:
+        return
+    miembro = (
+        db.query(Membership)
+        .filter(
+            Membership.user_id == identity.user_id,
+            Membership.company_id == company_id,
+            Membership.status == "active",
+        )
+        .first()
+    )
+    if not miembro or not role_has(miembro.role, Perm.MANAGE_MEMBERS):
+        raise HTTPException(403, "Solo el dueño de la empresa administra los accesos")
+
+
 @router.post("/accesos", status_code=201)
 def crear_acceso(
     company_id: int,
@@ -295,18 +316,7 @@ def crear_acceso(
     genera en el servidor: una clave que elige un tercero es una clave que
     ese tercero conoce.
     """
-    if not identity.is_platform:
-        miembro = (
-            db.query(Membership)
-            .filter(
-                Membership.user_id == identity.user_id,
-                Membership.company_id == company_id,
-                Membership.status == "active",
-            )
-            .first()
-        )
-        if not miembro or not role_has(miembro.role, Perm.MANAGE_MEMBERS):
-            raise HTTPException(403, "Solo el dueño de la empresa da accesos")
+    _puede_dar_accesos(db, company_id, identity)
 
     doctor = db.get(Doctor, payload.doctor_id)
     if not doctor or doctor.company_id != company_id:
@@ -372,7 +382,15 @@ def listar_accesos(
     identity: Identity = Depends(get_identity),
     db: Session = Depends(get_db),
 ):
-    """Qué profesionales tienen login. Sin claves ni hashes, obviamente."""
+    """Qué profesionales tienen login. Sin claves ni hashes, obviamente.
+
+    Exige el mismo permiso que crearlos. Sin este chequeo, cualquier médico
+    —que el middleware deja entrar a todo lo que empiece con /portal— se
+    llevaba el padrón interno de cuentas de la clínica: nombre y correo de
+    cada colega. El POST sí lo pedía; el GET quedó abierto, que es el modo
+    de falla clásico de mirar solo la escritura.
+    """
+    _puede_dar_accesos(db, company_id, identity)
     filas = (
         db.query(Membership, User, Doctor)
         .join(User, User.id == Membership.user_id)
@@ -505,17 +523,23 @@ def armar_honorarios(
     company = _company(db, company_id)
     doctor = _doctor_pedido(db, company_id, identity, doctor_id)
     d, h = _periodo(desde, hasta)
-    creadas = honorarios.crear(db, company, doctor, d, h, identity.user_id)
-    if not creadas:
-        db.rollback()
-        raise HTTPException(
-            409,
-            {
-                "motivo": "No hay atenciones para liquidar en ese período.",
-                "codigo": "sin_atenciones",
-            },
-        )
+    # `crear` va DENTRO del try: hace un flush por cada aseguradora, así que
+    # con dos o más el choque contra `uq_fee_item_atencion` se levanta ahí
+    # adentro y no en el commit. Envolviendo solo el commit, este except era
+    # código muerto para toda planilla de más de un grupo, y dos clics en
+    # "Armar" devolvían un 500 sin explicación en vez del 409 que dice qué
+    # pasó.
     try:
+        creadas = honorarios.crear(db, company, doctor, d, h, identity.user_id)
+        if not creadas:
+            db.rollback()
+            raise HTTPException(
+                409,
+                {
+                    "motivo": "No hay atenciones para liquidar en ese período.",
+                    "codigo": "sin_atenciones",
+                },
+            )
         db.commit()
     except IntegrityError:
         db.rollback()

@@ -82,22 +82,38 @@ def _calcular_item(db: Session, company_id: int, cita: Appointment,
     service = servicios.get(cita.service_id) if cita.service_id else None
     insurer = convenios.get(cita.insurer_id) if cita.insurer_id else None
 
-    if insurer is not None:
-        cobertura = aranceles.cobertura_de(db, company_id, insurer, service)
+    cobertura = (
+        aranceles.cobertura_de(db, company_id, insurer, service)
+        if insurer is not None else None
+    )
+    # Un estudio EXCLUIDO del convenio se abona particular: la aseguradora no
+    # pone nada y el paciente paga todo en caja. Que la atención tenga
+    # `insurer_id` solo dice por qué convenio vino la persona, no quién pagó.
+    #
+    # Tratándolo como cobertura del seguro, el profesional cobraba CERO por
+    # una resonancia de 850.000 que el paciente ya había pagado, y el renglón
+    # se le entregaba a la aseguradora que justamente no la cubre. No fallaba
+    # nada: la planilla salía prolija, en cero, y se firmaba.
+    excluido = bool(cobertura and cobertura.excluido)
+
+    if insurer is not None and not excluido:
         montos = aranceles.repartir(service.price_gs if service else 0, cobertura)
         # Lo que el profesional le factura a la aseguradora es lo que la
         # aseguradora cubre. El copago lo cobra la clínica en caja: por eso
         # va aparte y no sumado acá.
         facturado = montos.paga_el_seguro_gs
-        origen = "excluido del convenio" if cobertura.excluido else cobertura.origen
+        origen = cobertura.origen
     else:
-        # Particular: el paciente paga el precio de lista.
+        # Particular, o excluido —que económicamente es lo mismo—.
         montos = aranceles.repartir(service.price_gs if service else 0, None)
         facturado = montos.paga_el_paciente_gs
-        origen = "particular"
+        origen = "excluido del convenio: se abona particular" if excluido else "particular"
 
     return {
         "appointment_id": cita.id,
+        # En qué planilla cae. No es `cita.insurer_id`: un excluido va con los
+        # particulares, que es de donde salió la plata.
+        "grupo": None if excluido else cita.insurer_id,
         "atendido_at": cita.scheduled_at,
         "paciente": cita.patient_name,
         "servicio": service.name if service else "",
@@ -143,7 +159,7 @@ def preview(db: Session, company: Company, doctor: Doctor,
         item = _calcular_item(
             db, company.id, cita, servicios, convenios, doctor.honorario_pct
         )
-        clave = cita.insurer_id
+        clave = item["grupo"]
         grupo = grupos.setdefault(clave, {
             "insurer_id": clave,
             "aseguradora": (
