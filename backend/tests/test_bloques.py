@@ -29,7 +29,8 @@ def test_las_dependencias_se_resuelven_en_cadena():
     PACKS.update({p.key: p for p in (a, b, c)})
     try:
         resueltos = [p.key for p in active_packs(_EmpresaFalsa("_c"))]
-        assert resueltos == ["_a", "_b", "_c"], f"cadena mal resuelta: {resueltos}"
+        # `core` va siempre adelante; lo que importa es el orden de la cadena.
+        assert resueltos[-3:] == ["_a", "_b", "_c"], f"cadena mal resuelta: {resueltos}"
     finally:
         PACKS.clear()
         PACKS.update(originales)
@@ -49,7 +50,7 @@ def test_una_dependencia_circular_no_cuelga():
     PACKS.update({p.key: p for p in (a, b)})
     try:
         claves = [p.key for p in active_packs(_EmpresaFalsa("_x"))]
-        assert set(claves) == {"_x", "_y"}
+        assert {"_x", "_y"} <= set(claves)
     finally:
         PACKS.clear()
         PACKS.update(originales)
@@ -82,12 +83,19 @@ def test_cada_modulo_declarado_tiene_algo_detras():
     que hacerse antes de ponerle precio.
     """
     evidencia = {
+        "inbox": "tabla conversations/messages + ChatView",
+        "dashboard": "routers/dashboard.py + DashboardView",
+        "agents": "tabla agents + AgentsView",
         "catalog": "tabla products + CatalogView",
         "services": "tabla services + ServicesView",
         "agenda": "tabla appointments/doctor_schedules + MedicalAgendaView",
         "reminders": "job_handlers.REMINDER_KIND",
         "insurance": "tabla insurers + service_coverages",
         "prescriptions": "tabla prescriptions + ClinicalView",
+        "registry": "tabla medical_registry + registry.py",
+        "medication": "medication.py + job_handlers MEDICATION",
+        "previsita": "previsita.py + PreVisitModal",
+        "portal": "routers/portal.py (bloque 4)",
     }
     declarados = {m for p in PACKS.values() for m in p.modules}
     sin_evidencia = declarados - set(evidencia)

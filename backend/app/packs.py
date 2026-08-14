@@ -23,30 +23,35 @@ class Pack:
     requires: tuple[str, ...] = field(default_factory=tuple)
 
 
-COMMERCE = Pack(
-    key="commerce",
-    name="Comercio / Venta de productos",
-    description="Catálogo real con fotos, búsqueda por presupuesto y perfil, recomendación y pedidos.",
-    modules=("catalog",),
-    tools=("search_catalog",),
+CORE = Pack(
+    key="core",
+    name="Recepción Digital (núcleo)",
+    description="El bot que atiende el WhatsApp, con el catálogo y los servicios del negocio.",
+    # `services` vive acá y no en la agenda a propósito: una clínica que solo
+    # quiere que le contesten "¿hacen ecografía y cuánto sale?" tiene que poder
+    # cargar sus estudios con precio sin comprar el módulo de turnos. Además,
+    # las reglas sanitarias dicen "sale de list_services": esa herramienta no
+    # puede depender de un bloque que el cliente quizá no compró.
+    modules=("inbox", "dashboard", "agents", "services", "catalog"),
+    tools=("list_services", "search_catalog"),
     rules=(
-        "REGLAS DE VENTA (obligatorias):\n"
-        "- Nunca inventes producto, precio, stock ni promoción: usá search_catalog "
-        "y ofrecé SOLO lo que devuelva.\n"
-        "- Preguntá para quién es, qué perfil busca y hasta cuánto quiere gastar "
-        "antes de recomendar. Una pregunta por mensaje.\n"
-        "- Cuando muestres opciones, decí precio exacto y si hay stock.\n"
-        "- Si no hay nada en su presupuesto, decilo con honestidad y ofrecé lo más cercano."
+        "REGLAS DE LO QUE OFRECÉS (obligatorias):\n"
+        "- Nunca inventes un servicio, un producto, un precio, un stock ni una "
+        "promoción. Lo que ofrecés sale de las herramientas; si no está ahí, "
+        "no existe.\n"
+        "- Cuando muestres opciones, decí el precio exacto.\n"
+        "- Si no tenés lo que piden, decilo con honestidad y ofrecé lo más "
+        "cercano que sí tengas."
     ),
 )
+
 
 BOOKING = Pack(
     key="booking",
     name="Agenda / Reservas",
     description="Servicios, profesionales, disponibilidad, citas y recordatorios.",
-    modules=("services", "agenda", "reminders"),
-    tools=("list_services", "list_doctors", "check_agenda", "book_appointment",
-           "my_appointments"),
+    modules=("agenda", "reminders"),
+    tools=("list_doctors", "check_agenda", "book_appointment", "my_appointments"),
     rules=(
         "REGLAS DE AGENDA (obligatorias):\n"
         "- Consultá la disponibilidad real antes de ofrecer un horario. Nunca la inventes.\n"
@@ -70,7 +75,7 @@ HEALTHCARE = Pack(
     key="healthcare",
     name="Salud (encima de Agenda)",
     description="Reglas sanitarias: sin diagnósticos, urgencias derivadas, datos sensibles.",
-    modules=("insurance", "prescriptions"),
+    modules=("prescriptions", "insurance", "registry", "medication"),
     tools=("check_coverage", "get_prescription"),
     requires=("booking",),
     rules=(
@@ -98,37 +103,43 @@ HEALTHCARE = Pack(
     ),
 )
 
-TRAVEL = Pack(
-    key="travel",
-    name="Turismo / Viajes",
-    description="Destinos, paquetes, cotizaciones y seguimiento.",
-    modules=("catalog",),
-    tools=("search_catalog",),
-    rules=(
-        "REGLAS DE VIAJES:\n"
-        "- Precios y disponibilidad salen del catálogo real, nunca de tu memoria.\n"
-        "- Preguntá fechas, cantidad de personas y presupuesto antes de cotizar."
-    ),
+PRACTITIONER = Pack(
+    key="practitioner",
+    name="Portal del Profesional",
+    description="Cada profesional entra con su usuario y ve solo sus pacientes, sus recetas y su resumen del día.",
+    modules=("previsita", "portal"),
+    tools=(),
+    requires=("healthcare",),
+    rules="",
 )
 
-PACKS: dict[str, Pack] = {p.key: p for p in (COMMERCE, BOOKING, HEALTHCARE, TRAVEL)}
+
+PACKS: dict[str, Pack] = {
+    p.key: p for p in (CORE, BOOKING, HEALTHCARE, PRACTITIONER)
+}
 
 # Qué packs propone el Arquitecto de Negocio según el rubro detectado.
 VERTICAL_PACKS: dict[str, tuple[str, ...]] = {
+    # Qué bloques se le proponen a una empresa nueva según su rubro. El núcleo
+    # NO se lista: va siempre, lo compre quien lo compre.
     "medical": ("booking", "healthcare"),
-    "hospital": ("booking", "healthcare"),   # sanatorio: internación y quirófano
+    "hospital": ("booking", "healthcare"),   # sanatorio: varias especialidades
     "dental": ("booking", "healthcare"),
     "veterinary": ("booking", "healthcare"),
     "laboratory": ("booking", "healthcare"),  # análisis clínicos
     "imaging": ("booking", "healthcare"),     # diagnóstico por imágenes
-    "ecommerce": ("commerce",),
-    "retail": ("commerce",),
-    "construction": ("commerce",),
-    "beauty": ("booking", "commerce"),
-    "gastronomy": ("commerce",),
+    # Los rubros de comercio se quedan con el núcleo, que ya trae el catálogo
+    # y las reglas de venta. Antes apuntaban a un pack `commerce` que hoy no
+    # existe: sin este cambio resolvían a CERO packs y el bot se quedaba sin
+    # herramientas, en silencio.
+    "ecommerce": (),
+    "retail": (),
+    "construction": (),
+    "gastronomy": (),
+    "travel": (),
+    "beauty": ("booking",),
     "services": ("booking",),
     "education": ("booking",),
-    "travel": ("travel",),
 }
 
 
@@ -174,8 +185,9 @@ def industry_services(vertical: str) -> list[dict]:
 
 
 def suggested_for(vertical: str) -> list[str]:
-    """Packs propuestos para un rubro. Genéricos por defecto: comercio."""
-    return list(VERTICAL_PACKS.get(vertical, ("commerce",)))
+    """Bloques propuestos para un rubro. Un rubro desconocido se queda con el
+    núcleo, que es lo mínimo que sirve: bot, catálogo y servicios."""
+    return list(VERTICAL_PACKS.get(vertical, ()))
 
 
 def active_packs(company) -> list[Pack]:
@@ -187,6 +199,9 @@ def active_packs(company) -> list[Pack]:
     keys = [k for k in (company.packs or "").split(",") if k]
     if not keys:
         keys = suggested_for(company.vertical)
+    # El núcleo no se compra ni se apaga: es el bot, el catálogo y los
+    # servicios. Va primero para que sus reglas encabecen el prompt.
+    keys = ["core"] + [k for k in keys if k != "core"]
     resolved: list[str] = []
     # Los que se están resolviendo ahora. Sin esto, un `requires` circular
     # —A necesita B y B necesita A, que es un error de tipeo perfectamente

@@ -41,31 +41,32 @@ def test_healthcare_requires_booking():
         active = [p.key for p in packs.active_packs(db.get(Company, company["id"]))]
     finally:
         db.close()
-    assert active == ["booking", "healthcare"]
+    # El núcleo va primero SIEMPRE: no es un bloque que se compra, es el
+    # bot, el catálogo y los servicios que todos tienen.
+    assert active == ["core", "booking", "healthcare"]
 
 
 def test_tools_come_from_packs_not_from_vertical():
     company = _create_company(name="Negocio Genérico", vertical="ecommerce")
     cid = company["id"]
 
-    _set_packs(cid, "commerce")
-    commerce_tools = _tool_names(cid)
-    assert "search_catalog" in commerce_tools
-    assert "book_appointment" not in commerce_tools  # una tienda no agenda citas
+    # Solo el núcleo: vende, no agenda.
+    _set_packs(cid, "")
+    solo_nucleo = _tool_names(cid)
+    assert "search_catalog" in solo_nucleo
+    assert "list_services" in solo_nucleo
+    assert "book_appointment" not in solo_nucleo  # una tienda no agenda citas
 
+    # Con la agenda: gana los turnos y CONSERVA el catálogo del núcleo. Antes
+    # `list_services` vivía dentro de la agenda, así que quien no compraba ese
+    # bloque no podía ni decir cuánto sale un estudio.
     _set_packs(cid, "booking")
-    booking_tools = _tool_names(cid)
-    assert "book_appointment" in booking_tools
-    assert "check_agenda" in booking_tools
-    assert "search_catalog" not in booking_tools
+    con_agenda = _tool_names(cid)
+    assert {"book_appointment", "check_agenda", "my_appointments"} <= con_agenda
+    assert {"search_catalog", "list_services"} <= con_agenda
 
-    # Un negocio puede tener ambos (ej. peluquería que además vende productos)
-    _set_packs(cid, "commerce,booking")
-    both = _tool_names(cid)
-    assert {"search_catalog", "book_appointment"} <= both
-
-    # escalate_to_human siempre está, sea cual sea el pack
-    assert "escalate_to_human" in commerce_tools & booking_tools & both
+    # escalate_to_human siempre está, compre lo que compre
+    assert "escalate_to_human" in solo_nucleo & con_agenda
 
 
 def test_healthcare_rules_only_when_pack_active(monkeypatch):
@@ -83,11 +84,14 @@ def test_healthcare_rules_only_when_pack_active(monkeypatch):
     client.post(f"/api/companies/{cid}/chat", json={"contact_phone": "+595971777001", "text": "hola"})
     assert "JAMÁS des diagnósticos" in captured["system"]
 
-    # La misma empresa sin el pack de salud: sin reglas sanitarias
-    _set_packs(cid, "commerce")
+    # La misma empresa sin el bloque de salud: sin reglas sanitarias. Se pone
+    # un bloque explícito y no vacío, porque `packs=""` todavía cae al vertical
+    # y una empresa "medical" volvería a resolver healthcare.
+    _set_packs(cid, "booking")
     client.post(f"/api/companies/{cid}/chat", json={"contact_phone": "+595971777002", "text": "hola"})
     assert "JAMÁS des diagnósticos" not in captured["system"]
-    assert "REGLAS DE VENTA" in captured["system"]
+    # Las reglas del núcleo sí: no inventar lo que el negocio no ofrece.
+    assert "Nunca inventes un servicio" in captured["system"]
 
 
 def _seed_catalog(cid: int) -> None:

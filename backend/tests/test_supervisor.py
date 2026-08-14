@@ -162,18 +162,39 @@ def test_no_dispara_si_la_conversacion_ya_cerro():
     assert cerrada is None
 
 
-def test_venta_estancada_exige_herramientas_de_venta():
-    """El disparador se expresa sobre HERRAMIENTAS, no sobre el rubro.
+def test_la_conversacion_larga_sin_cerrar_se_supervisa_en_cualquier_rubro():
+    """Seis mensajes del cliente sin agendar ni pasar el caso a una persona es
+    un problema venda turnos o venda perfumes.
 
-    Una empresa sin packs que vendan (soporte puro) no tiene venta que
-    estancar. Ojo: `packs=""` NO es ese caso — `active_packs` cae al vertical
-    y toda empresa termina con commerce; hay que anular las herramientas.
+    Antes esto solo aplicaba a empresas con `search_catalog`, que venía del
+    pack de comercio. Esa herramienta pasó al núcleo —todo negocio puede decir
+    qué ofrece— así que la condición dejó de distinguir nada.
     """
     soporte = Company(id=2, name="Mesa de ayuda", vertical="other", packs="ninguno")
-    assert not packs_module.tools_for(soporte)
-    assert supervisor.detect(soporte, actions=[], reply_text="Claro, contame.",
-                             turnos_cliente=supervisor.STALL_TURNOS,
-                             rondas_agotadas=False) is None
+    t = supervisor.detect(soporte, actions=[], reply_text="Claro, contame.",
+                          turnos_cliente=supervisor.STALL_TURNOS,
+                          rondas_agotadas=False)
+    assert t is not None and t.key == "stalled_sale"
+
+
+def test_si_el_bot_cerro_o_escalo_no_hay_venta_estancada():
+    empresa = Company(id=3, name="Clínica", vertical="medical", packs="booking")
+    for herramienta in ("book_appointment", "escalate_to_human"):
+        t = supervisor.detect(
+            empresa, actions=[{"tool": herramienta, "result": {"ok": True}}],
+            reply_text="Listo.", turnos_cliente=supervisor.STALL_TURNOS,
+            rondas_agotadas=False)
+        assert t is None or t.key != "stalled_sale", herramienta
+
+
+def test_no_se_dispara_en_cada_turno_pasado_el_sexto():
+    """Es el disparador menos grave: si se repitiera, se comería el
+    presupuesto de supervisión de toda la conversación."""
+    empresa = Company(id=4, name="Clínica", vertical="medical", packs="booking")
+    t = supervisor.detect(empresa, actions=[], reply_text="Contame.",
+                          turnos_cliente=supervisor.STALL_TURNOS + 3,
+                          rondas_agotadas=False)
+    assert t is None or t.key != "stalled_sale"
 
 
 def test_riesgo_clinico_solo_con_pack_healthcare():

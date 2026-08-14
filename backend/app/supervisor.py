@@ -152,12 +152,19 @@ def detect(
     if rondas_agotadas or not (reply_text or "").strip() or _SIN_CONTENIDO_RE.match(reply_text or ""):
         disparados.append(_POR_KEY["dead_end"])
 
-    vendedora = bool({"search_catalog", "book_appointment"} & set(packs.tools_for(company)))
+    # Antes esto preguntaba si la empresa tenía `search_catalog`, que venía del
+    # pack de comercio. Esa herramienta pasó al núcleo —todo negocio puede
+    # decir qué ofrece—, así que la pregunta dejó de distinguir nada: TODA
+    # empresa daba positivo.
+    #
+    # La distinción que sí importa es otra: seis mensajes del cliente sin que
+    # el bot haya cerrado ni pasado el caso a una persona es un problema en
+    # cualquier rubro, venda turnos o venda perfumes. Se mide por eso.
     cerro = any(t in usadas for t in ("book_appointment", "escalate_to_human"))
     # `==` y no `>=`: si se disparara en cada turno a partir del sexto, este
     # disparador —el menos grave de todos— se comería el presupuesto de la
     # conversación y dejaría sin cupo a un riesgo clínico posterior.
-    if vendedora and turnos_cliente == STALL_TURNOS and not cerro:
+    if turnos_cliente == STALL_TURNOS and not cerro:
         disparados.append(_POR_KEY["stalled_sale"])
 
     if not disparados:
