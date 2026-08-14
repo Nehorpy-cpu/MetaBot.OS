@@ -47,19 +47,44 @@ def upgrade() -> None:
     ).fetchall()
 
     for company_id, nombre, packs_actual in empresas:
+        # Se PARTE de lo que la empresa ya tiene y solo se AGREGA. Un ensayo
+        # contra la copia de producción mostró por qué: Centro Médico Asunción
+        # tiene el bloque clínico asignado pero todavía no cargó ninguna
+        # receta, así que una regla guiada solo por datos se lo quitaba. Nadie
+        # puede perder por esta migración algo que hoy tiene.
+        actuales = {k for k in (packs_actual or "").split(",") if k}
         bloques = ["core"]
-        # Agenda: tiene profesionales cargados o turnos tomados.
-        if _hay(conexion, "doctors", company_id) or _hay(conexion, "appointments", company_id):
+
+        # Los packs viejos que ya no existen: `commerce` y `travel` quedaron
+        # absorbidos por el núcleo, que trae catálogo y reglas de venta. No se
+        # traducen a nada porque el núcleo va siempre.
+        if "booking" in actuales:
             bloques.append("booking")
-        # Clínico: emitió recetas o cargó convenios con seguros.
-        if _hay(conexion, "prescriptions", company_id) or _hay(conexion, "insurers", company_id):
+        if "healthcare" in actuales:
             if "booking" not in bloques:
-                bloques.append("booking")  # no hay receta sin médico
+                bloques.append("booking")   # no hay receta sin médico
             bloques.append("healthcare")
-        # El portal del profesional se les REGALA a los que ya tienen el
-        # bloque clínico. Quitarle una pantalla a alguien que ya la usa, por
-        # una decisión comercial nuestra, es la peor forma de estrenar el
-        # modelo por bloques. Quedan como clientes fundadores.
+
+        # Y se agrega lo que los datos justifican aunque no estuviera asignado:
+        # una empresa que ya tiene profesionales cargados usa la agenda, diga
+        # lo que diga su configuración.
+        if "booking" not in bloques and (
+            _hay(conexion, "doctors", company_id)
+            or _hay(conexion, "appointments", company_id)
+        ):
+            bloques.append("booking")
+        if "healthcare" not in bloques and (
+            _hay(conexion, "prescriptions", company_id)
+            or _hay(conexion, "insurers", company_id)
+        ):
+            if "booking" not in bloques:
+                bloques.append("booking")
+            bloques.append("healthcare")
+
+        # El portal del profesional se les REGALA a los que tienen el bloque
+        # clínico. Quitarle una pantalla a alguien que ya la usa, por una
+        # decisión comercial nuestra, es la peor forma de estrenar el modelo
+        # por bloques. Quedan como clientes fundadores.
         if "healthcare" in bloques:
             bloques.append("practitioner")
 
