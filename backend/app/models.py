@@ -49,12 +49,25 @@ class Membership(Base):
     """ÚNICA fuente de verdad de qué usuario accede a qué empresa."""
 
     __tablename__ = "memberships"
-    __table_args__ = (UniqueConstraint("user_id", "company_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id"),
+        # Compuesta con company_id: sin esto, un usuario de la clínica A
+        # podría quedar apuntado al doctor de la clínica B con un id suelto,
+        # y el portal le mostraría los pacientes de otro tenant.
+        ForeignKeyConstraint(
+            ["company_id", "doctor_id"], ["doctors.company_id", "doctors.id"],
+            name="fk_memberships_doctor_tenant",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
-    role: Mapped[str] = mapped_column(String(10), default="operator")
+    role: Mapped[str] = mapped_column(String(14), default="operator")
+    # Solo para el rol `professional`: a qué profesional corresponde este
+    # usuario. Es lo que hace que un médico vea SUS pacientes y no los del
+    # colega de al lado.
+    doctor_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(10), default="active")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 

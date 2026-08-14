@@ -15,14 +15,15 @@ from .auth import resolve_identity
 from .config import ADMIN_TOKEN
 from .llm import available_providers
 from .models import Company, Membership
-from .routers import agents, auth, blocks, bridge, campaigns, catalog, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
+from .permissions import Role
+from .routers import agents, auth, blocks, bridge, campaigns, catalog, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, portal, services, whatsapp_webhook
 from .scheduler import _start_job_worker, start_scheduler
 
 # El esquema lo gestiona Alembic (entrypoint.sh corre `alembic upgrade head`).
 # Una sola fuente de verdad para la estructura de la base.
 
 app = FastAPI(title="MetaBot.OS", version="0.12.0")
-for router in (auth.router, blocks.router, companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router, clinical.router):
+for router in (auth.router, blocks.router, companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router, clinical.router, portal.router):
     app.include_router(router, prefix="/api")
 
 
@@ -39,18 +40,21 @@ _PUBLIC_API_PREFIXES = ("/api/health", "/api/webhooks/", "/api/auth/login")
 _TENANT_PATH = re.compile(r"^/api/companies/([^/]+)(?:/|$)")
 # Rutas de /api/companies que NO son un id de empresa
 _NON_TENANT_SEGMENTS = {"smart"}
+# Lo único que un usuario con rol `professional` puede tocar de su empresa.
+_PORTAL_PATH = re.compile(r"^/portal(/|$)")
 
 
 def _acceso_y_modulos(
     user_id: int | None, company_id: int, es_plataforma: bool
-) -> tuple[bool, set[str] | None]:
-    """Membresía + módulos contratados, en una sola sesión.
+) -> tuple[bool, set[str] | None, str]:
+    """Membresía + módulos contratados + rol, en una sola sesión.
 
-    Devuelve (puede_entrar, módulos). `módulos` es None cuando la empresa no
-    existe: ahí el gate de bloques se hace a un lado y deja que el endpoint
+    Devuelve (puede_entrar, módulos, rol). `módulos` es None cuando la empresa
+    no existe: ahí el gate de bloques se hace a un lado y deja que el endpoint
     conteste 404, que es lo que corresponde.
     """
     db = db_module.SessionLocal()
+    rol = ""
     try:
         if not es_plataforma:
             miembro = (
@@ -63,9 +67,10 @@ def _acceso_y_modulos(
                 .first()
             )
             if miembro is None:
-                return False, None
+                return False, None, ""
+            rol = miembro.role
         company = db.get(Company, company_id)
-        return True, (set(company.modules) if company else None)
+        return True, (set(company.modules) if company else None), rol
     finally:
         db.close()
 
@@ -113,16 +118,32 @@ async def enforce_auth_and_tenant(request: Request, call_next):
         return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
     company_id = int(raw)
 
-    entra, modulos = _acceso_y_modulos(
+    entra, modulos, rol = _acceso_y_modulos(
         identity.user_id, company_id, identity.is_platform
     )
     if not entra:
         return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
 
+    sufijo = path[match.end(1):]
+
+    # El profesional vive encerrado en su portal. La lista blanca va acá y no
+    # endpoint por endpoint a propósito: así el que se agregue mañana nace
+    # cerrado para él. Al revés —permitir todo salvo lo que uno se acuerde de
+    # cerrar— el primer olvido le muestra a un médico los pacientes de sus
+    # colegas, que es exactamente lo que este bloque vende que no pasa.
+    if rol == Role.PROFESSIONAL.value and not _PORTAL_PATH.match(sufijo):
+        return JSONResponse(
+            {"detail": {
+                "motivo": "Tu usuario es de profesional: solo accede a su portal.",
+                "codigo": "solo_portal",
+            }},
+            status_code=403,
+        )
+
     # 3. Bloques contratados. Acá también, en UN solo lugar y por PATH: el
     #    archivo `medical.py` mezcla agenda, padrón y pre-visita, así que
     #    gatear por router le regalaría bloques enteros a quien compró uno.
-    modulo = packs.modulo_de_ruta(path[match.end(1):])
+    modulo = packs.modulo_de_ruta(sufijo)
     if modulo is None:
         # Ruta que nadie clasificó. No se regala: se rechaza. El test
         # `test_bloques` recorre todas las rutas y falla si queda alguna

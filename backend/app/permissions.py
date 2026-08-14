@@ -11,6 +11,12 @@ class Role(str, Enum):
     ADMIN = "admin"        # operación completa + prompts + canales
     OPERATOR = "operator"  # día a día: citas, chats, catálogo, campañas
     VIEWER = "viewer"      # solo lectura
+    # El profesional NO es un operador con menos permisos: es otra cosa.
+    # Entra a su portal y ve SUS pacientes. No tiene nada que hacer en el
+    # panel de la clínica, así que el middleware lo deja encerrado en
+    # /portal y acá se queda con cero permisos: si alguna vez llegara a un
+    # endpoint del panel, no le alcanza para nada.
+    PROFESSIONAL = "professional"
 
 
 class Perm(str, Enum):
@@ -29,6 +35,7 @@ ROLE_PERMS: dict[Role, frozenset[Perm]] = {
     ),
     Role.OPERATOR: frozenset({Perm.READ, Perm.OPERATE}),
     Role.VIEWER: frozenset({Perm.READ}),
+    Role.PROFESSIONAL: frozenset(),
 }
 
 
