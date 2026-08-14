@@ -4,7 +4,9 @@ import {
   AlertTriangle, BadgeCheck, Building2, Calendar, CalendarClock, CalendarOff,
   ClipboardList, Clock, KeyRound, Plus, ShieldCheck, Smartphone, Upload, Users,
 } from "lucide-react";
-import { STATUS_ES, api, esErrorApi, type Appointment, type Doctor } from "../api";
+import {
+  STATUS_ES, api, clinicalApi, esErrorApi, type Appointment, type Doctor, type Insurer,
+} from "../api";
 import { card, input, btnPrimary, Modal } from "../ui";
 import { DoctorImportModal } from "./DoctorImportModal";
 import { ClinicScheduleModal, ScheduleModal } from "./ScheduleEditor";
@@ -302,8 +304,15 @@ export function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
   companyId: number; doctors: Doctor[]; onClose: () => void; onSaved: () => void;
 }) {
   const [form, setForm] = useState({
-    doctor_id: doctors[0]?.id ?? 0, patient_name: "", patient_phone: "", scheduled_at: "", notes: "",
+    doctor_id: doctors[0]?.id ?? 0, patient_name: "", patient_phone: "", scheduled_at: "",
+    insurer_id: null as number | null, notes: "",
   });
+  // Los convenios de ESTA empresa. Si la clínica no compró el bloque de
+  // salud la llamada da 402 y el campo simplemente no aparece.
+  const [convenios, setConvenios] = useState<Insurer[]>([]);
+  useEffect(() => {
+    clinicalApi.listInsurers(companyId).then(setConvenios).catch(() => setConvenios([]));
+  }, [companyId]);
   const [error, setError] = useState("");
   // El servidor rechazó el horario contra la agenda del profesional. No es un
   // error de la recepcionista: puede querer cargarlo igual (sobreturno), pero
@@ -358,6 +367,28 @@ export function AddAppointmentModal({ companyId, doctors, onClose, onSaved }: {
           <input type="datetime-local" className={input} required value={form.scheduled_at}
             onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} />
         </div>
+        {convenios.length > 0 && (
+          <div>
+            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block mb-1">
+              Viene por
+            </label>
+            <select className={input} value={form.insurer_id ?? ""}
+              onChange={(e) => setForm({
+                ...form,
+                insurer_id: e.target.value ? Number(e.target.value) : null,
+              })}>
+              <option value="" className="bg-[#090b10]">Particular</option>
+              {convenios.map((c) => (
+                <option key={c.id} value={c.id} className="bg-[#090b10]">
+                  {c.name} {c.plan}
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-zinc-600 mt-1">
+              Define en qué planilla de honorarios cae esta atención.
+            </p>
+          </div>
+        )}
         <div>
           <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest block mb-1">Motivo</label>
           <input className={input} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />

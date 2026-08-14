@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, CalendarDays, Clock, HelpCircle, LogOut, Pill,
-  KeyRound, Search, Sparkles, Stethoscope, User,
+  KeyRound, Receipt, Search, Sparkles, Stethoscope, User,
 } from "lucide-react";
 import {
   api, auth, type FichaCompleta, type FichaPaciente, type PortalMe,
   type PortalPaciente, type Previsita,
 } from "../api";
 import { input, btnPrimary, Modal } from "../ui";
+import { HonorariosView } from "./HonorariosView";
 
 /**
  * El portal del profesional (bloque 4).
@@ -263,6 +264,9 @@ export function PortalView({ companyId, onSalir }: {
   const [encontrados, setEncontrados] = useState<PortalPaciente[]>([]);
   const [abierto, setAbierto] = useState<{ nombre: string; telefono: string } | null>(null);
   const [cambiando, setCambiando] = useState(false);
+  // El portal tiene dos pantallas: los pacientes de hoy y lo que hay que
+  // cobrar. Son dos momentos distintos del día del profesional.
+  const [pantalla, setPantalla] = useState<"dia" | "honorarios">("dia");
 
   useEffect(() => {
     api.portalMe(companyId).then(setYo)
@@ -302,6 +306,12 @@ export function PortalView({ companyId, onSalir }: {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <button onClick={() => setPantalla(pantalla === "dia" ? "honorarios" : "dia")}
+              className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5">
+              {pantalla === "dia"
+                ? <><Receipt size={13} /> Mis honorarios</>
+                : <><CalendarDays size={13} /> Mi día</>}
+            </button>
             <button onClick={() => setCambiando(true)}
               className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-1.5">
               <KeyRound size={13} /> Mi clave
@@ -321,7 +331,9 @@ export function PortalView({ companyId, onSalir }: {
           </p>
         )}
 
-        {abierto ? (
+        {pantalla === "honorarios" ? (
+          <HonorariosView companyId={companyId} />
+        ) : abierto ? (
           <Ficha companyId={companyId} paciente={abierto.nombre} telefono={abierto.telefono}
             onVolver={() => setAbierto(null)} />
         ) : (

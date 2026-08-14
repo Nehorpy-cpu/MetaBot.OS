@@ -284,6 +284,70 @@ export interface FichaCompleta {
   recetas: RecetaDelPortal[];
 }
 
+export interface ItemHonorario {
+  fecha: string;
+  paciente: string;
+  servicio: string;
+  precio_lista_gs: number;
+  /** Lo que se le factura a la aseguradora (o al particular). */
+  facturado_gs: number;
+  honorario_gs: number;
+  origen_arancel: string;
+  /** Solo en el preview: lo que pone el paciente de su bolsillo. */
+  paga_el_paciente_gs?: number;
+  /** Sin servicio cargado no hay precio, y sin precio no hay honorario. */
+  sin_arancel?: boolean;
+}
+
+export interface GrupoHonorario {
+  insurer_id: number | null;
+  aseguradora: string;
+  items: ItemHonorario[];
+  total_facturado_gs: number;
+  total_honorario_gs: number;
+}
+
+export interface PreviewHonorarios {
+  doctor: string;
+  doctor_id: number;
+  honorario_pct: number;
+  desde: string;
+  hasta: string;
+  grupos: GrupoHonorario[];
+  total_facturado_gs: number;
+  total_honorario_gs: number;
+  atenciones: number;
+  /** Turnos del período que nadie cerró: si no se avisan, se cobra de menos. */
+  sin_marcar_como_atendido: number;
+  ya_liquidadas: number;
+  sin_arancel: number;
+}
+
+export type EstadoPlanilla = "borrador" | "firmada" | "entregada" | "cobrada";
+
+export interface Planilla {
+  id: number;
+  aseguradora: string;
+  insurer_id: number | null;
+  desde: string;
+  hasta: string;
+  estado: EstadoPlanilla;
+  atenciones: number | null;
+  total_facturado_gs: number;
+  total_honorario_gs: number;
+  honorario_pct: number;
+  firmada_at: string | null;
+  entregada_at: string | null;
+  cobrada_at: string | null;
+  notas: string;
+  items?: ItemHonorario[];
+  /** La hoja lista para imprimir y firmar de puño. */
+  texto?: string;
+  /** Solo en la vista de administración. */
+  doctor?: string;
+  doctor_id?: number;
+}
+
 export interface AccesoProfesional {
   doctor_id: number;
   doctor: string;
@@ -367,6 +431,10 @@ export interface Appointment {
   patient_phone: string;
   scheduled_at: string;
   status: string;
+  /** Por qué convenio viene. null = particular. Define en qué planilla de
+   *  honorarios cae la atención, así que un dato que falta acá es plata que
+   *  el profesional no puede cobrar. */
+  insurer_id: number | null;
   notes: string;
 }
 
@@ -568,6 +636,27 @@ export const api = {
       `/companies/${companyId}/portal/pacientes/ficha?telefono=${encodeURIComponent(telefono)}` +
       `&nombre=${encodeURIComponent(nombre)}`
     ),
+  previewHonorarios: (companyId: number, desde: string, hasta: string) =>
+    request<PreviewHonorarios>(
+      `/companies/${companyId}/portal/honorarios/preview?desde=${desde}&hasta=${hasta}`
+    ),
+  armarHonorarios: (companyId: number, desde: string, hasta: string) =>
+    request<Planilla[]>(
+      `/companies/${companyId}/portal/honorarios?desde=${desde}&hasta=${hasta}`,
+      { method: "POST" }
+    ),
+  listarHonorarios: (companyId: number) =>
+    request<Planilla[]>(`/companies/${companyId}/portal/honorarios`),
+  verHonorarios: (companyId: number, id: number) =>
+    request<Planilla>(`/companies/${companyId}/portal/honorarios/${id}`),
+  borrarHonorarios: (companyId: number, id: number) =>
+    request<void>(`/companies/${companyId}/portal/honorarios/${id}`, { method: "DELETE" }),
+  avanzarPlanilla: (companyId: number, id: number, paso: "firmar" | "entregar" | "pagar") =>
+    request<Planilla>(`/companies/${companyId}/portal/honorarios/${id}/${paso}`, {
+      method: "POST", body: JSON.stringify({}),
+    }),
+  honorariosAPagar: (companyId: number) =>
+    request<Planilla[]>(`/companies/${companyId}/portal/honorarios-a-pagar`),
   portalAccesos: (companyId: number) =>
     request<AccesoProfesional[]>(`/companies/${companyId}/portal/accesos`),
   crearAcceso: (companyId: number, doctorId: number, email: string) =>
