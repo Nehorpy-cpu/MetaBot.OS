@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Company, Doctor, DoctorService, Service
+from .. import industry_catalog
 from ..packs import industry_services
 
 router = APIRouter(tags=["services"])
@@ -137,9 +138,21 @@ def suggest_services(company_id: int, db: Session = Depends(get_db)):
         s.name.lower()
         for s in db.query(Service).filter(Service.company_id == company_id).all()
     }
+    # El catálogo curado por rubro: 434 estudios con su PREPARACIÓN PREVIA,
+    # que es el dato que evita que el paciente viaje en ayunas al vicio.
+    # Antes esto salía de packs.industry_services, que tiene 6 ítems para
+    # "medical": el catálogo estaba escrito y solo lo usaba el sembrador de
+    # las empresas de prueba.
+    curados = industry_catalog.para_vertical(company.vertical)
+    if not curados:
+        # Rubros sin catálogo curado (comercio, gastronomía): la lista corta
+        # genérica sigue sirviendo.
+        curados = industry_services(company.vertical)
     return [
-        {**item, "typical_price_gs": 0}
-        for item in industry_services(company.vertical)
+        # El precio va en 0 a propósito: los del catálogo son de referencia
+        # para tener con qué probar, no cotizaciones. Cada negocio pone el suyo.
+        {**item, "typical_price_gs": 0, "price_gs": 0}
+        for item in curados
         if item["name"].lower() not in own
     ]
 

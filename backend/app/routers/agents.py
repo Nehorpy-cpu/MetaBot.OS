@@ -121,7 +121,7 @@ def create_candidate(
     identity: Identity = Depends(get_identity), db: Session = Depends(get_db),
 ):
     """Registra un prompt candidato. NO toca lo que está en producción."""
-    agent = _owned_agent(agent_id, identity, db, Perm.WRITE)
+    agent = _owned_agent(agent_id, identity, db, Perm.CONFIGURE_AGENTS)
     v = evaluator.crear_candidato(db, agent, payload.body, note=payload.note)
     db.commit()
     return {"id": v.id, "version": v.version, "role": v.role}
@@ -138,7 +138,7 @@ def activate_version(
     versión que ya estuvo en producción sí: volver a algo que ya funcionaba no
     necesita permiso, y si hay que apagar un incendio el trámite es el enemigo.
     """
-    agent = _owned_agent(agent_id, identity, db, Perm.WRITE)
+    agent = _owned_agent(agent_id, identity, db, Perm.CONFIGURE_AGENTS)
     resultado = evaluator.activar(db, agent, version_id)
     if not resultado["ok"]:
         raise HTTPException(409, resultado["error"])
@@ -160,7 +160,7 @@ async def evaluate_agent(
     """
     from ..models import Company
 
-    agent = _owned_agent(agent_id, identity, db, Perm.WRITE)
+    agent = _owned_agent(agent_id, identity, db, Perm.CONFIGURE_AGENTS)
     company = db.get(Company, agent.company_id)
     version = db.get(AgentPromptVersion, version_id) if version_id else None
     if version_id and (not version or version.agent_id != agent.id):

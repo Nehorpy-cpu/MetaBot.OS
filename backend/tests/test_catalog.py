@@ -176,7 +176,10 @@ def test_service_suggestions_come_from_industry_catalog_not_peers():
     names = [s["name"] for s in suggestions]
     assert "Ecografía 4D Exclusiva" not in names  # no filtra la oferta ajena
     assert all(s["typical_price_gs"] == 0 for s in suggestions)  # ni sus precios
-    assert "Consulta clínica" in names  # sí propone lo típico del rubro
+    # El catálogo curado por rubro: 233 estudios para "medical", cada uno
+    # con su preparación previa. Antes salían 6 de una lista genérica.
+    assert any("Consulta con clínico" in n for n in names), names[:5]
+    assert len(names) > 50, f"el catálogo curado no se está usando: {len(names)} ítems"
 
     # Lo que la empresa ya tiene deja de sugerirse
     client.post(f"/api/companies/{b['id']}/services", json={"name": "Consulta clínica"})

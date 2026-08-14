@@ -221,7 +221,10 @@ def test_service_suggestions_do_not_leak_other_tenants():
     nombres = [s["name"] for s in suggestions]
     assert "Estudio Secreto Exclusivo" not in nombres  # no filtra la oferta ajena
     assert all(s["typical_price_gs"] == 0 for s in suggestions)  # ni sus precios
-    assert "Consulta clínica" in nombres  # sí sugiere lo típico del rubro
+    # El catálogo curado por rubro: 233 estudios para "medical", cada uno
+    # con su preparación previa. Antes salían 6 de una lista genérica.
+    assert any("Consulta con clínico" in n for n in nombres), nombres[:5]
+    assert len(nombres) > 50, f"el catálogo curado no se está usando: {len(nombres)} ítems"
 
 
 # --- Enrutamiento del webhook: un número de WhatsApp, una sola empresa ---

@@ -27,7 +27,7 @@ COMMERCE = Pack(
     key="commerce",
     name="Comercio / Venta de productos",
     description="Catálogo real con fotos, búsqueda por presupuesto y perfil, recomendación y pedidos.",
-    modules=("catalog", "orders"),
+    modules=("catalog",),
     tools=("search_catalog",),
     rules=(
         "REGLAS DE VENTA (obligatorias):\n"
@@ -70,7 +70,7 @@ HEALTHCARE = Pack(
     key="healthcare",
     name="Salud (encima de Agenda)",
     description="Reglas sanitarias: sin diagnósticos, urgencias derivadas, datos sensibles.",
-    modules=("patients", "insurance", "prescriptions"),
+    modules=("insurance", "prescriptions"),
     tools=("check_coverage", "get_prescription"),
     requires=("booking",),
     rules=(
@@ -102,7 +102,7 @@ TRAVEL = Pack(
     key="travel",
     name="Turismo / Viajes",
     description="Destinos, paquetes, cotizaciones y seguimiento.",
-    modules=("catalog", "quotes"),
+    modules=("catalog",),
     tools=("search_catalog",),
     rules=(
         "REGLAS DE VIAJES:\n"
@@ -188,15 +188,31 @@ def active_packs(company) -> list[Pack]:
     if not keys:
         keys = suggested_for(company.vertical)
     resolved: list[str] = []
-    for key in keys:
-        pack = PACKS.get(key)
-        if not pack:
-            continue
+    # Los que se están resolviendo ahora. Sin esto, un `requires` circular
+    # —A necesita B y B necesita A, que es un error de tipeo perfectamente
+    # posible— hace que el servidor entero se caiga con RecursionError.
+    en_curso: set[str] = set()
+
+    def _resolver(clave: str) -> None:
+        """Agrega el pack y TODO lo que necesita, en cadena.
+
+        Antes esto miraba solo un nivel de `requires`: con una cadena de tres
+        —el portal del profesional necesita el módulo clínico, que necesita la
+        agenda— el del medio se resolvía y el de abajo quedaba afuera, así que
+        la empresa se quedaba sin poder agendar sin que nada avisara.
+        """
+        pack = PACKS.get(clave)
+        if not pack or clave in resolved or clave in en_curso:
+            return
+        en_curso.add(clave)
         for dep in pack.requires:
-            if dep not in resolved and dep in PACKS:
-                resolved.append(dep)
-        if key not in resolved:
-            resolved.append(key)
+            _resolver(dep)
+        en_curso.discard(clave)
+        if clave not in resolved:
+            resolved.append(clave)
+
+    for key in keys:
+        _resolver(key)
     return [PACKS[k] for k in resolved]
 
 
