@@ -211,7 +211,11 @@ def test_appointment_requires_doctor_of_same_company():
 
     resp = client.post(
         f"/api/companies/{company_a['id']}/appointments",
-        json={"doctor_id": doc_b["id"], "patient_name": "X", "scheduled_at": "2026-08-10T09:00:00"},
+        # Fecha válida a propósito: si la cita se rechazara por vencida, este
+        # test pasaría por el motivo equivocado y dejaría de cubrir el
+        # aislamiento entre empresas, que es lo que mira.
+        json={"doctor_id": doc_b["id"], "patient_name": "X",
+              "scheduled_at": _pronto().strftime("%Y-%m-%dT%H:%M:%S")},
     )
     assert resp.status_code == 404
 

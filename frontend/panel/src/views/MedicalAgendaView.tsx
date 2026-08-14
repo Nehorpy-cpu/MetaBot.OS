@@ -2,27 +2,26 @@ import React from "react";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, BadgeCheck, Building2, Calendar, CalendarClock, CalendarOff,
-  Clock, Plus, Send, ShieldCheck, Smartphone, Upload, Users,
+  ClipboardList, Clock, Plus, ShieldCheck, Smartphone, Upload, Users,
 } from "lucide-react";
-import { STATUS_ES, api, esErrorApi, type Appointment, type DailySummary, type Doctor } from "../api";
+import { STATUS_ES, api, esErrorApi, type Appointment, type Doctor } from "../api";
 import { card, input, btnPrimary, Modal } from "../ui";
 import { DoctorImportModal } from "./DoctorImportModal";
 import { ClinicScheduleModal, ScheduleModal } from "./ScheduleEditor";
 import { AbsencesModal } from "./AbsencesModal";
+import { PreVisitModal } from "./PreVisitModal";
 
 export function MedicalAgendaView({ companyId }: { companyId: number }) {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState<number | "all">("all");
-  const [summaries, setSummaries] = useState<DailySummary[]>([]);
-  const [showSummaries, setShowSummaries] = useState(false);
-  const [copiedDoctor, setCopiedDoctor] = useState<string | null>(null);
   const [showAddDoctor, setShowAddDoctor] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAddAppt, setShowAddAppt] = useState(false);
   const [horarioDe, setHorarioDe] = useState<Doctor | null>(null);
   const [showClinicSchedule, setShowClinicSchedule] = useState(false);
   const [showAbsences, setShowAbsences] = useState(false);
+  const [showPreVisit, setShowPreVisit] = useState(false);
   const [clinicaTieneHorario, setClinicaTieneHorario] = useState<boolean | null>(null);
 
   const load = useCallback(() => {
@@ -38,21 +37,10 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
   // el bot toma sus turnos como pedido y no puede rechazar un horario imposible.
   const sinHorario = doctors.filter((d) => d.agenda_mode !== "estructurado");
 
-  const openSummaries = async () => {
-    const results = await Promise.all(doctors.map((d) => api.dailySummary(companyId, d.id)));
-    setSummaries(results);
-    setShowSummaries(true);
-  };
-
-  const copySummary = async (s: DailySummary) => {
-    try {
-      await navigator.clipboard.writeText(s.text);
-      setCopiedDoctor(s.doctor);
-      setTimeout(() => setCopiedDoctor(null), 2000);
-    } catch {
-      /* clipboard no disponible */
-    }
-  };
+  // El "resumen diario" que había acá era la misma lista de citas que ya se ve
+  // abajo, sin nada clínico. Lo reemplaza el resumen pre-visita, que incluye
+  // todo eso más el historial del paciente. El endpoint viejo sigue existiendo
+  // para quien lo consuma por API.
 
   const cycleStatus = async (a: Appointment) => {
     const order = ["pending", "confirmed", "attended", "no_show", "cancelled"];
@@ -81,8 +69,9 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
             className="text-sm bg-white/[0.03] hover:bg-white/[0.06] text-zinc-300 border border-white/10 px-4 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-40">
             <CalendarOff size={15} /> Licencias
           </button>
-          <button onClick={openSummaries} disabled={!doctors.length} className={btnPrimary}>
-            <Send size={15} /> Resumen diario (WhatsApp)
+          <button onClick={() => setShowPreVisit(true)} disabled={!doctors.length}
+            className={btnPrimary}>
+            <ClipboardList size={15} /> Resumen para el profesional
           </button>
         </div>
       </div>
@@ -225,25 +214,6 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
         </div>
       </div>
 
-      {showSummaries && (
-        <Modal title="Resumen diario por doctor" onClose={() => setShowSummaries(false)}>
-          <div className="space-y-4">
-            {summaries.map((s) => (
-              <div key={s.doctor} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-sm text-white">{s.doctor} <span className="text-xs text-zinc-500">({s.count} citas)</span></span>
-                  <button onClick={() => copySummary(s)}
-                    className="text-xs bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-3 py-1.5 rounded-lg">
-                    {copiedDoctor === s.doctor ? "¡Copiado!" : "Copiar"}
-                  </button>
-                </div>
-                <pre className="bg-[#040609] p-3 rounded-lg text-xs font-mono text-zinc-300 whitespace-pre-wrap border border-white/5">{s.text}</pre>
-              </div>
-            ))}
-          </div>
-        </Modal>
-      )}
-
       {showAddDoctor && (
         <AddDoctorModal companyId={companyId} onClose={() => setShowAddDoctor(false)} onSaved={load} />
       )}
@@ -261,6 +231,10 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
       {showAbsences && (
         <AbsencesModal companyId={companyId} doctors={doctors}
           onClose={() => setShowAbsences(false)} onSaved={load} />
+      )}
+      {showPreVisit && (
+        <PreVisitModal companyId={companyId} doctors={doctors}
+          onClose={() => setShowPreVisit(false)} />
       )}
       {showAddAppt && (
         <AddAppointmentModal companyId={companyId} doctors={doctors} onClose={() => setShowAddAppt(false)} onSaved={load} />

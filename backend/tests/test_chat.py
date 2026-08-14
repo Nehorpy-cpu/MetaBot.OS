@@ -1,9 +1,21 @@
 """Tests del motor conversacional con LLM mockeado (sin red)."""
 import json
+from datetime import datetime, timedelta
 
 from tests.test_api import _create_company, client  # reutiliza la app/DB de test
 
 from app import chat as chat_engine
+
+
+def _pronto(dias=3, hora=10):
+    """Fecha futura para los fixtures de citas.
+
+    Estaba escrita fija como "2026-08-12" y se puso roja sola tres días
+    después, cuando esa fecha quedó en el pasado y el servidor empezó a
+    rechazar turnos vencidos. Una fecha fija en un test es una bomba de tiempo.
+    """
+    return (datetime.now() + timedelta(days=dias)).replace(
+        hour=hora, minute=0, second=0, microsecond=0)
 
 
 def _mock_llm(responses):
@@ -75,7 +87,7 @@ def test_tool_call_books_real_appointment(monkeypatch):
                                 {
                                     "doctor_id": doc["id"],
                                     "patient_name": "Carlos Ruiz",
-                                    "datetime_iso": "2026-08-12T10:00",
+                                    "datetime_iso": _pronto().strftime("%Y-%m-%dT%H:%M"),
                                     "notes": "Consulta general",
                                 }
                             ),
@@ -118,7 +130,7 @@ def test_double_booking_rejected_by_tool(monkeypatch):
         json={
             "doctor_id": doc["id"],
             "patient_name": "Primero",
-            "scheduled_at": "2026-08-12T10:00:00",
+            "scheduled_at": _pronto().strftime("%Y-%m-%dT%H:%M:%S"),
         },
     )
 
@@ -135,7 +147,7 @@ def test_double_booking_rejected_by_tool(monkeypatch):
                                 {
                                     "doctor_id": doc["id"],
                                     "patient_name": "Segundo",
-                                    "datetime_iso": "2026-08-12T10:00",
+                                    "datetime_iso": _pronto().strftime("%Y-%m-%dT%H:%M"),
                                 }
                             ),
                         },

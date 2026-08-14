@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from zoneinfo import ZoneInfo
 
 from .. import (
-    agenda, channels, importador_profesionales, job_handlers, outbound, registry, whatsapp,
+    agenda, channels, importador_profesionales, job_handlers, outbound, previsita,
+    registry, whatsapp,
 )
 from ..config import TIMEZONE
 from ..db import get_db
@@ -393,6 +394,55 @@ def daily_summary(
         lines.append("Sin citas para esta fecha.")
     lines.append("_Enviado automáticamente por MetaBot.OS_")
     return {"doctor": doctor.name, "date": target.isoformat(), "count": len(appts), "text": "\n".join(lines)}
+
+
+@router.get("/companies/{company_id}/doctors/{doctor_id}/pre-visit")
+def resumen_previsita(
+    company_id: int, doctor_id: int, on_date: date | None = None,
+    db: Session = Depends(get_db),
+):
+    """Lo que el profesional necesita saber ANTES de atender.
+
+    A diferencia de `daily-summary`, que es una lista de horas y nombres, esto
+    trae si el paciente ya vino, qué se le recetó la última vez y qué se le va
+    a hacer hoy. Es para el doctor, nunca para el paciente.
+    """
+    company = _get_company(company_id, db)
+    doctor = db.get(Doctor, doctor_id)
+    if not doctor or doctor.company_id != company_id:
+        raise HTTPException(404, "Doctor no encontrado")
+    return previsita.armar(db, company, doctor, on_date)
+
+
+class EnvioPrevisitaIn(BaseModel):
+    on_date: date | None = None
+
+
+@router.post("/companies/{company_id}/doctors/{doctor_id}/pre-visit/send")
+async def enviar_previsita(
+    company_id: int, doctor_id: int, payload: EnvioPrevisitaIn,
+    db: Session = Depends(get_db),
+):
+    """Le manda el resumen al profesional por WhatsApp, a SU número."""
+    company = _get_company(company_id, db)
+    doctor = db.get(Doctor, doctor_id)
+    if not doctor or doctor.company_id != company_id:
+        raise HTTPException(404, "Doctor no encontrado")
+    if not doctor.phone or sum(c.isdigit() for c in doctor.phone) < 6:
+        raise HTTPException(
+            422,
+            f"{doctor.name} no tiene teléfono cargado. Son datos clínicos: "
+            "sin un número verificado no se manda a ningún lado.",
+        )
+    resumen = previsita.armar(db, company, doctor, payload.on_date)
+    if not resumen["total"]:
+        return {"enviado": False, "motivo": "No tiene pacientes ese día."}
+    salida = await outbound.enviar(db, company.id, doctor.phone, resumen["texto"])
+    return {
+        "enviado": not salida.get("error"),
+        "motivo": salida.get("error", ""),
+        "pacientes": resumen["total"],
+    }
 
 
 # --- Alta de profesionales desde el padrón y por planilla ---

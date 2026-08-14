@@ -200,6 +200,51 @@ export interface ResultadoHorario {
   citas_fuera_de_horario: CitaFueraDeHorario[];
 }
 
+export interface FichaPaciente {
+  hora: string;
+  paciente: string;
+  telefono: string;
+  motivo: string;
+  servicio: string;
+  duracion_min: number;
+  // Lo más importante del resumen: no se atiende igual a alguien que viene
+  // por primera vez que a alguien que ya vino seis veces.
+  primera_vez: boolean;
+  visitas_previas: number;
+  // Turnos a los que el paciente NO se presentó. Se cuentan aparte: antes
+  // figuraban como visitas y el doctor creía que hubo una consulta.
+  faltas_previas: number;
+  // Hay registros con el mismo número a nombre de otra persona (la madre que
+  // agenda con su celular para el hijo). No se muestran: se avisa que existen.
+  numero_compartido: boolean;
+  ultima_visita: string;
+  sin_confirmar: boolean;
+  turno_sin_verificar: boolean;
+  preparacion_requerida?: string;
+  ultima_receta?: {
+    fecha: string;
+    por: string;
+    diagnostico: string;
+    medicacion: string[];
+    vigente: boolean;
+  };
+}
+
+export interface Previsita {
+  doctor: string;
+  doctor_id: number;
+  fecha: string;
+  dia_de_la_semana: string;
+  total: number;
+  primera_vez: number;
+  sin_confirmar: number;
+  pacientes: FichaPaciente[];
+  // Armado en el servidor con los datos cargados, sin pasar por ningún
+  // modelo: un resumen "redactado" puede afirmar algo que el doctor nunca
+  // escribió.
+  texto: string;
+}
+
 export interface Ausencia {
   id: number;
   doctor_id: number | null; // null = cierra la institución entera
@@ -404,6 +449,15 @@ export const api = {
     ),
   especialidadesPadron: (companyId: number) =>
     request<{ especialidades: EspecialidadPadron[] }>(`/companies/${companyId}/registry/specialties`),
+  previsita: (companyId: number, doctorId: number, onDate?: string) =>
+    request<Previsita>(
+      `/companies/${companyId}/doctors/${doctorId}/pre-visit${onDate ? `?on_date=${onDate}` : ""}`
+    ),
+  enviarPrevisita: (companyId: number, doctorId: number, onDate?: string) =>
+    request<{ enviado: boolean; motivo: string; pacientes: number }>(
+      `/companies/${companyId}/doctors/${doctorId}/pre-visit/send`,
+      { method: "POST", body: JSON.stringify({ on_date: onDate ?? null }) }
+    ),
   verHorario: (companyId: number, doctorId: number) =>
     request<HorarioDoctor>(`/companies/${companyId}/doctors/${doctorId}/schedule`),
   guardarHorario: (companyId: number, doctorId: number, franjas: Franja[]) =>

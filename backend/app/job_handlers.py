@@ -52,6 +52,19 @@ def schedule_appointment_reminder(db: Session, appointment: Appointment) -> None
     Se llama al agendar (por el bot o desde el panel). Si la cita es en menos
     de 24 horas, no se programa: el cliente acaba de hablar con nosotros.
     """
+    # El resumen del profesional va PRIMERO y fuera del early return: son dos
+    # cosas independientes. Con el orden anterior, un turno tomado a menos de
+    # 24 horas cortaba en el `return` del recordatorio y el doctor nunca se
+    # enteraba de ese paciente —justo el caso donde más falta hace, porque no
+    # tuvo tiempo de mirar la agenda.
+    #
+    # El `dedup_key` por (doctor, día) hace que el quinto paciente del martes
+    # no genere un quinto mensaje: se programa una vez y se arma con la agenda
+    # del momento en que sale.
+    doctor = db.get(Doctor, appointment.doctor_id)
+    if doctor and doctor.company_id == appointment.company_id:
+        schedule_previsita(db, doctor, appointment.scheduled_at.date())
+
     # scheduled_at está en hora de Paraguay; la cola razona en UTC.
     run_at = local_a_utc(appointment.scheduled_at - timedelta(hours=REMINDER_HOURS_BEFORE))
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -314,3 +327,62 @@ async def _procesar_entrante(db: Session, company_id: int, payload: dict) -> Non
         resultado = await whatsapp.send_text(pnid, destino, respuesta)
         if resultado.get("error"):
             raise RuntimeError(resultado["error"])
+
+
+# --- Resumen pre-visita para el profesional ---
+
+PREVISITA_KIND = "previsita"
+# A las 20:00 del día anterior: el doctor todavía está despierto y le queda
+# tiempo de mirar la agenda antes de la mañana siguiente.
+PREVISITA_HORA = 20
+
+
+def previsita_dedup_key(doctor_id: int, dia: str) -> str:
+    return f"{PREVISITA_KIND}:{doctor_id}:{dia}"
+
+
+def schedule_previsita(db: Session, doctor: Doctor, dia) -> None:
+    """Programa el envío del resumen la noche anterior.
+
+    No se manda si el profesional no tiene teléfono cargado: son datos
+    clínicos y no van a un número que nadie verificó.
+    """
+    if not doctor.phone or sum(c.isdigit() for c in doctor.phone) < 6:
+        return
+    salida_local = datetime(dia.year, dia.month, dia.day, PREVISITA_HORA) - timedelta(days=1)
+    run_at = local_a_utc(salida_local)
+    if run_at <= datetime.now(timezone.utc).replace(tzinfo=None):
+        return
+    jobs.enqueue(
+        db,
+        company_id=doctor.company_id,
+        kind=PREVISITA_KIND,
+        run_at=run_at,
+        payload={"doctor_id": doctor.id, "dia": dia.isoformat()},
+        dedup_key=previsita_dedup_key(doctor.id, dia.isoformat()),
+    )
+
+
+@jobs.handler(PREVISITA_KIND)
+async def _send_previsita(db: Session, company_id: int, payload: dict) -> None:
+    from datetime import date as _date
+
+    from . import outbound, previsita
+
+    company = db.get(Company, company_id)
+    doctor = db.get(Doctor, payload["doctor_id"])
+    # El doctor puede haberse dado de baja entre que se programó y ahora, o
+    # ser de otra empresa si alguien tocó el payload: las dos cosas se chequean.
+    if not company or not doctor or doctor.company_id != company_id:
+        return
+    if not doctor.phone or sum(c.isdigit() for c in doctor.phone) < 6:
+        return
+
+    resumen = previsita.armar(db, company, doctor, _date.fromisoformat(payload["dia"]))
+    if not resumen["total"]:
+        # Sin pacientes no se manda nada: un mensaje diario que casi siempre
+        # dice "no tenés nada" es un mensaje que se deja de leer.
+        return
+    salida = await outbound.enviar(db, company_id, doctor.phone, resumen["texto"])
+    if salida.get("error"):
+        raise RuntimeError(salida["error"])
