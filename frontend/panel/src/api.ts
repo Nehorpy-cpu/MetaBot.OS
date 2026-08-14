@@ -356,6 +356,21 @@ export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
 
+export interface BloqueoInfo {
+  modulo: string; bloque: string; bloque_nombre: string; motivo: string;
+}
+
+let onBlocked: ((info: BloqueoInfo) => void) | null = null;
+
+/**
+ * Qué hacer cuando la API contesta "esa función es de un bloque que no
+ * contrataste" (402). Se avisa en UN solo lugar, igual que el 401: si cada
+ * pantalla tuviera que acordarse, la que se olvide muestra un error crudo.
+ */
+export const setBlockedHandler = (fn: (info: BloqueoInfo) => void) => {
+  onBlocked = fn;
+};
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`/api${path}`, {
     credentials: "same-origin",
@@ -368,7 +383,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
-    throw new ApiError(resp.status, body.detail);
+    const error = new ApiError(resp.status, body.detail);
+    const bloqueado = esModuloNoContratado(error);
+    if (bloqueado) onBlocked?.(bloqueado);
+    throw error;
   }
   return resp.status === 204 ? (undefined as T) : resp.json();
 }
@@ -413,9 +431,7 @@ export function esErrorApi(err: unknown): err is ApiError {
  * cambiar. Ya se desarmó una guardia sola porque alguien mejoró la redacción
  * del mensaje que esa guardia comparaba.
  */
-export function esModuloNoContratado(
-  err: unknown
-): false | { modulo: string; bloque: string; bloque_nombre: string; motivo: string } {
+export function esModuloNoContratado(err: unknown): false | BloqueoInfo {
   if (!esErrorApi(err) || err.status !== 402) return false;
   const d = err.detail;
   if (typeof d !== "object" || d === null || d.codigo !== "modulo_no_contratado") return false;

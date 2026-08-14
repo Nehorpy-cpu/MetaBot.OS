@@ -3,7 +3,7 @@ import {
   Activity, Bot, Boxes, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
   Lock, MessageSquare, Pill, Plus, Sliders, Video, Zap,
 } from "lucide-react";
-import { api, auth, setUnauthorizedHandler, type Company } from "./api";
+import { api, auth, setBlockedHandler, setUnauthorizedHandler, type Company } from "./api";
 import { btnPrimary } from "./ui";
 import { NewCompanyModal } from "./views/NewCompanyModal";
 import { DashboardView } from "./views/DashboardView";
@@ -32,6 +32,9 @@ export default function App() {
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAuthed(false));
+    // Si algo pide una función de un bloque que la empresa no contrató, en
+    // vez de un error crudo se lo lleva a ver qué incluye ese bloque.
+    setBlockedHandler((info) => { setBloqueResaltado(info.bloque); setView("blocks"); });
     // La sesión vive en cookie HttpOnly: se le pregunta al backend si sigue viva.
     auth.me()
       .then((me) => { setAuthed(true); setEsPlataforma(me.is_platform_admin); })
