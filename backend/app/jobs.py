@@ -72,6 +72,28 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+# Qué bloque exige cada tipo de trabajo. Lo que no está acá es del núcleo:
+# a diferencia de las rutas —donde una sin clasificar se rechaza porque el
+# test las recorre todas—, un `kind` nuevo no se puede enumerar solo, y
+# frenar en silencio un recordatorio sería peor que dejarlo pasar.
+MODULO_POR_TRABAJO: dict[str, str] = {
+    "appointment_reminder": "reminders",
+    "previsita": "previsita",
+    "medication_dose": "medication",
+}
+
+
+def _empresa_tiene_el_bloque(db: Session, company_id: int, kind: str) -> bool:
+    modulo = MODULO_POR_TRABAJO.get(kind)
+    if not modulo:
+        return True
+    from .models import Company
+
+    company = db.get(Company, company_id)
+    # Empresa que no existe: que falle donde tenga que fallar, no acá.
+    return company is None or modulo in company.modules
+
+
 def enqueue(
     db: Session,
     company_id: int,
@@ -81,7 +103,16 @@ def enqueue(
     dedup_key: str | None = None,
     max_attempts: int = 5,
 ) -> Job | None:
-    """Programa un trabajo. Devuelve None si ya existía (por dedup_key)."""
+    """Programa un trabajo. Devuelve None si ya existía (por dedup_key).
+
+    También devuelve None si la empresa no tiene contratado el bloque de ese
+    trabajo. El gate del middleware solo mira las requests HTTP, y estos
+    envíos salen solos horas después: sin esto, una clínica que dio de baja
+    el Portal del Profesional le seguiría mandando el resumen clínico a sus
+    médicos toda la semana siguiente.
+    """
+    if not _empresa_tiene_el_bloque(db, company_id, kind):
+        return None
     if dedup_key:
         existing = db.query(Job).filter(Job.dedup_key == dedup_key).first()
         if existing:

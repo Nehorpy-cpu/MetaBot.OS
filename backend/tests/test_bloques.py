@@ -296,3 +296,56 @@ def test_el_catalogo_lista_los_cuatro_bloques():
     # Y el catálogo no puede prometer un módulo que los packs no habilitan.
     for b in datos:
         assert set(b["modules"]) == set(PACKS[b["key"]].modules)
+
+
+# ─── El gate en la cola de trabajos ──────────────────────────────────────
+
+
+def test_el_mapa_de_trabajos_no_tiene_claves_muertas():
+    """Un `kind` mal escrito en el mapa no gatea NADA y no avisa.
+
+    Pasó al escribirlo: se mapeó un `next_visit` que no existe. El mapa se
+    veía completo y el trabajo real seguía saliendo igual.
+    """
+    from app import job_handlers, medication  # noqa: F401 — registran handlers
+    from app.jobs import HANDLERS, MODULO_POR_TRABAJO
+
+    fantasmas = sorted(set(MODULO_POR_TRABAJO) - set(HANDLERS))
+    assert not fantasmas, (
+        f"tipos de trabajo que no existen: {fantasmas}. "
+        f"Los registrados son: {sorted(HANDLERS)}"
+    )
+    # Y cada módulo al que apuntan tiene que ser un módulo real.
+    reales = {m for p in PACKS.values() for m in p.modules}
+    invalidos = sorted(set(MODULO_POR_TRABAJO.values()) - reales)
+    assert not invalidos, f"módulos que no existen: {invalidos}"
+
+
+def test_no_se_encola_un_envio_de_un_bloque_no_contratado():
+    """El middleware solo mira las requests. Estos envíos salen solos horas
+    después: sin gate acá, una clínica que dio de baja el bloque le seguiría
+    mandando el resumen clínico a sus médicos toda la semana."""
+    from datetime import datetime, timedelta, timezone
+
+    from app import jobs
+    from app.db import SessionLocal
+    from tests.test_api import _create_company
+
+    # Una clínica arranca con salud por su rubro: para el caso "no lo tiene"
+    # hace falta un rubro que NO lo traiga.
+    sin = _create_company("ecommerce", name="Tienda Sin Recetas")
+    con = _create_company(name="Clínica Con Todo", packs=["booking", "healthcare"])
+    cuando = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=2)
+
+    db = SessionLocal()
+    try:
+        # `medication` es del bloque 3, que la primera no tiene.
+        assert jobs.enqueue(db, company_id=sin["id"], kind="medication_dose",
+                            run_at=cuando, payload={}) is None
+        assert jobs.enqueue(db, company_id=con["id"], kind="medication_dose",
+                            run_at=cuando, payload={}) is not None
+        # Un trabajo del núcleo pasa siempre, tenga lo que tenga.
+        assert jobs.enqueue(db, company_id=sin["id"], kind="whatsapp_inbound",
+                            run_at=cuando, payload={}) is not None
+    finally:
+        db.close()

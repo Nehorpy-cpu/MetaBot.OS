@@ -263,7 +263,7 @@ def test_cinco_pacientes_no_generan_cinco_mensajes():
     from app import job_handlers, jobs
     from app.models import Job
 
-    company = _create_company(name="Clínica Dedup")
+    company = _create_company(name="Clínica Dedup", packs=PORTAL)
     cid = company["id"]
     doc = _doctor(cid)
     db = SessionLocal()
@@ -281,7 +281,7 @@ def test_cinco_pacientes_no_generan_cinco_mensajes():
 
 
 def test_el_resumen_se_programa_al_agendar():
-    company = _create_company(name="Clínica Programa Solo")
+    company = _create_company(name="Clínica Programa Solo", packs=PORTAL)
     cid = company["id"]
     doc = _doctor(cid)
     from app import job_handlers
@@ -312,7 +312,7 @@ def test_el_resumen_sale_la_noche_anterior():
     from app import job_handlers
     from app.models import Job
 
-    company = _create_company(name="Clínica Noche Anterior")
+    company = _create_company(name="Clínica Noche Anterior", packs=PORTAL)
     cid = company["id"]
     doc = _doctor(cid)
     dia = (datetime.now() + timedelta(days=5)).date()
