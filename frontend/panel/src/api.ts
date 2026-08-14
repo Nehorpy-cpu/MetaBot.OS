@@ -15,6 +15,22 @@ export interface Company {
   // mostrar con ESTO y no con `vertical`: un sanatorio, una odontológica y una
   // veterinaria son verticales distintas con la misma agenda.
   modules: string[];
+  // Los bloques contratados, tal como están guardados ("core,booking").
+  // `modules` es la consecuencia; esto es la causa, y es lo que se necesita
+  // para saber qué ofrecerle al cliente que todavía no lo compró.
+  packs: string;
+}
+
+/** Un bloque del catálogo comercial. */
+export interface Bloque {
+  key: string;
+  name: string;
+  description: string;
+  modules: string[];
+  requires: string[];
+  /** El núcleo viene con cualquier contratación: no se vende aparte. */
+  incluido: boolean;
+  incluye: string[];
 }
 
 export interface Insurer {
@@ -390,6 +406,22 @@ export function esErrorApi(err: unknown): err is ApiError {
   return typeof err === "object" && err !== null && "status" in err && "detail" in err;
 }
 
+/**
+ * El error es "esta empresa no contrató ese bloque" (402).
+ *
+ * Se mira el `codigo`, NUNCA el texto: el mensaje está para el humano y va a
+ * cambiar. Ya se desarmó una guardia sola porque alguien mejoró la redacción
+ * del mensaje que esa guardia comparaba.
+ */
+export function esModuloNoContratado(
+  err: unknown
+): false | { modulo: string; bloque: string; bloque_nombre: string; motivo: string } {
+  if (!esErrorApi(err) || err.status !== 402) return false;
+  const d = err.detail;
+  if (typeof d !== "object" || d === null || d.codigo !== "modulo_no_contratado") return false;
+  return d;
+}
+
 async function upload<T>(path: string, archivo: File): Promise<T> {
   const cuerpo = new FormData();
   cuerpo.append("archivo", archivo);
@@ -424,6 +456,14 @@ export const auth = {
 
 export const api = {
   listCompanies: () => request<Company[]>("/companies"),
+  /** El catálogo de bloques. No es por empresa: es lo que vendemos. */
+  bloques: () => request<Bloque[]>("/packs"),
+  /** Contrata bloques. Solo el operador de la plataforma (403 si no). */
+  setPacks: (companyId: number, packs: string[]) =>
+    request<Company>(`/companies/${companyId}/packs`, {
+      method: "PUT",
+      body: JSON.stringify({ packs }),
+    }),
   createCompany: (name: string, vertical: string) =>
     request<Company>("/companies", { method: "POST", body: JSON.stringify({ name, vertical }) }),
   createCompanySmart: (name: string, description: string, website: string) =>

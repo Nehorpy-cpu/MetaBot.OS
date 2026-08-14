@@ -103,3 +103,196 @@ def test_cada_modulo_declarado_tiene_algo_detras():
         f"módulos sin evidencia declarada: {sorted(sin_evidencia)}. "
         "Antes de venderlos, decí acá dónde viven."
     )
+
+
+# ─── El gate del servidor ────────────────────────────────────────────────
+
+_PREFIJO = "/api/companies/{company_id}"
+
+
+def _rutas_de_tenant():
+    """Sufijos de todas las rutas que cuelgan de una empresa, del app real."""
+    from app.main import app
+    sufijos = set()
+    for ruta in app.openapi()["paths"]:
+        if ruta.startswith(_PREFIJO):
+            sufijos.add(ruta[len(_PREFIJO):])
+    return sufijos
+
+
+def test_ninguna_ruta_de_empresa_queda_sin_bloque():
+    """LA condición para desplegar el corte por bloques.
+
+    Si alguien agrega mañana `/lab-results` y no lo clasifica, sin este test
+    la ruta se regalaría a todos en silencio —el agujero exacto que el gate
+    viene a tapar—. Con este test, el despliegue se frena y la pregunta
+    "¿de qué bloque es esto?" se contesta ANTES de venderlo.
+    """
+    sin_clasificar = sorted(
+        s for s in _rutas_de_tenant() if packs.modulo_de_ruta(s) is None
+    )
+    assert not sin_clasificar, (
+        "rutas de empresa sin bloque asignado: "
+        f"{sin_clasificar}. Agregalas a _RUTAS_POR_MODULO (si son de un "
+        "bloque vendible) o a _RUTAS_DEL_NUCLEO (si van con todos), en "
+        "app/packs.py. No hay tercera opción: sin clasificar la API las "
+        "rechaza con 403."
+    )
+
+
+def test_hay_al_menos_una_ruta_por_modulo_gateado():
+    """Un módulo que no gatea ninguna ruta es una casilla que no apaga nada.
+
+    Se excluyen los que por diseño no exponen API propia: `inbox`,
+    `dashboard` y compañía viven en rutas del núcleo, y `medication` es una
+    cola de trabajos sin endpoint todavía.
+    """
+    sufijos = _rutas_de_tenant()
+    gateados = {packs.modulo_de_ruta(s) for s in sufijos} - {packs.NUCLEO, None}
+    vendibles = {
+        m
+        for clave, p in PACKS.items()
+        if clave != "core"
+        for m in p.modules
+    }
+    sin_ruta = vendibles - gateados - {"medication", "portal"}
+    assert not sin_ruta, (
+        f"módulos vendibles que no gatean ninguna ruta: {sorted(sin_ruta)}"
+    )
+
+
+def test_la_pre_visita_no_cae_en_la_agenda():
+    """El orden del mapa es la prioridad. `/doctors/7/pre-visit` es del
+    bloque 4 y `/doctors/7/schedule` del 2, y viven en el mismo prefijo: si
+    se invierte el orden de las reglas, el que compró la agenda se lleva
+    gratis el resumen clínico de sus pacientes."""
+    assert packs.modulo_de_ruta("/doctors/7/pre-visit") == "previsita"
+    assert packs.modulo_de_ruta("/doctors/7/pre-visit/send") == "previsita"
+    assert packs.modulo_de_ruta("/doctors/{doctor_id}/pre-visit") == "previsita"
+    assert packs.modulo_de_ruta("/doctors/7/schedule") == "agenda"
+    assert packs.modulo_de_ruta("/doctors") == "agenda"
+    # El padrón del Círculo de Médicos es del bloque de salud, aunque cuelgue
+    # de /doctors: son 4.772 personas reales que no vienen con la agenda.
+    assert packs.modulo_de_ruta("/doctors/verify") == "registry"
+    assert packs.modulo_de_ruta("/doctors/from-registry") == "registry"
+    assert packs.modulo_de_ruta("/registry/search") == "registry"
+
+
+def test_una_ruta_inventada_no_es_nucleo():
+    """Sin clasificar ≠ permitido."""
+    assert packs.modulo_de_ruta("/lab-results") is None
+    assert packs.modulo_de_ruta("/facturacion/emitir") is None
+
+
+def test_packs_vacio_es_solo_el_nucleo():
+    """El fail-open se fue: `packs` vacío significa lo que dice.
+
+    Mientras se derivaba del rubro, sacarle la agenda a una clínica no hacía
+    nada —volvía sola en la request siguiente— y no había forma de vender
+    por bloques.
+    """
+    claves = [p.key for p in active_packs(_EmpresaFalsa("", vertical="medical"))]
+    assert claves == ["core"], f"una empresa sin packs recuperó bloques: {claves}"
+
+
+# ─── El gate, a nivel HTTP ───────────────────────────────────────────────
+
+
+def test_una_empresa_sin_el_bloque_recibe_402():
+    """Lo que hace vendible el corte: la ruta se rechaza en el servidor.
+
+    Esconder el botón en el panel no alcanza —el que sabe la URL entra
+    igual—, y este endpoint devuelve datos clínicos de los pacientes.
+    """
+    from tests.test_api import _create_company, client
+
+    c = _create_company(name="Clínica Sin Bloque 4")
+    r = client.get(f"/api/companies/{c['id']}/doctors/1/pre-visit")
+    assert r.status_code == 402, r.text
+    detalle = r.json()["detail"]
+    # El panel decide por `codigo`. Si mirara el texto, mejorar la redacción
+    # del mensaje desarmaría la guardia en silencio: ya nos pasó una vez.
+    assert detalle["codigo"] == "modulo_no_contratado"
+    assert detalle["modulo"] == "previsita"
+    assert detalle["bloque"] == "practitioner"
+    # Y dice CUÁL bloque hay que comprar, que es lo que el panel ofrece.
+    assert detalle["bloque_nombre"] == "Portal del Profesional"
+
+
+def test_el_comercio_no_entra_a_la_agenda_ni_al_padron():
+    """Una tienda compró el núcleo. Turnos y padrón médico son otros bloques."""
+    from tests.test_api import _create_company, client
+
+    c = _create_company("ecommerce", name="Tienda Sin Agenda")
+    cid = c["id"]
+    assert client.get(f"/api/companies/{cid}/doctors").status_code == 402
+    assert client.get(f"/api/companies/{cid}/appointments").status_code == 402
+    assert client.get(f"/api/companies/{cid}/registry/search?q=x").status_code == 402
+    assert client.get(f"/api/companies/{cid}/prescriptions").status_code == 402
+    # …pero el núcleo que sí compró funciona igual.
+    assert client.get(f"/api/companies/{cid}/services").status_code == 200
+    assert client.get(f"/api/companies/{cid}/dashboard").status_code == 200
+
+
+def test_el_cliente_no_puede_regalarse_bloques():
+    """El dueño de la empresa NO puede activarse un bloque que no pagó."""
+    from tests.test_api import _create_company
+    from tests.test_tenancy import _login, _make_user
+
+    c = _create_company(name="Clínica Autoservicio")
+    _make_user("dueno-packs@test.py", c["id"], role="owner")
+    cliente = _login("dueno-packs@test.py")
+
+    r = cliente.put(
+        f"/api/companies/{c['id']}/packs",
+        json={"packs": ["booking", "healthcare", "practitioner"]},
+    )
+    assert r.status_code == 403, r.text
+    # Y el bloque sigue apagado de verdad, no solo en la respuesta.
+    assert cliente.get(f"/api/companies/{c['id']}/doctors/1/pre-visit").status_code == 402
+
+
+def test_un_bloque_inventado_no_se_guarda():
+    """Guardar un pack que no existe deja al cliente pagando por nada."""
+    from tests.test_api import _create_company, client
+
+    c = _create_company(name="Clínica Pack Fantasma")
+    r = client.put(f"/api/companies/{c['id']}/packs", json={"packs": ["telepatia"]})
+    assert r.status_code == 422
+    assert "telepatia" in r.text
+
+
+def test_activar_un_bloque_lo_prende_de_verdad():
+    """El camino comercial completo: se contrata y la ruta pasa a responder."""
+    from tests.test_api import _create_company, client
+
+    c = _create_company(name="Clínica Que Compra El Portal")
+    cid = c["id"]
+    assert client.get(f"/api/companies/{cid}/doctors/1/pre-visit").status_code == 402
+
+    r = client.put(
+        f"/api/companies/{cid}/packs",
+        json={"packs": ["booking", "healthcare", "practitioner"]},
+    )
+    assert r.status_code == 200, r.text
+    assert "previsita" in r.json()["modules"]
+    # 404 = el doctor 1 no existe. Lo que importa es que ya NO es 402.
+    assert client.get(f"/api/companies/{cid}/doctors/1/pre-visit").status_code == 404
+
+
+def test_el_catalogo_lista_los_cuatro_bloques():
+    """El panel arma la oferta con esto. Si un bloque no tiene qué decir, no
+    se puede vender; si el orden cambia, la escalera comercial se rompe."""
+    from tests.test_api import client
+
+    r = client.get("/api/packs")
+    assert r.status_code == 200, r.text
+    datos = r.json()
+    assert [b["key"] for b in datos] == ["core", "booking", "healthcare", "practitioner"]
+    for b in datos:
+        assert b["incluye"], f"el bloque '{b['key']}' no dice qué incluye"
+    assert datos[0]["incluido"] is True          # el núcleo va con todo
+    assert all(not b["incluido"] for b in datos[1:])
+    # Y el catálogo no puede prometer un módulo que los packs no habilitan.
+    for b in datos:
+        assert set(b["modules"]) == set(PACKS[b["key"]].modules)

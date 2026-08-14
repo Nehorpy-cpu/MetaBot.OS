@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  Activity, Bot, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
-  MessageSquare, Pill, Plus, Sliders, Video, Zap,
+  Activity, Bot, Boxes, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
+  Lock, MessageSquare, Pill, Plus, Sliders, Video, Zap,
 } from "lucide-react";
 import { api, auth, setUnauthorizedHandler, type Company } from "./api";
 import { btnPrimary } from "./ui";
@@ -15,20 +15,27 @@ import { IntelligenceView } from "./views/IntelligenceView";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { ChatView } from "./views/ChatView";
 import { ClinicalView } from "./views/ClinicalView";
+import { BlocksView } from "./views/BlocksView";
 import { LoginScreen } from "./views/LoginScreen";
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null); // null = verificando
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical" | "blocks">("dashboard");
+  // Qué bloque mostrar destacado al entrar a la vista de bloques (el que el
+  // usuario acaba de intentar usar sin tenerlo contratado).
+  const [bloqueResaltado, setBloqueResaltado] = useState("");
+  const [esPlataforma, setEsPlataforma] = useState(false);
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAuthed(false));
     // La sesión vive en cookie HttpOnly: se le pregunta al backend si sigue viva.
-    auth.me().then(() => setAuthed(true)).catch(() => setAuthed(false));
+    auth.me()
+      .then((me) => { setAuthed(true); setEsPlataforma(me.is_platform_admin); })
+      .catch(() => setAuthed(false));
   }, []);
 
   useEffect(() => {
@@ -55,6 +62,30 @@ export default function App() {
       <Icon size={16} className={`mr-3 ${view === id ? "text-cyan-400" : "text-zinc-500"}`} /> {label}
     </button>
   );
+
+  /**
+   * Un módulo del panel: el botón normal si está contratado, y si no un
+   * candado que lleva a la oferta.
+   *
+   * Esconderlo del todo era peor de las dos maneras: el cliente no se entera
+   * de que existe algo más para comprar, y el que sí lo compró y no lo ve
+   * cree que se rompió. El candado dice las dos cosas.
+   */
+  const navModulo = (
+    id: typeof view, label: string, Icon: typeof LayoutDashboard,
+    modulo: string, bloque: string,
+  ) => {
+    if (active?.modules?.includes(modulo)) return navBtn(id, label, Icon);
+    return (
+      <button
+        onClick={() => { setBloqueResaltado(bloque); setView("blocks"); }}
+        title="Esta función es de otro bloque. Tocá para ver qué incluye."
+        className="w-full flex items-center px-3 py-2.5 rounded-xl text-xs font-semibold text-zinc-600 hover:text-zinc-400 hover:bg-white/[0.02] transition-all">
+        <Icon size={16} className="mr-3 text-zinc-700" /> {label}
+        <Lock size={11} className="ml-auto text-zinc-700" />
+      </button>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[#040609] font-sans text-zinc-300 flex">
@@ -90,14 +121,17 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-1">
           <div className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest px-3 py-2">Módulos</div>
           {navBtn("dashboard", "Dashboard", LayoutDashboard)}
-          {active?.modules?.includes("agenda") && navBtn("medical", "Agenda de Doctores", Calendar)}
-          {active?.modules?.includes("prescriptions") && navBtn("clinical", "Recetas y Convenios", Pill)}
+          {navModulo("medical", "Agenda de Doctores", Calendar, "agenda", "booking")}
+          {navModulo("clinical", "Recetas y Convenios", Pill, "prescriptions", "healthcare")}
           {navBtn("services", "Servicios & Estudios", Sliders)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
           {navBtn("intelligence", "Inteligencia (Informes)", Activity)}
           {navBtn("studio", "Estudio Visual", Video)}
           {navBtn("agents", "Enjambre de Agentes", Bot)}
+          <div className="pt-3 mt-2 border-t border-white/5">
+            {navBtn("blocks", "Bloques del sistema", Boxes)}
+          </div>
         </nav>
         <div className="p-4 border-t border-white/5">
           <button onClick={() => { auth.logout().finally(() => setAuthed(false)); }}
@@ -128,8 +162,19 @@ export default function App() {
               onCompanyUpdated={() => api.listCompanies().then(setCompanies).catch(() => {})}
             />
           )}
-          {active && view === "medical" && active.modules?.includes("agenda") && <MedicalAgendaView companyId={active.id} />}
-          {active && view === "clinical" && <ClinicalView company={active} />}
+          {active && view === "medical" && active.modules?.includes("agenda") && <MedicalAgendaView companyId={active.id} modules={active.modules} />}
+          {/* El render se gatea igual que el botón. Si solo se escondiera el
+              botón, la vista seguiría montándose cuando el bloque se apaga con
+              esa pantalla abierta, y dispararía llamadas que dan 402. */}
+          {active && view === "clinical" && active.modules?.includes("prescriptions") && <ClinicalView company={active} />}
+          {active && view === "blocks" && (
+            <BlocksView
+              company={active}
+              esPlataforma={esPlataforma}
+              resaltar={bloqueResaltado}
+              onCambio={(c) => setCompanies((prev) => prev.map((x) => (x.id === c.id ? c : x)))}
+            />
+          )}
           {active && view === "chat" && <ChatView companyId={active.id} />}
           {active && view === "intelligence" && <IntelligenceView companyId={active.id} />}
           {active && view === "studio" && <StudioView companyId={active.id} />}

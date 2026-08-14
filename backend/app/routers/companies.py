@@ -3,13 +3,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import onboarding
-from ..auth import Identity, allowed_company_ids, get_identity
+from ..auth import Identity, allowed_company_ids, audit, get_identity
 from ..db import get_db
 from ..llm import LLMError
 from ..models import Agent, Company, Membership, Supervision
 from ..permissions import Role
 from ..swarm import _fetch_page_text
-from ..packs import modules_for, suggested_for
+from ..packs import PACKS, modules_for, packs_iniciales
 from ..templates import TEMPLATES
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -54,6 +54,10 @@ class CompanyOut(BaseModel):
     # una veterinaria son verticales distintas con la misma agenda, y filtrar
     # por rubro las dejaba a todas sin la vista.
     modules: list[str] = []
+    # Los bloques contratados, tal cual están guardados. `modules` es la
+    # consecuencia (con las dependencias ya resueltas); esto es la causa, y
+    # es lo que el panel necesita para ofrecer lo que todavía no compraron.
+    packs: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -93,7 +97,7 @@ def create_company(
         name=payload.name,
         vertical=payload.vertical,
         niche=template["niche"],
-        packs=",".join(suggested_for(payload.vertical)),
+        packs=packs_iniciales(payload.vertical),
     )
     db.add(company)
     db.flush()
@@ -191,6 +195,62 @@ def update_company(company_id: int, payload: CompanyUpdate, db: Session = Depend
         setattr(company, field, value)
     db.commit()
     db.refresh(company)
+    return company
+
+
+class PacksUpdate(BaseModel):
+    # Qué bloques tiene contratados. `core` sobra: va siempre.
+    packs: list[str] = Field(default_factory=list, max_length=20)
+
+
+@router.put("/{company_id}/packs", response_model=CompanyOut)
+def set_packs(
+    company_id: int,
+    payload: PacksUpdate,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Qué bloques compró el cliente. Solo el operador de la plataforma.
+
+    Va en su propio endpoint y NO como un campo más de `PATCH /companies`:
+    ahí adentro cualquier miembro de la empresa puede escribir, y un cliente
+    que se agrega `healthcare` solo se estaría regalando el bloque que
+    justamente le estamos vendiendo.
+    """
+    if not identity.is_platform:
+        raise HTTPException(403, "Solo el operador de la plataforma cambia los bloques")
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(404, "Empresa no encontrada")
+
+    desconocidos = [k for k in payload.packs if k not in PACKS]
+    if desconocidos:
+        # Guardar un bloque inexistente deja a la empresa pagando por nada y
+        # al gate rechazando rutas sin que nadie entienda por qué.
+        raise HTTPException(
+            422,
+            f"Bloques que no existen: {desconocidos}. Disponibles: {sorted(PACKS)}",
+        )
+
+    antes = sorted(company.modules)
+    claves = ["core"] + [k for k in dict.fromkeys(payload.packs) if k != "core"]
+    company.packs = ",".join(claves)
+    db.flush()
+    despues = sorted(company.modules)
+    db.commit()
+    db.refresh(company)
+    # Esto es un cambio comercial: quién lo hizo y qué se le prendió o apagó
+    # tiene que quedar escrito. Las dependencias se resuelven solas, así que
+    # se audita el resultado —los módulos— y no solo lo que se pidió.
+    audit(
+        db, "company.packs", actor_kind="platform" if not identity.user_id else "user",
+        user_id=identity.user_id, company_id=company_id,
+        detail={
+            "packs": company.packs,
+            "modulos_agregados": [m for m in despues if m not in antes],
+            "modulos_quitados": [m for m in antes if m not in despues],
+        },
+    )
     return company
 
 

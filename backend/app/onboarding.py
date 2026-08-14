@@ -121,7 +121,7 @@ async def profile_and_create(
         name=name,
         vertical=vertical,
         # Business DNA → Business Packs: qué capacidades se activan
-        packs=",".join(packs.suggested_for(vertical)),
+        packs=packs.packs_iniciales(vertical),
         niche=str(profile.get("niche", ""))[:200],
         industry=str(profile.get("industry", ""))[:200],
         profile=json.dumps(

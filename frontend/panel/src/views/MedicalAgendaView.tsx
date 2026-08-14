@@ -11,7 +11,13 @@ import { ClinicScheduleModal, ScheduleModal } from "./ScheduleEditor";
 import { AbsencesModal } from "./AbsencesModal";
 import { PreVisitModal } from "./PreVisitModal";
 
-export function MedicalAgendaView({ companyId }: { companyId: number }) {
+export function MedicalAgendaView(
+  { companyId, modules = [] }: { companyId: number; modules?: string[] },
+) {
+  // El resumen pre-visita es del bloque 4 (Portal del Profesional), que se
+  // vende aparte. Sin él, el backend contesta 402: mostrar el botón sería
+  // prometer algo que no va a pasar.
+  const tienePrevisita = modules.includes("previsita");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState<number | "all">("all");
@@ -69,10 +75,12 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
             className="text-sm bg-white/[0.03] hover:bg-white/[0.06] text-zinc-300 border border-white/10 px-4 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-40">
             <CalendarOff size={15} /> Licencias
           </button>
-          <button onClick={() => setShowPreVisit(true)} disabled={!doctors.length}
-            className={btnPrimary}>
-            <ClipboardList size={15} /> Resumen para el profesional
-          </button>
+          {tienePrevisita && (
+            <button onClick={() => setShowPreVisit(true)} disabled={!doctors.length}
+              className={btnPrimary}>
+              <ClipboardList size={15} /> Resumen para el profesional
+            </button>
+          )}
         </div>
       </div>
 
@@ -232,7 +240,7 @@ export function MedicalAgendaView({ companyId }: { companyId: number }) {
         <AbsencesModal companyId={companyId} doctors={doctors}
           onClose={() => setShowAbsences(false)} onSaved={load} />
       )}
-      {showPreVisit && (
+      {showPreVisit && tienePrevisita && (
         <PreVisitModal companyId={companyId} doctors={doctors}
           onClose={() => setShowPreVisit(false)} />
       )}

@@ -30,10 +30,21 @@ Base.metadata.create_all(bind=engine)
 client = TestClient(app, headers={"Authorization": "Bearer test-token-secreto"})
 
 
-def _create_company(vertical="medical", name="Clínica Test"):
+def _create_company(vertical="medical", name="Clínica Test", packs=None):
+    """Crea una empresa; con `packs` se le contratan bloques adicionales.
+
+    Una empresa nueva arranca con lo que su rubro sugiere, que NO incluye los
+    bloques que se venden aparte (hoy, el Portal del Profesional). El test que
+    necesita uno lo pide explícito: así se lee de qué bloque es cada función.
+    """
     resp = client.post("/api/companies", json={"name": name, "vertical": vertical})
     assert resp.status_code == 201
-    return resp.json()
+    company = resp.json()
+    if packs is not None:
+        r = client.put(f"/api/companies/{company['id']}/packs", json={"packs": packs})
+        assert r.status_code == 200, r.text
+        company = r.json()
+    return company
 
 
 def _pronto(dias=3, hora=10):

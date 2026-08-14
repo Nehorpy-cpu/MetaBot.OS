@@ -18,10 +18,17 @@ export function ServicesView({ company }: { company: Company }) {
 
   const load = useCallback(() => {
     serviceApi.list(company.id).then(setServices).catch(() => setServices([]));
-    api.listDoctors(company.id).then(setDoctors).catch(() => setDoctors([]));
+    // Los profesionales son del bloque de Agenda. Sin ese bloque la llamada
+    // devuelve 402: no se pregunta en vez de tragarse el error, así el panel
+    // no golpea una ruta que ya sabe que no tiene.
+    if (company.modules?.includes("agenda")) {
+      api.listDoctors(company.id).then(setDoctors).catch(() => setDoctors([]));
+    } else {
+      setDoctors([]);
+    }
     serviceApi.suggestions(company.id).then(setSuggestions).catch(() => setSuggestions([]));
     catalogApi.listProducts(company.id).then(setProducts).catch(() => setProducts([]));
-  }, [company.id]);
+  }, [company.id, company.modules]);
   useEffect(load, [load]);
 
   const acceptSuggestion = async (s: ServiceSuggestion) => {

@@ -5,6 +5,7 @@ tenant con los packs `booking` + `healthcare` activos. Una perfumería tiene
 `commerce`. Una agencia de viajes tendrá `travel`. Nadie escribe
 `if vertical == "medical"` en el núcleo.
 """
+import re
 from dataclasses import dataclass, field
 
 
@@ -190,15 +191,29 @@ def suggested_for(vertical: str) -> list[str]:
     return list(VERTICAL_PACKS.get(vertical, ()))
 
 
+def packs_iniciales(vertical: str) -> str:
+    """Lo que se le guarda a una empresa nueva, listo para la columna.
+
+    Incluye `core` explícito aunque `active_packs` lo agregue solo: la fila
+    de la base tiene que poder leerse sola y decir qué compró el cliente.
+    Es también lo que escribió la migración b8d2e5f70a91, así que una
+    empresa vieja y una nueva se ven igual.
+    """
+    return ",".join(["core"] + suggested_for(vertical))
+
+
 def active_packs(company) -> list[Pack]:
     """Packs activos de una empresa, resolviendo dependencias.
 
-    Compatibilidad: si la empresa no tiene packs guardados (creada antes de
-    esta versión), se derivan de su vertical.
+    Lo que la empresa tiene contratado sale de `company.packs` y de ningún
+    otro lado. Antes, si venía vacío se derivaba del rubro: eso convertía a
+    `packs` en decorativo —una clínica a la que le sacabas la agenda la
+    recuperaba sola en la siguiente request— y hacía imposible vender por
+    bloques. La compatibilidad con las empresas viejas se resolvió de una
+    vez en la migración b8d2e5f70a91, que es donde corresponde: en los
+    datos. Vacío ahora significa lo que dice: solo el núcleo.
     """
     keys = [k for k in (company.packs or "").split(",") if k]
-    if not keys:
-        keys = suggested_for(company.vertical)
     # El núcleo no se compra ni se apaga: es el bot, el catálogo y los
     # servicios. Va primero para que sus reglas encabecen el prompt.
     keys = ["core"] + [k for k in keys if k != "core"]
@@ -250,3 +265,102 @@ def modules_for(company) -> set[str]:
     for pack in active_packs(company):
         modules.update(pack.modules)
     return modules
+
+
+def pack_del_modulo(modulo: str) -> Pack | None:
+    """Qué bloque hay que comprar para tener ese módulo."""
+    for pack in PACKS.values():
+        if modulo in pack.modules:
+            return pack
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# El gate del servidor: qué bloque exige cada ruta.
+#
+# Se aplica POR PATH y nunca por router. `medical.py` mezcla en un solo
+# archivo la agenda (bloque 2), el padrón del Círculo de Médicos (bloque 3)
+# y el resumen pre-visita (bloque 4): gatear el router entero le regalaría
+# dos bloques al que compró uno.
+#
+# El orden ES la prioridad: gana la primera regla que coincide. Por eso
+# `/doctors/7/pre-visit` cae en `previsita` y no en `agenda`.
+#
+# Los patrones se comparan contra el sufijo que sigue al id de la empresa,
+# y usan `[^/]+` para el id porque el mismo patrón tiene que servir para la
+# ruta real (`/doctors/7/schedule`) y para la plantilla de FastAPI
+# (`/doctors/{doctor_id}/schedule`), que es contra lo que corre el test.
+# ─────────────────────────────────────────────────────────────────────────
+
+NUCLEO = ""  # lo que devuelve `modulo_de_ruta` cuando la ruta va siempre
+
+_RUTAS_POR_MODULO: tuple[tuple[str, str], ...] = (
+    # Bloque 4 — Portal del Profesional
+    (r"^/doctors/[^/]+/pre-visit(/send)?$", "previsita"),
+    (r"^/portal(/|$)", "portal"),
+    # Bloque 3 — Salud
+    (r"^/doctors/(verify|verify-all|from-registry)$", "registry"),
+    (r"^/registry(/|$)", "registry"),
+    (r"^/prescriptions(/|$)", "prescriptions"),
+    (r"^/insurers(/|$)", "insurance"),
+    (r"^/medication(/|$)", "medication"),
+    # Bloque 2 — Agenda
+    (r"^/reminders(/|$)", "reminders"),
+    (r"^/doctors(/|$)", "agenda"),
+    (r"^/appointments(/|$)", "agenda"),
+    (r"^/clinic-schedule(/|$)", "agenda"),
+    (r"^/absences(/|$)", "agenda"),
+)
+
+# Rutas del núcleo: van con cualquier empresa, compre lo que compre.
+#
+# La lista es EXPLÍCITA a propósito. Si la regla fuera "lo que no está en el
+# mapa de módulos es núcleo", un endpoint nuevo que nadie clasificó se
+# regalaría en silencio — que es exactamente el agujero que este gate viene
+# a tapar. Sin clasificar no es núcleo: es un error, y el test lo frena
+# antes de que salga.
+_RUTAS_DEL_NUCLEO: tuple[str, ...] = (
+    r"^$",                              # GET/PATCH de la empresa
+    r"^/agents(/|$)",
+    r"^/supervision(/|$)",
+    r"^/packs(/|$)",              # qué bloques compró: lo cambia la plataforma
+    r"^/chat(/|$)",
+    r"^/conversations(/|$)",
+    r"^/dashboard(/|$)",
+    r"^/stats(/|$)",
+    r"^/glossary(/|$)",
+    r"^/services(/|$)",
+    r"^/products(/|$)",
+    r"^/catalog(/|$)",
+    r"^/wa(/|$)",                       # el canal de WhatsApp ES el núcleo
+    r"^/reports(/|$)",
+    r"^/audits(/|$)",
+    r"^/segments(/|$)",
+    r"^/prompt-suggestions(/|$)",
+    r"^/competitors(/|$)",
+    r"^/intelligence-sources(/|$)",
+    r"^/campaigns(/|$)",
+    r"^/creatives(/|$)",
+)
+
+_MODULO_COMPILADO = tuple((re.compile(p), m) for p, m in _RUTAS_POR_MODULO)
+_NUCLEO_COMPILADO = tuple(re.compile(p) for p in _RUTAS_DEL_NUCLEO)
+
+
+def modulo_de_ruta(sufijo: str) -> str | None:
+    """Módulo que exige una ruta, a partir del path que sigue al id.
+
+    Devuelve:
+      - el nombre del módulo, si la ruta pertenece a un bloque vendible;
+      - `NUCLEO` ("") si va con cualquier empresa;
+      - None si nadie la clasificó todavía. None no es "permitido": es un
+        error de programación que el test `test_bloques` frena antes del
+        despliegue, y que en caliente se rechaza en vez de regalarse.
+    """
+    for patron, modulo in _MODULO_COMPILADO:
+        if patron.match(sufijo):
+            return modulo
+    for patron in _NUCLEO_COMPILADO:
+        if patron.match(sufijo):
+            return NUCLEO
+    return None

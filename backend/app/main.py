@@ -10,18 +10,19 @@ from fastapi.staticfiles import StaticFiles
 from . import db as db_module
 from . import evaluator
 from . import medication  # noqa: F401  — registra el handler de tomas en la cola
+from . import packs
 from .auth import resolve_identity
 from .config import ADMIN_TOKEN
 from .llm import available_providers
-from .models import Membership
-from .routers import agents, auth, bridge, campaigns, catalog, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
+from .models import Company, Membership
+from .routers import agents, auth, blocks, bridge, campaigns, catalog, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, services, whatsapp_webhook
 from .scheduler import _start_job_worker, start_scheduler
 
 # El esquema lo gestiona Alembic (entrypoint.sh corre `alembic upgrade head`).
 # Una sola fuente de verdad para la estructura de la base.
 
 app = FastAPI(title="MetaBot.OS", version="0.12.0")
-for router in (auth.router, companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router, clinical.router):
+for router in (auth.router, blocks.router, companies.router, agents.router, medical.router, glossary.router, dashboard.router, chat.router, whatsapp_webhook.router, bridge.router, intelligence.router, creatives.router, campaigns.router, services.router, catalog.router, clinical.router):
     app.include_router(router, prefix="/api")
 
 
@@ -40,19 +41,31 @@ _TENANT_PATH = re.compile(r"^/api/companies/([^/]+)(?:/|$)")
 _NON_TENANT_SEGMENTS = {"smart"}
 
 
-def _can_access_company(user_id: int, company_id: int) -> bool:
+def _acceso_y_modulos(
+    user_id: int | None, company_id: int, es_plataforma: bool
+) -> tuple[bool, set[str] | None]:
+    """Membresía + módulos contratados, en una sola sesión.
+
+    Devuelve (puede_entrar, módulos). `módulos` es None cuando la empresa no
+    existe: ahí el gate de bloques se hace a un lado y deja que el endpoint
+    conteste 404, que es lo que corresponde.
+    """
     db = db_module.SessionLocal()
     try:
-        return (
-            db.query(Membership)
-            .filter(
-                Membership.user_id == user_id,
-                Membership.company_id == company_id,
-                Membership.status == "active",
+        if not es_plataforma:
+            miembro = (
+                db.query(Membership)
+                .filter(
+                    Membership.user_id == user_id,
+                    Membership.company_id == company_id,
+                    Membership.status == "active",
+                )
+                .first()
             )
-            .first()
-            is not None
-        )
+            if miembro is None:
+                return False, None
+        company = db.get(Company, company_id)
+        return True, (set(company.modules) if company else None)
     finally:
         db.close()
 
@@ -65,9 +78,12 @@ async def enforce_auth_and_tenant(request: Request, call_next):
        salvo salud, login y webhooks.
     2. Si la ruta apunta a una empresa concreta, se exige membresía activa.
        El tenant se valida contra la identidad, nunca se confía en el path.
+    3. Se exige que la empresa tenga contratado el bloque de esa ruta. El
+       panel esconde lo que no compraste; esto es lo que además lo impide.
 
-    Fail-closed: un segmento de empresa que no sea un entero canónico se
-    rechaza en vez de saltear la verificación.
+    Fail-closed en los tres pasos: un segmento de empresa que no sea un
+    entero canónico se rechaza en vez de saltear la verificación, y una
+    ruta que nadie clasificó se rechaza en vez de regalarse.
     """
     path = request.url.path
     if not path.startswith("/api") or path.startswith(_PUBLIC_API_PREFIXES):
@@ -86,16 +102,55 @@ async def enforce_auth_and_tenant(request: Request, call_next):
     if not identity:
         return JSONResponse({"detail": "No autorizado"}, status_code=401)
 
-    if not identity.is_platform:  # usuario normal: se valida la empresa del path
-        match = _TENANT_PATH.match(path)
-        if match:
-            raw = match.group(1)
-            if raw not in _NON_TENANT_SEGMENTS:
-                # Forma canónica obligatoria: "7" sí, "+7"/" 7"/"007" no.
-                if not raw.isdigit() or str(int(raw)) != raw:
-                    return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
-                if not _can_access_company(identity.user_id, int(raw)):
-                    return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
+    match = _TENANT_PATH.match(path)
+    if not match:
+        return await call_next(request)
+    raw = match.group(1)
+    if raw in _NON_TENANT_SEGMENTS:
+        return await call_next(request)
+    # Forma canónica obligatoria: "7" sí, "+7"/" 7"/"007" no.
+    if not raw.isdigit() or str(int(raw)) != raw:
+        return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
+    company_id = int(raw)
+
+    entra, modulos = _acceso_y_modulos(
+        identity.user_id, company_id, identity.is_platform
+    )
+    if not entra:
+        return JSONResponse({"detail": "Empresa no encontrada"}, status_code=404)
+
+    # 3. Bloques contratados. Acá también, en UN solo lugar y por PATH: el
+    #    archivo `medical.py` mezcla agenda, padrón y pre-visita, así que
+    #    gatear por router le regalaría bloques enteros a quien compró uno.
+    modulo = packs.modulo_de_ruta(path[match.end(1):])
+    if modulo is None:
+        # Ruta que nadie clasificó. No se regala: se rechaza. El test
+        # `test_bloques` recorre todas las rutas y falla si queda alguna
+        # sin bloque, así que esto no debería verse nunca en producción.
+        return JSONResponse(
+            {"detail": {"motivo": "Ruta sin bloque asignado", "codigo": "ruta_sin_bloque"}},
+            status_code=403,
+        )
+    if modulo and modulos is not None and modulo not in modulos:
+        pack = packs.pack_del_modulo(modulo)
+        return JSONResponse(
+            {
+                # Detalle ESTRUCTURADO, como el 409 de agenda: el panel
+                # decide por `codigo` y nunca por el texto. Ya se desarmó
+                # una guardia sola porque alguien mejoró una redacción.
+                "detail": {
+                    "motivo": (
+                        "Esta empresa no tiene contratado el bloque "
+                        f"«{pack.name if pack else modulo}»."
+                    ),
+                    "codigo": "modulo_no_contratado",
+                    "modulo": modulo,
+                    "bloque": pack.key if pack else "",
+                    "bloque_nombre": pack.name if pack else "",
+                }
+            },
+            status_code=402,  # Payment Required: el panel muestra la oferta
+        )
 
     return await call_next(request)
 

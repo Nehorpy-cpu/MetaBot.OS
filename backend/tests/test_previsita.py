@@ -13,6 +13,11 @@ import pytest
 
 from tests.test_api import _create_company, client
 
+PORTAL = ["booking", "healthcare", "practitioner"]
+"""El resumen pre-visita es del bloque 4, que se vende aparte: una clínica
+que solo compró la agenda recibe 402 en estos endpoints, no el resumen."""
+
+
 from app import previsita
 from app.db import SessionLocal
 from app.models import (
@@ -231,7 +236,7 @@ def test_la_receta_de_otro_colega_del_centro_se_ve_con_su_nombre():
 
 def test_no_se_manda_a_un_doctor_sin_telefono():
     """Son datos clínicos: sin un número cargado no van a ningún lado."""
-    company = _create_company(name="Clínica Sin Teléfono")
+    company = _create_company(name="Clínica Sin Teléfono", packs=PORTAL)
     cid = company["id"]
     doc = client.post(f"/api/companies/{cid}/doctors",
                       json={"name": "Dr. Sin Tel"}).json()
@@ -244,7 +249,7 @@ def test_no_se_manda_a_un_doctor_sin_telefono():
 
 def test_sin_pacientes_no_se_manda_nada():
     """Un mensaje diario que casi siempre dice "no tenés nada" se deja de leer."""
-    company = _create_company(name="Clínica Día Libre")
+    company = _create_company(name="Clínica Día Libre", packs=PORTAL)
     cid = company["id"]
     doc = _doctor(cid)
     r = client.post(f"/api/companies/{cid}/doctors/{doc['id']}/pre-visit/send",
@@ -342,7 +347,7 @@ def test_el_texto_se_arma_en_el_servidor_sin_llm():
 
 
 def test_el_endpoint_devuelve_el_resumen_completo():
-    company = _create_company(name="Clínica Endpoint Previsita")
+    company = _create_company(name="Clínica Endpoint Previsita", packs=PORTAL)
     cid = company["id"]
     doc = _doctor(cid)
     _cita(cid, doc["id"], "Marco Garcete", "595981111222", MANANA)
@@ -357,8 +362,8 @@ def test_el_endpoint_devuelve_el_resumen_completo():
 
 
 def test_el_resumen_de_otra_empresa_da_404():
-    a = _create_company(name="Clínica Previsita A")
-    b = _create_company(name="Clínica Previsita B")
+    a = _create_company(name="Clínica Previsita A", packs=PORTAL)
+    b = _create_company(name="Clínica Previsita B", packs=PORTAL)
     doc_a = _doctor(a["id"], "Dra. A")
     r = client.get(f"/api/companies/{b['id']}/doctors/{doc_a['id']}/pre-visit")
     assert r.status_code == 404
