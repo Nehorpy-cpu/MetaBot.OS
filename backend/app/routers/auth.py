@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import auth as auth_lib
 from ..db import get_db
-from ..models import Company, Membership, User
+from ..models import AuthSession, Company, Membership, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -71,6 +71,56 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
         auth_lib.revoke_session(db, token)
     response.delete_cookie(auth_lib.SESSION_COOKIE, path="/")
     return {"ok": True}
+
+
+class CambioDeClave(BaseModel):
+    actual: str = Field(min_length=1, max_length=200)
+    nueva: str = Field(min_length=10, max_length=200)
+
+
+@router.post("/password")
+def cambiar_clave(
+    payload: CambioDeClave,
+    request: Request,
+    identity: auth_lib.Identity = Depends(auth_lib.get_identity),
+    db: Session = Depends(get_db),
+):
+    """Cambiar la propia contraseña.
+
+    Existe porque el sistema reparte claves temporales: el portal del
+    profesional le entrega una al médico y le dice que la cambie. Sin este
+    endpoint, esa clave —que pasó por las manos de quien la creó— es la
+    definitiva, y la promesa del panel era falsa.
+
+    Exige la clave actual: una sesión robada no puede además apoderarse de la
+    cuenta. Y al cambiarla se cierran TODAS las sesiones menos esta, que es
+    el sentido de cambiarla cuando uno sospecha que se filtró.
+    """
+    if not identity.user:
+        # El token de plataforma es una variable de entorno, no una cuenta.
+        raise HTTPException(400, "El operador de la plataforma no cambia clave por acá")
+    user = identity.user
+    ip = request.client.host if request.client else ""
+    if not auth_lib.verify_password(payload.actual, user.password_hash):
+        auth_lib.audit(db, "auth.password", user_id=user.id, ok=False, ip=ip)
+        raise HTTPException(403, "La contraseña actual no es correcta")
+    if payload.nueva == payload.actual:
+        raise HTTPException(422, "La contraseña nueva tiene que ser distinta")
+
+    user.password_hash = auth_lib.hash_password(payload.nueva)
+    actual = request.cookies.get(auth_lib.SESSION_COOKIE, "")
+    conservar = auth_lib._token_hash(actual) if actual else ""
+    cerradas = 0
+    for sesion in db.query(AuthSession).filter(
+        AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None)
+    ):
+        if sesion.token_hash != conservar:
+            sesion.revoked_at = _now()
+            cerradas += 1
+    db.commit()
+    auth_lib.audit(db, "auth.password", user_id=user.id, ok=True, ip=ip,
+                   detail={"sesiones_cerradas": cerradas})
+    return {"ok": True, "sesiones_cerradas": cerradas}
 
 
 def _me_payload(db: Session, user: User) -> dict:

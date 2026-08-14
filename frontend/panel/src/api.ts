@@ -511,6 +511,11 @@ export const auth = {
   login: (email: string, password: string) =>
     request<Me>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => request<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  /** Cambia la propia clave y cierra las demás sesiones. */
+  cambiarClave: (actual: string, nueva: string) =>
+    request<{ ok: boolean; sesiones_cerradas: number }>("/auth/password", {
+      method: "POST", body: JSON.stringify({ actual, nueva }),
+    }),
   me: () => request<Me>("/auth/me"),
 };
 

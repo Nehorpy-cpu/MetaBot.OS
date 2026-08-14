@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, CalendarDays, Clock, HelpCircle, LogOut, Pill,
-  Search, Sparkles, Stethoscope, User,
+  KeyRound, Search, Sparkles, Stethoscope, User,
 } from "lucide-react";
 import {
   api, auth, type FichaCompleta, type FichaPaciente, type PortalMe,
   type PortalPaciente, type Previsita,
 } from "../api";
-import { input } from "../ui";
+import { input, btnPrimary, Modal } from "../ui";
 
 /**
  * El portal del profesional (bloque 4).
@@ -200,6 +200,58 @@ function Ficha({ companyId, paciente, telefono, onVolver }: {
   );
 }
 
+/** Cambiar la propia clave. La temporal la generó otra persona. */
+function CambiarClave({ onClose }: { onClose: () => void }) {
+  const [actual, setActual] = useState("");
+  const [nueva, setNueva] = useState("");
+  const [repetida, setRepetida] = useState("");
+  const [estado, setEstado] = useState("");
+  const [listo, setListo] = useState(false);
+
+  const guardar = async () => {
+    setEstado("");
+    if (nueva !== repetida) { setEstado("Las dos claves nuevas no coinciden."); return; }
+    try {
+      const r = await auth.cambiarClave(actual, nueva);
+      setListo(true);
+      setEstado(
+        r.sesiones_cerradas > 0
+          ? `Listo. Se cerraron ${r.sesiones_cerradas} sesión(es) abierta(s) en otros dispositivos.`
+          : "Listo, tu clave quedó cambiada."
+      );
+    } catch (e) {
+      setEstado(e instanceof Error ? e.message : "No se pudo cambiar");
+    }
+  };
+
+  return (
+    <Modal title="Cambiar mi contraseña" onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-xs text-zinc-400">
+          Si entraste con una clave que te pasó la clínica, cambiala: esa la conoce
+          quien te la dio. Al cambiarla se cierran tus sesiones en otros dispositivos.
+        </p>
+        <input className={input} type="password" placeholder="Clave actual"
+          value={actual} onChange={(e) => setActual(e.target.value)} />
+        <input className={input} type="password" placeholder="Clave nueva (mínimo 10)"
+          value={nueva} onChange={(e) => setNueva(e.target.value)} />
+        <input className={input} type="password" placeholder="Repetí la clave nueva"
+          value={repetida} onChange={(e) => setRepetida(e.target.value)} />
+        {estado && (
+          <p className={`text-xs ${listo ? "text-emerald-300" : "text-red-400"}`}>{estado}</p>
+        )}
+        {!listo && (
+          <button onClick={guardar}
+            disabled={!actual || nueva.length < 10}
+            className={`${btnPrimary} w-full justify-center disabled:opacity-40`}>
+            Cambiar contraseña
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export function PortalView({ companyId, onSalir }: {
   companyId: number; onSalir: () => void;
 }) {
@@ -210,6 +262,7 @@ export function PortalView({ companyId, onSalir }: {
   const [busqueda, setBusqueda] = useState("");
   const [encontrados, setEncontrados] = useState<PortalPaciente[]>([]);
   const [abierto, setAbierto] = useState<{ nombre: string; telefono: string } | null>(null);
+  const [cambiando, setCambiando] = useState(false);
 
   useEffect(() => {
     api.portalMe(companyId).then(setYo)
@@ -248,10 +301,16 @@ export function PortalView({ companyId, onSalir }: {
               </p>
             </div>
           </div>
-          <button onClick={salir}
-            className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-1.5">
-            <LogOut size={13} /> Salir
-          </button>
+          <div className="flex items-center gap-4">
+            <button onClick={() => setCambiando(true)}
+              className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-1.5">
+              <KeyRound size={13} /> Mi clave
+            </button>
+            <button onClick={salir}
+              className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-1.5">
+              <LogOut size={13} /> Salir
+            </button>
+          </div>
         </div>
       </header>
 
@@ -328,6 +387,8 @@ export function PortalView({ companyId, onSalir }: {
           </div>
         )}
       </main>
+
+      {cambiando && <CambiarClave onClose={() => setCambiando(false)} />}
     </div>
   );
 }

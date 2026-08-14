@@ -344,3 +344,50 @@ def test_la_base_rechaza_ligar_doctor_de_una_empresa_con_servicio_de_otra():
             db.rollback()
     finally:
         db.close()
+
+
+# ─── Cambio de contraseña ────────────────────────────────────────────────
+
+
+def test_cambiar_la_clave_cierra_las_otras_sesiones():
+    """El sistema reparte claves temporales (el portal del profesional le da
+    una al médico). Si no se pudieran cambiar, esa clave —que pasó por las
+    manos de quien la creó— sería la definitiva."""
+    c = _create_company(name="Empresa Cambio Clave")
+    _make_user("cambia@test.py", c["id"])
+
+    vieja = _login("cambia@test.py")          # sesión que se va a quedar afuera
+    actual = _login("cambia@test.py")         # sesión desde la que se cambia
+
+    r = actual.post("/api/auth/password",
+                    json={"actual": "clave-segura-123", "nueva": "otra-clave-larga-9"})
+    assert r.status_code == 200, r.text
+    assert r.json()["sesiones_cerradas"] >= 1
+
+    # La sesión que cambió la clave sigue viva; la otra, no.
+    assert actual.get("/api/auth/me").status_code == 200
+    assert vieja.get("/api/auth/me").status_code == 401
+
+    # Y se entra con la nueva, no con la vieja.
+    from fastapi.testclient import TestClient
+
+    c2 = TestClient(app, base_url="https://testserver")
+    assert c2.post("/api/auth/login",
+                   json={"email": "cambia@test.py", "password": "clave-segura-123"}
+                   ).status_code == 401
+    assert c2.post("/api/auth/login",
+                   json={"email": "cambia@test.py", "password": "otra-clave-larga-9"}
+                   ).status_code == 200
+
+
+def test_no_se_cambia_la_clave_sin_saber_la_actual():
+    """Una sesión robada no puede además apoderarse de la cuenta."""
+    c = _create_company(name="Empresa Clave Robada")
+    _make_user("robada@test.py", c["id"])
+    sesion = _login("robada@test.py")
+
+    r = sesion.post("/api/auth/password",
+                    json={"actual": "la-que-no-es", "nueva": "clave-nueva-larga-1"})
+    assert r.status_code == 403
+    # Y la de siempre sigue sirviendo.
+    assert _login("robada@test.py").get("/api/auth/me").status_code == 200
