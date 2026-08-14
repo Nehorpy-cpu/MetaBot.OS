@@ -3,7 +3,7 @@ import {
   Activity, Bot, Boxes, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
   Lock, MessageSquare, Pill, Plus, Sliders, Video, Zap,
 } from "lucide-react";
-import { api, auth, setBlockedHandler, setUnauthorizedHandler, type Company } from "./api";
+import { api, auth, setBlockedHandler, setUnauthorizedHandler, type Company, type Me } from "./api";
 import { btnPrimary } from "./ui";
 import { NewCompanyModal } from "./views/NewCompanyModal";
 import { DashboardView } from "./views/DashboardView";
@@ -16,6 +16,7 @@ import { ConnectionsView } from "./views/ConnectionsView";
 import { ChatView } from "./views/ChatView";
 import { ClinicalView } from "./views/ClinicalView";
 import { BlocksView } from "./views/BlocksView";
+import { PortalView } from "./views/PortalView";
 import { LoginScreen } from "./views/LoginScreen";
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
   // usuario acaba de intentar usar sin tenerlo contratado).
   const [bloqueResaltado, setBloqueResaltado] = useState("");
   const [esPlataforma, setEsPlataforma] = useState(false);
+  const [me, setMe] = useState<Me | null>(null);
   const [showNewCompany, setShowNewCompany] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -37,7 +39,11 @@ export default function App() {
     setBlockedHandler((info) => { setBloqueResaltado(info.bloque); setView("blocks"); });
     // La sesión vive en cookie HttpOnly: se le pregunta al backend si sigue viva.
     auth.me()
-      .then((me) => { setAuthed(true); setEsPlataforma(me.is_platform_admin); })
+      .then((quien) => {
+        setAuthed(true);
+        setMe(quien);
+        setEsPlataforma(quien.is_platform_admin);
+      })
       .catch(() => setAuthed(false));
   }, []);
 
@@ -58,6 +64,14 @@ export default function App() {
   if (!authed) return <LoginScreen onAuthed={() => setAuthed(true)} />;
 
   const active = companies.find((c) => c.id === activeId) ?? null;
+
+  // Un profesional no usa el panel de la clínica: usa su portal, que es otra
+  // aplicación. El backend además lo encierra en /portal, así que si acá se
+  // le mostrara el panel vería una pantalla de errores.
+  const rolAca = me?.memberships.find((m) => m.company_id === activeId)?.role ?? "";
+  if (activeId && rolAca === "professional") {
+    return <PortalView companyId={activeId} onSalir={() => setAuthed(false)} />;
+  }
 
   const navBtn = (id: typeof view, label: string, Icon: typeof LayoutDashboard) => (
     <button onClick={() => setView(id)}

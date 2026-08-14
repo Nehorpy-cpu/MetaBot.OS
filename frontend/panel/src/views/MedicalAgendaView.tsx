@@ -2,7 +2,7 @@ import React from "react";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, BadgeCheck, Building2, Calendar, CalendarClock, CalendarOff,
-  ClipboardList, Clock, Plus, ShieldCheck, Smartphone, Upload, Users,
+  ClipboardList, Clock, KeyRound, Plus, ShieldCheck, Smartphone, Upload, Users,
 } from "lucide-react";
 import { STATUS_ES, api, esErrorApi, type Appointment, type Doctor } from "../api";
 import { card, input, btnPrimary, Modal } from "../ui";
@@ -10,6 +10,7 @@ import { DoctorImportModal } from "./DoctorImportModal";
 import { ClinicScheduleModal, ScheduleModal } from "./ScheduleEditor";
 import { AbsencesModal } from "./AbsencesModal";
 import { PreVisitModal } from "./PreVisitModal";
+import { AccessModal } from "./AccessModal";
 
 export function MedicalAgendaView(
   { companyId, modules = [] }: { companyId: number; modules?: string[] },
@@ -18,6 +19,8 @@ export function MedicalAgendaView(
   // vende aparte. Sin él, el backend contesta 402: mostrar el botón sería
   // prometer algo que no va a pasar.
   const tienePrevisita = modules.includes("previsita");
+  // El alta de logins es del mismo bloque 4, pero la hace la clínica.
+  const tienePortal = modules.includes("portal");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState<number | "all">("all");
@@ -28,6 +31,7 @@ export function MedicalAgendaView(
   const [showClinicSchedule, setShowClinicSchedule] = useState(false);
   const [showAbsences, setShowAbsences] = useState(false);
   const [showPreVisit, setShowPreVisit] = useState(false);
+  const [showAccesos, setShowAccesos] = useState(false);
   const [clinicaTieneHorario, setClinicaTieneHorario] = useState<boolean | null>(null);
 
   const load = useCallback(() => {
@@ -75,6 +79,12 @@ export function MedicalAgendaView(
             className="text-sm bg-white/[0.03] hover:bg-white/[0.06] text-zinc-300 border border-white/10 px-4 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-40">
             <CalendarOff size={15} /> Licencias
           </button>
+          {tienePortal && (
+            <button onClick={() => setShowAccesos(true)} disabled={!doctors.length}
+              className="text-sm bg-white/[0.03] hover:bg-white/[0.06] text-zinc-300 border border-white/10 px-4 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-40">
+              <KeyRound size={15} /> Accesos al portal
+            </button>
+          )}
           {tienePrevisita && (
             <button onClick={() => setShowPreVisit(true)} disabled={!doctors.length}
               className={btnPrimary}>
@@ -239,6 +249,10 @@ export function MedicalAgendaView(
       {showAbsences && (
         <AbsencesModal companyId={companyId} doctors={doctors}
           onClose={() => setShowAbsences(false)} onSaved={load} />
+      )}
+      {showAccesos && tienePortal && (
+        <AccessModal companyId={companyId} doctors={doctors}
+          onClose={() => setShowAccesos(false)} />
       )}
       {showPreVisit && tienePrevisita && (
         <PreVisitModal companyId={companyId} doctors={doctors}

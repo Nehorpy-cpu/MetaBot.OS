@@ -219,6 +219,7 @@ export interface ResultadoHorario {
 export interface FichaPaciente {
   hora: string;
   paciente: string;
+  /** Para abrir la ficha desde el post-it. No va en el texto de WhatsApp. */
   telefono: string;
   motivo: string;
   servicio: string;
@@ -244,6 +245,50 @@ export interface FichaPaciente {
     medicacion: string[];
     vigente: boolean;
   };
+}
+
+/** ─── Portal del Profesional (bloque 4) ─────────────────────────────── */
+
+export interface PortalMe {
+  doctor_id: number;
+  nombre: string;
+  especialidad: string;
+  empresa: string;
+}
+
+export interface PortalPaciente {
+  nombre: string;
+  telefono: string;
+  ultima_visita: string;
+  visitas: number;
+}
+
+export interface RecetaDelPortal {
+  id: number;
+  fecha: string;
+  diagnostico: string;
+  indicaciones: string;
+  estado: string;
+  medicacion: {
+    nombre: string; dosis: string; via: string; frecuencia: string;
+    cada_horas: number; dias: number; indicaciones: string;
+  }[];
+}
+
+export interface FichaCompleta {
+  paciente: string;
+  telefono: string;
+  /** Con este número hay registros a nombre de otra persona. */
+  numero_compartido: boolean;
+  visitas: { fecha: string; estado: string; motivo: string }[];
+  recetas: RecetaDelPortal[];
+}
+
+export interface AccesoProfesional {
+  doctor_id: number;
+  doctor: string;
+  email: string;
+  activo: boolean;
 }
 
 export interface Previsita {
@@ -505,6 +550,26 @@ export const api = {
     ),
   especialidadesPadron: (companyId: number) =>
     request<{ especialidades: EspecialidadPadron[] }>(`/companies/${companyId}/registry/specialties`),
+  portalMe: (companyId: number) =>
+    request<PortalMe>(`/companies/${companyId}/portal/me`),
+  portalAgenda: (companyId: number, dia?: string) =>
+    request<Previsita>(`/companies/${companyId}/portal/agenda${dia ? `?dia=${dia}` : ""}`),
+  portalPacientes: (companyId: number, q = "") =>
+    request<PortalPaciente[]>(
+      `/companies/${companyId}/portal/pacientes${q ? `?q=${encodeURIComponent(q)}` : ""}`
+    ),
+  portalFicha: (companyId: number, telefono: string, nombre: string) =>
+    request<FichaCompleta>(
+      `/companies/${companyId}/portal/pacientes/ficha?telefono=${encodeURIComponent(telefono)}` +
+      `&nombre=${encodeURIComponent(nombre)}`
+    ),
+  portalAccesos: (companyId: number) =>
+    request<AccesoProfesional[]>(`/companies/${companyId}/portal/accesos`),
+  crearAcceso: (companyId: number, doctorId: number, email: string) =>
+    request<{ email: string; doctor: string; clave_temporal: string; aviso: string }>(
+      `/companies/${companyId}/portal/accesos`,
+      { method: "POST", body: JSON.stringify({ doctor_id: doctorId, email }) }
+    ),
   previsita: (companyId: number, doctorId: number, onDate?: string) =>
     request<Previsita>(
       `/companies/${companyId}/doctors/${doctorId}/pre-visit${onDate ? `?on_date=${onDate}` : ""}`

@@ -223,6 +223,10 @@ def ficha_de_la_cita(db: Session, company: Company, cita: Appointment,
         "servicio": servicio.name if servicio else "",
         "duracion_min": cita.duration_min,
         "estado": cita.status,
+        # El teléfono va en el JSON pero NUNCA en el texto que se manda por
+        # WhatsApp: acá sirve para que el portal pueda abrir la ficha del
+        # paciente desde el post-it, y quien lo lee ya es su médico.
+        "telefono": cita.patient_phone,
         # La diferencia más importante de todas: no se atiende igual a alguien
         # que viene por primera vez que a alguien que ya vino seis veces.
         "primera_vez": not previas,
