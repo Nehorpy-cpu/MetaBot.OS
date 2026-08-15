@@ -173,3 +173,66 @@ agregaron `*.env.*` y `GPTAPI.env` a `.gitignore` y `.dockerignore`.
 Envolver las métricas activas como herramientas del bot, con esquema estricto
 y el permiso verificado ANTES de consultar. Sin conectores, el catálogo de
 herramientas de una empresa va a ser corto y honesto.
+
+---
+
+## Fase 5 — El informe privado ✅
+
+Desplegado y probado en producción el 15-ago-2026. 592 pruebas verdes, 27
+nuevas para esta fase, escritas desde el lado del que intenta abrir el enlace
+sin permiso.
+
+Lo que hay: snapshot congelado, llave opaca de 32 bytes guardada como
+SHA-256, vencimiento, revocación, un-solo-uso opcional, todos los rechazos
+idénticos, HTML escapado sin JavaScript y sin una sola petición a otro
+dominio. El detalle está en `CFO_AGENT_SECURITY.md`.
+
+La migración `c8d3f5b21e94` se ensayó sobre una copia de producción, con
+downgrade y re-upgrade, y se verificó que PostgreSQL rechace una llave que
+apunte al informe de otra empresa.
+
+### Tres cosas que solo aparecieron probando en producción
+
+**1. El ensayo de migración "pasó" sin migrar nada.** El código va horneado en
+la imagen, así que alembic ni vio el archivo nuevo y terminó con un cero
+alegre. Hubo que montarlo para que corriera de verdad. Un ensayo que no puede
+fallar no es un ensayo.
+
+**2. El enlace salía relativo.** Sin `CFO_REPORT_BASE_URL` configurado, el
+endpoint devolvía `/r/<token>` con un 201. El dueño lo pega en un WhatsApp y
+no va a ningún lado; y sobre http el token viajaría en claro, siendo que el
+token ES la autorización. Ahora se exige base absoluta https antes de calcular
+nada, y si falta, 503 con el motivo. No lo agarraron las pruebas porque el
+entorno de test no tenía la variable: ahora `conftest.py` la fija.
+
+**3. El robot de la vista previa de WhatsApp gastaba el informe antes que el
+dueño.** Este es el importante. Cuando un enlace viaja por WhatsApp, WhatsApp
+lo busca para armar la miniatura. Ese GET:
+
+- consumía el enlace de un solo uso — el dueño lo abría después y encontraba
+  un 404, roto justo en el canal para el que se diseñó;
+- se llevaba el informe entero, o sea que los números de la empresa terminaban
+  en los servidores de quien previsualiza;
+- contaba como apertura, así que "¿lo abrieron?" pasaba a contar robots.
+
+Se separó en dos: el GET es una portada que no dice nada —ni la empresa, ni el
+período, ni un número— y el POST entrega los datos. Un robot de vista previa
+no envía formularios. Filtrar por User-Agent no se consideró: se falsea con
+una línea.
+
+Verificado en producción con el User-Agent de WhatsApp: el robot recibe
+`<title>Informe privado</title>` y cero montos; el dueño abre después y ve
+todo; el segundo intento da 404.
+
+---
+
+## Documentos del módulo
+
+- `CFO_AGENT_IMPLEMENTATION_PLAN.md` — las once fases y qué NO se va a hacer
+- `CFO_AGENT_ARCHITECTURE.md` — el recorrido de una pregunta y por qué así
+- `CFO_AGENT_SECURITY.md` — cada control, su prueba, y lo que sigue abierto
+
+## Lo que sigue
+
+Fase 6, conectores: es la que vuelve útil al módulo. Hoy la única fuente es
+interna y el CFO puede contestar bien tres preguntas de diez.
