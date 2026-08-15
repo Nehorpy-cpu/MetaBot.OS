@@ -44,6 +44,24 @@ USD_POR_MILLON_TTS = 0.60              # gpt-4o-mini-tts, por token de texto
 # un número en guaraníes, no para contabilidad.
 GS_POR_USD = 7300
 
+# Lo que gasta un turno REAL, medido en producción el 15-ago-2026 sobre el
+# bloque de finanzas con gpt-4o-mini, 4 turnos:
+#
+#     entrada  4.890 tokens de promedio
+#     salida       97 tokens de promedio
+#
+# La entrada es 50 veces la salida, y ahí está casi todo el costo. No es un
+# error: cada turno manda el prompt del sistema con las reglas de todos los
+# bloques contratados, el esquema de las herramientas, la memoria de la
+# empresa y el historial. Es la palanca más grande que queda para bajar el
+# costo, y es trabajo aparte.
+#
+# El primer cálculo de estos planes se hizo con 1.200 de entrada —una
+# suposición— y daba cuatro veces menos. Por eso los topes se fijan contra el
+# número medido y no contra el que uno esperaría.
+TOKENS_ENTRADA_POR_TURNO = 4_890
+TOKENS_SALIDA_POR_TURNO = 97
+
 
 @dataclass(frozen=True)
 class Plan:

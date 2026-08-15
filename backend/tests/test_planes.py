@@ -59,11 +59,19 @@ def test_un_modelo_gratuito_no_suma_costo():
 
 
 def test_un_turno_real_cuesta_lo_que_dice_la_cuenta():
-    """1.200 de entrada + 200 de salida con gpt-4o-mini. Es el orden de
-    magnitud sobre el que se fijaron los topes de los planes."""
-    gs = planes.costo_gs("gpt-4o-mini", 1200, 200)
-    # 1200/1M*0,15 + 200/1M*0,60 = 0,0003 USD ≈ ₲ 2
-    assert 1 <= gs <= 5, gs
+    """Medido en producción: 4.890 de entrada y 97 de salida. El primer
+    cálculo se hizo con 1.200 —una suposición— y daba cuatro veces menos."""
+    usd = planes.costo_usd("gpt-4o-mini", planes.TOKENS_ENTRADA_POR_TURNO,
+                           planes.TOKENS_SALIDA_POR_TURNO)
+    # 4890/1M*0,15 + 97/1M*0,60 = 0,00079 USD ≈ ₲ 6
+    assert 0.0005 < usd < 0.0012, usd
+
+
+def test_la_entrada_domina_el_costo():
+    """Cada turno manda el prompt completo, las herramientas, la memoria y el
+    historial. Ahí está casi todo el gasto, y es la palanca más grande que
+    queda para bajarlo."""
+    assert planes.TOKENS_ENTRADA_POR_TURNO > planes.TOKENS_SALIDA_POR_TURNO * 10
 
 
 def test_el_consumo_se_abre_por_modelo():
@@ -325,11 +333,11 @@ def test_el_costo_de_ia_de_un_plan_agotado_no_se_come_el_precio():
     for plan in planes.PLANES.values():
         if plan.precio_gs == 0 or plan.clave_propia:
             continue
-        # Un turno medido: ~1.200 de entrada y ~200 de salida.
+        # El turno MEDIDO en producción, no el que uno esperaría.
         costo = planes.costo_gs(
             "gpt-4o-mini",
-            1200 * plan.mensajes_por_mes,
-            200 * plan.mensajes_por_mes,
+            planes.TOKENS_ENTRADA_POR_TURNO * plan.mensajes_por_mes,
+            planes.TOKENS_SALIDA_POR_TURNO * plan.mensajes_por_mes,
         )
         assert costo < plan.precio_gs * 0.35, (
             f"{plan.clave}: la IA se lleva {costo} de {plan.precio_gs}"
