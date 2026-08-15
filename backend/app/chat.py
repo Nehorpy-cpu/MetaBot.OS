@@ -1703,7 +1703,18 @@ async def handle_incoming(
     # Cadena de modelos, no uno solo: si el primero no está o se queda sin
     # cupo, se pasa al siguiente en vez de caer al modelo por defecto del
     # proveedor equivocado. `agent.model` sigue mandando si el tenant lo fijó.
-    cadena = cadena_para("cx", agent.model)
+    #
+    # Una empresa con el bloque de finanzas usa otra cadena. No es una
+    # preferencia: los modelos gratuitos no llaman a `consultar_finanzas` de
+    # forma confiable, y sin esa llamada tampoco corre la verificación de
+    # permiso. Ahí no se pierde un número, se pierde el control de acceso, y
+    # eso justifica pagar el turno.
+    tarea = (
+        "finanzas"
+        if "consultar_finanzas" in {t["function"]["name"] for t in tools}
+        else "cx"
+    )
+    cadena = cadena_para(tarea, agent.model)
     modelo_usado = ""
     actions: list[dict] = []
     media: list[dict] = []  # fotos reales de catálogo a enviar al cliente

@@ -81,24 +81,73 @@ LLM_PROVIDERS = [
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+# ── Qué modelos puede tocar el sistema ───────────────────────────────────
+#
+# LISTA BLANCA. Tres modelos: uno de texto, uno de voz a texto, uno de texto
+# a voz. Nada más.
+#
+# Está en código y no en el entorno a propósito, igual que la clasificación
+# de riesgo y los CFO_ALLOW_*: habilitar un modelo cambia lo que el sistema
+# puede gastar y hacer, así que tiene que verse en el diff de un commit y
+# pasar por revisión. Una variable de entorno la cambia alguien a las once de
+# la noche y nadie se entera.
+#
+# La clave habilita 124 modelos, incluidos `sora-2`, `gpt-image-2` y los
+# `-pro`. Ninguno hace falta para contestar por WhatsApp, y todos se cobran.
+# Que estén disponibles no es motivo para permitirlos: la cuenta la paga el
+# dueño del negocio.
+OPENAI_MODELOS_PERMITIDOS = frozenset({
+    "gpt-4o-mini",             # texto: barato y llama bien a las herramientas
+    "gpt-4o-mini-transcribe",  # voz → texto
+    "gpt-4o-mini-tts",         # texto → voz
+})
+
+
+def _modelo(variable: str, por_defecto: str) -> str:
+    """Permite elegir DENTRO de la lista blanca, nunca fuera.
+
+    Si el entorno pide un modelo que no está permitido, se ignora y se usa el
+    de siempre. Un despliegue mal configurado no puede ser la vía por la que
+    el sistema empieza a llamar a un modelo que nadie autorizó.
+    """
+    elegido = os.environ.get(variable, "").strip() or por_defecto
+    if elegido not in OPENAI_MODELOS_PERMITIDOS:
+        print(
+            f"[config] {variable}={elegido!r} no está en la lista blanca de "
+            f"modelos; se usa {por_defecto!r}."
+        )
+        return por_defecto
+    return elegido
+
+
 # Los identificadores viven ACÁ y no desperdigados por el código: cambiar de
 # modelo tiene que ser una línea de configuración, no una cacería.
-OPENAI_CFO_ROUTER_MODEL = os.environ.get("OPENAI_CFO_ROUTER_MODEL", "gpt-5.6-luna")
-OPENAI_CFO_DEFAULT_MODEL = os.environ.get("OPENAI_CFO_DEFAULT_MODEL", "gpt-5.6-terra")
-OPENAI_CFO_DEEP_MODEL = os.environ.get("OPENAI_CFO_DEEP_MODEL", "gpt-5.6-sol")
-OPENAI_TRANSCRIPTION_MODEL = os.environ.get(
+#
+# Antes acá decía gpt-5.6-luna / gpt-5.6-terra / gpt-5.6-sol, que vinieron de
+# la especificación original. Son modelos grandes y caros, y el CFO no los
+# necesita: narra un número que ya calculó el servidor.
+OPENAI_TEXT_MODEL = _modelo("OPENAI_TEXT_MODEL", "gpt-4o-mini")
+OPENAI_TRANSCRIPTION_MODEL = _modelo(
     "OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
 )
-OPENAI_TRANSCRIPTION_HIGH_ACCURACY_MODEL = os.environ.get(
-    "OPENAI_TRANSCRIPTION_HIGH_ACCURACY_MODEL", "gpt-4o-transcribe"
-)
-OPENAI_TTS_MODEL = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+OPENAI_TTS_MODEL = _modelo("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 
 # Que OpenAI no guarde las respuestas del CFO de su lado. La memoria canónica
 # del sistema vive en PostgreSQL.
 # Dominio desde el que se sirven los informes. Vacío = el mismo del panel,
 # que es lo correcto en un despliegue de un solo dominio.
 CFO_REPORT_BASE_URL = os.environ.get("CFO_REPORT_BASE_URL", "").rstrip("/")
+
+# OpenAI entra al router de proveedores como uno más, con la MISMA forma que
+# los otros. No hay un camino aparte para OpenAI: si lo hubiera, la lista
+# blanca de arriba habría que repetirla en dos lugares y uno de los dos se
+# olvidaría.
+LLM_PROVIDERS.append({
+    "name": "openai",
+    "base_url": OPENAI_BASE_URL,
+    "api_key": OPENAI_API_KEY,
+    "default_model": OPENAI_TEXT_MODEL,
+})
 
 OPENAI_STORE_RESPONSES = os.environ.get("OPENAI_STORE_RESPONSES", "false").lower() == "true"
 

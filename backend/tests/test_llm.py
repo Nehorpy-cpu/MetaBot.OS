@@ -18,7 +18,11 @@ def test_provider_order_is_fallback_chain():
     from app.config import LLM_PROVIDERS
 
     names = [p["name"] for p in LLM_PROVIDERS]
-    assert names == ["nvidia", "groq", "openrouter", "gemini"]
+    # OpenAI va ULTIMO a proposito: es el unico que cobra. Que este registrado
+    # no significa que se use — solo la cadena de la tarea `finanzas` lo pide
+    # primero, y ahi la razon esta medida y escrita en TASK_MODELS.
+    assert names == ["nvidia", "groq", "openrouter", "gemini", "openai"]
+    assert names[-1] == "openai", "el proveedor pago no puede quedar primero"
 
 
 # --- El modelo tiene que ir al proveedor donde vive ---

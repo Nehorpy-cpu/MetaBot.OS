@@ -8,6 +8,8 @@ teléfono que se puede perder y la persona tiene que repetir la pregunta.
 import asyncio
 from datetime import datetime
 
+import pytest
+
 from tests.test_api import _create_company, client  # noqa: I001
 
 from app import cfo
@@ -86,6 +88,26 @@ def _mensajes(cid: int, telefono=TELEFONO):
         ]
     finally:
         db.close()
+
+
+@pytest.fixture(autouse=True)
+def _sin_modelo(monkeypatch):
+    """Nada de este archivo depende de lo que conteste un modelo.
+
+    Todas las pruebas de acá mandan cuatro cifras y verifican el camino
+    DETERMINISTICO del PIN, que el servidor resuelve sin pasar por ninguna IA.
+    El modelo solo aparece cuando el PIN no corresponde y el mensaje sigue de
+    largo como conversacion comun — y ahi su respuesta da igual.
+
+    Sin este parche, dos pruebas fallaban por la cuota diaria agotada de un
+    proveedor gratuito. Una prueba que se cae porque a un tercero se le acabo
+    el cupo no esta probando nuestro codigo.
+    """
+    async def _sin_llamar(*args, **kwargs):
+        return {"role": "assistant", "content": "Listo.",
+                "_modelo_usado": "prueba", "_proveedor_usado": "prueba"}
+
+    monkeypatch.setattr("app.chat.chat_raw", _sin_llamar)
 
 
 def _dejar_pendiente(cid: int, metrica="margen_bruto", telefono=TELEFONO):

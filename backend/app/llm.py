@@ -8,7 +8,7 @@ import logging
 
 import httpx
 
-from .config import LLM_PROVIDERS
+from .config import LLM_PROVIDERS, OPENAI_MODELOS_PERMITIDOS, OPENAI_TEXT_MODEL
 
 logger = logging.getLogger("metabot.llm")
 
@@ -41,6 +41,7 @@ PROVEEDOR_DE_MODELO: dict[str, str] = {
     "meta/llama-3.1-70b-instruct": "nvidia",
     "meta/llama-3.1-8b-instruct": "nvidia",
     "mistralai/mistral-large-2-instruct": "nvidia",
+    OPENAI_TEXT_MODEL: "openai",
 }
 
 # Cadena de candidatos por tarea, en orden de preferencia. Si el primero no
@@ -81,6 +82,18 @@ TASK_MODELS: dict[str, list[str]] = {
     "creative": ["mistralai/mistral-large-2-instruct", "openai/gpt-oss-120b"],
     # Extracción estructurada de datos (catálogo, perfiles)
     "extraction": ["meta/llama-3.3-70b-instruct", "openai/gpt-oss-120b"],
+    # Finanzas. Va aparte de "cx" por una razón medida, no por prolijidad:
+    # los modelos gratuitos de Groq no llaman a la herramienta de forma
+    # confiable. El 15-ago-2026, ante "cuánto vendí este mes", gpt-oss-120b
+    # no la llamó en ninguna prueba y contestó de memoria. Sin llamada
+    # tampoco corre la verificación de permiso — o sea que ahí no se pierde
+    # un número, se pierde el control de acceso.
+    #
+    # Por eso acá se paga: el modelo de OpenAI va primero, y los gratuitos
+    # quedan de respaldo por si la clave falla o se acaba el crédito. Es la
+    # única tarea del sistema que arranca con un modelo pago.
+    "finanzas": [OPENAI_TEXT_MODEL, "openai/gpt-oss-120b",
+                 "llama-3.3-70b-versatile"],
 }
 
 
@@ -159,6 +172,24 @@ async def chat_raw(
                 "cadena en TASK_MODELS."
             )
         intentos = [(p, p["default_model"]) for p in providers]
+
+    # El punto único por donde pasa TODA llamada a un modelo. Acá se aplica la
+    # lista blanca de OpenAI, y acá sola: repartida por el código, un camino
+    # nuevo se olvidaría de mirarla.
+    #
+    # La clave de OpenAI habilita 124 modelos, entre ellos `sora-2`,
+    # `gpt-image-2` y los `-pro`. El sistema tiene autorizados tres —texto,
+    # voz a texto, texto a voz— y ninguno de los otros sale de acá aunque
+    # alguien lo pida por config, por override de agente o por un descuido.
+    intentos = [
+        (p, m) for p, m in intentos
+        if p["name"] != "openai" or m in OPENAI_MODELOS_PERMITIDOS
+    ]
+    if not intentos:
+        raise LLMError(
+            "Los modelos pedidos no están autorizados. En OpenAI solo se "
+            f"permiten: {', '.join(sorted(OPENAI_MODELOS_PERMITIDOS))}."
+        )
 
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
