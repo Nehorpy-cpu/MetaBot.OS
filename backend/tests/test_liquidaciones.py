@@ -571,3 +571,226 @@ def test_un_profesional_no_lista_los_accesos_de_sus_colegas():
     dueno = _login("dueno-accesos@test.py")
     correos = [a["email"] for a in dueno.get(f"/api/companies/{cid}/portal/accesos").json()]
     assert "ana.accesos@test.py" in correos
+
+
+# ─── El monto lo configura la clínica ────────────────────────────────────
+
+
+def _arancel(cid: int, insurer_id: int, service_id: int, monto: int):
+    """Carga el arancel del nomenclador para esa práctica."""
+    r = client.put(f"/api/companies/{cid}/insurers/{insurer_id}/coverage",
+                   json={"service_id": service_id, "coverage_pct": 0,
+                         "copay_gs": 0, "excluded": False, "arancel_gs": monto})
+    assert r.status_code == 200, r.text
+
+
+def test_el_arancel_cargado_a_mano_le_gana_al_porcentaje():
+    """Es como funciona de verdad: la aseguradora paga un monto fijo por
+    práctica, según su nomenclador, que rara vez es un porcentaje redondo del
+    precio de lista de la clínica.
+
+    Cargado el arancel, el sistema lo toma TAL CUAL y no recalcula nada.
+    """
+    c = _clinica("Sanatorio Nomenclador")
+    cid = c["id"]
+    doc = _doctor(cid, "Dra. Nomenclador")
+    eco = _servicio(cid, "Ecografía abdominal", 250_000)
+    seguro = _convenio(cid, "Prepaga Nomenclador", pct=80)   # 80% daría 200.000
+    _arancel(cid, seguro, eco, 180_000)                       # pero paga 180.000
+    _atencion(cid, doc["id"], "Paciente Nomenclador", 15, eco, seguro)
+
+    portal = _acceso(cid, doc["id"], "nomenclador@test.py")
+    grupo = _preview(portal, cid)["grupos"][0]
+    assert grupo["total_facturado_gs"] == 180_000, "recalculó en vez de usar el arancel"
+    item = grupo["items"][0]
+    assert item["origen_arancel"] == "arancel del convenio"
+    # Y lo que falta para el precio de lista lo pone el paciente en caja.
+    assert item["paga_el_paciente_gs"] == 70_000
+
+
+def test_el_bot_le_dice_al_paciente_el_mismo_numero():
+    """La razón de que la aritmética viva en un solo módulo. Si el bot
+    calculara aparte, le diría al paciente un precio y la planilla diría
+    otro sobre la misma atención."""
+    from app.db import SessionLocal as _S
+
+    from app import aranceles
+    from app.models import Insurer as _I, Service as _Sv
+
+    c = _clinica("Sanatorio Un Solo Numero")
+    cid = c["id"]
+    eco = _servicio(cid, "Ecografía", 250_000)
+    seguro = _convenio(cid, "Prepaga Coherente", pct=80)
+    _arancel(cid, seguro, eco, 180_000)
+
+    db = _S()
+    try:
+        cobertura = aranceles.cobertura_de(db, cid, db.get(_I, seguro), db.get(_Sv, eco))
+        montos = aranceles.repartir(250_000, cobertura)
+        assert montos.paga_el_seguro_gs == 180_000
+        assert montos.paga_el_paciente_gs == 70_000
+        assert montos.arancel_manual is True
+    finally:
+        db.close()
+
+
+def test_un_arancel_mayor_al_precio_no_le_cobra_al_paciente():
+    """Pasa: el nomenclador de la aseguradora puede estar por encima del
+    precio de lista de la clínica. El paciente no puede terminar pagando un
+    negativo."""
+    c = _clinica("Sanatorio Arancel Alto")
+    cid = c["id"]
+    doc = _doctor(cid, "Dr. Arancel Alto")
+    consulta = _servicio(cid, "Consulta", 100_000)
+    seguro = _convenio(cid, "Prepaga Generosa", pct=50)
+    _arancel(cid, seguro, consulta, 150_000)
+    _atencion(cid, doc["id"], "Paciente Afortunado", 17, consulta, seguro)
+
+    portal = _acceso(cid, doc["id"], "arancelalto@test.py")
+    item = _preview(portal, cid)["grupos"][0]["items"][0]
+    assert item["facturado_gs"] == 150_000
+    assert item["paga_el_paciente_gs"] == 0
+
+
+def test_sin_arancel_cargado_todo_sigue_como_antes():
+    """0 = no configurado. Ninguna empresa cambia de números por existir la
+    columna nueva."""
+    c = _clinica("Sanatorio Sin Arancel Cargado")
+    cid = c["id"]
+    doc = _doctor(cid, "Dra. Sin Arancel")
+    consulta = _servicio(cid, "Consulta", 200_000)
+    seguro = _convenio(cid, "Prepaga Porcentaje", pct=75)
+    _atencion(cid, doc["id"], "Paciente Porcentaje", 19, consulta, seguro)
+
+    portal = _acceso(cid, doc["id"], "sinarancelcargado@test.py")
+    grupo = _preview(portal, cid)["grupos"][0]
+    assert grupo["total_facturado_gs"] == 150_000  # 75% de 200.000
+    assert grupo["items"][0]["origen_arancel"] == "convenio"
+
+
+def test_el_arancel_se_puede_volver_a_leer_y_corregir():
+    """La pantalla de convenios era de solo escritura: se cargaba un arancel
+    y no había forma de verlo ni de corregirlo."""
+    c = _clinica("Sanatorio Releer")
+    cid = c["id"]
+    eco = _servicio(cid, "Ecografía", 250_000)
+    seguro = _convenio(cid, "Prepaga Releer", pct=80)
+    _arancel(cid, seguro, eco, 180_000)
+
+    filas = client.get(f"/api/companies/{cid}/insurers/{seguro}/coverage").json()
+    assert len(filas) == 1
+    assert filas[0]["arancel_gs"] == 180_000
+    assert filas[0]["servicio"] == "Ecografía"
+    assert filas[0]["precio_lista_gs"] == 250_000
+
+    _arancel(cid, seguro, eco, 195_000)
+    assert client.get(
+        f"/api/companies/{cid}/insurers/{seguro}/coverage"
+    ).json()[0]["arancel_gs"] == 195_000
+
+
+# ─── El ajuste puntual, con rastro ───────────────────────────────────────
+
+
+def test_ajustar_un_renglon_recalcula_el_total_y_deja_rastro():
+    """La salida de emergencia: un reintegro, una práctica pactada aparte, un
+    error del catálogo que hoy no se va a arreglar.
+
+    Lo que el sistema había calculado se guarda: un monto cambiado sin rastro
+    es indistinguible de un error de cálculo, y acá alguien firma abajo.
+    """
+    c = _clinica("Sanatorio Ajuste")
+    cid = c["id"]
+    doc = _doctor(cid, "Dra. Ajuste")
+    _pct(cid, doc["id"], 60)
+    consulta = _servicio(cid, "Consulta", 100_000)
+    seguro = _convenio(cid, "Prepaga Ajuste", pct=100)
+    _atencion(cid, doc["id"], "Paciente Uno", 21, consulta, seguro)
+    _atencion(cid, doc["id"], "Paciente Dos", 22, consulta, seguro)
+
+    portal = _acceso(cid, doc["id"], "ajuste@test.py")
+    planilla = _armar(portal, cid).json()[0]
+    assert planilla["total_facturado_gs"] == 200_000
+    assert planilla["total_honorario_gs"] == 120_000   # 60%
+
+    renglon = planilla["items"][0]["id"]
+    r = portal.patch(
+        f"/api/companies/{cid}/portal/honorarios/{planilla['id']}/items/{renglon}",
+        json={"facturado_gs": 160_000, "motivo": "Práctica pactada aparte"},
+    )
+    assert r.status_code == 200, r.text
+    datos = r.json()
+
+    # El total sale de sumar los renglones, no de sumarle la diferencia.
+    assert datos["total_facturado_gs"] == 160_000 + 100_000
+    assert datos["total_honorario_gs"] == 96_000 + 60_000
+    ajustado = next(i for i in datos["items"] if i["id"] == renglon)
+    assert ajustado["ajustado_a_mano"] is True
+    assert ajustado["facturado_calculado_gs"] == 100_000, "se perdió lo calculado"
+    assert ajustado["ajuste_motivo"] == "Práctica pactada aparte"
+    assert datos["ajustados"] == 1
+
+    # Y el papel que se firma lo dice.
+    texto = portal.get(
+        f"/api/companies/{cid}/portal/honorarios/{planilla['id']}"
+    ).json()["texto"]
+    assert "ajustado a mano" in texto
+    assert "Práctica pactada aparte" in texto
+
+
+def test_un_segundo_ajuste_no_pisa_lo_que_calculo_el_sistema():
+    """Si el segundo ajuste guardara el primero como "calculado", el original
+    se perdería y quedaría "ajustado de X a X"."""
+    c = _clinica("Sanatorio Doble Ajuste")
+    cid = c["id"]
+    doc = _doctor(cid, "Dr. Doble Ajuste")
+    consulta = _servicio(cid, "Consulta", 100_000)
+    _atencion(cid, doc["id"], "Paciente Reajustado", 23, consulta)
+
+    portal = _acceso(cid, doc["id"], "dobleajuste@test.py")
+    planilla = _armar(portal, cid).json()[0]
+    base = f"/api/companies/{cid}/portal/honorarios/{planilla['id']}/items/{planilla['items'][0]['id']}"
+    portal.patch(base, json={"facturado_gs": 150_000, "motivo": "primero"})
+    datos = portal.patch(base, json={"facturado_gs": 130_000, "motivo": "segundo"}).json()
+    assert datos["items"][0]["facturado_calculado_gs"] == 100_000
+    assert datos["items"][0]["facturado_gs"] == 130_000
+
+
+def test_no_se_ajusta_una_planilla_ya_firmada():
+    """Los montos quedaron congelados cuando se cerró: eso es lo que hace que
+    la planilla sea un documento."""
+    c = _clinica("Sanatorio Ajuste Tardío")
+    cid = c["id"]
+    doc = _doctor(cid, "Dra. Tardía")
+    consulta = _servicio(cid, "Consulta", 100_000)
+    _atencion(cid, doc["id"], "Paciente Tardío", 25, consulta)
+
+    portal = _acceso(cid, doc["id"], "tardia@test.py")
+    planilla = _armar(portal, cid).json()[0]
+    portal.post(f"/api/companies/{cid}/portal/honorarios/{planilla['id']}/firmar")
+
+    r = portal.patch(
+        f"/api/companies/{cid}/portal/honorarios/{planilla['id']}/items/{planilla['items'][0]['id']}",
+        json={"facturado_gs": 999_000},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["codigo"] == "planilla_cerrada"
+
+
+def test_no_se_ajusta_el_renglon_de_la_planilla_de_otro_medico():
+    c = _clinica("Sanatorio Ajuste Ajeno")
+    cid = c["id"]
+    ana = _doctor(cid, "Dra. Ana Ajuste")
+    beto = _doctor(cid, "Dr. Beto Ajuste")
+    consulta = _servicio(cid, "Consulta", 100_000)
+    _atencion(cid, ana["id"], "Paciente De Ana", 27, consulta)
+
+    portal_ana = _acceso(cid, ana["id"], "ana.ajuste@test.py")
+    portal_beto = _acceso(cid, beto["id"], "beto.ajuste@test.py")
+    planilla = _armar(portal_ana, cid).json()[0]
+
+    r = portal_beto.patch(
+        f"/api/companies/{cid}/portal/honorarios/{planilla['id']}/items/{planilla['items'][0]['id']}",
+        json={"facturado_gs": 1},
+    )
+    assert r.status_code == 404

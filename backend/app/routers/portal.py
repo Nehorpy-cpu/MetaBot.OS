@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import honorarios, previsita
+from .. import aranceles, honorarios, previsita
 from ..auth import Identity, audit, get_identity, hash_password
 from ..db import get_db
 from ..models import (
@@ -460,6 +460,7 @@ def _salida(planilla: FeeBatch, items: list[FeeBatchItem] | None = None) -> dict
     if items is not None:
         datos["items"] = [
             {
+                "id": i.id,
                 "fecha": i.atendido_at.isoformat(),
                 "paciente": i.paciente,
                 "servicio": i.servicio,
@@ -467,9 +468,14 @@ def _salida(planilla: FeeBatch, items: list[FeeBatchItem] | None = None) -> dict
                 "facturado_gs": i.facturado_gs,
                 "honorario_gs": i.honorario_gs,
                 "origen_arancel": i.origen_arancel,
+                # Si alguien corrigió el renglón, se ve el antes y el porqué.
+                "ajustado_a_mano": i.ajustado_a_mano,
+                "facturado_calculado_gs": i.facturado_calculado_gs,
+                "ajuste_motivo": i.ajuste_motivo,
             }
             for i in items
         ]
+        datos["ajustados"] = sum(1 for i in items if i.ajustado_a_mano)
     return datos
 
 
@@ -710,6 +716,89 @@ def entregar(
     planilla = _planilla(db, company_id, batch_id, doctor)
     return _avanzar(db, planilla, "entregada", identity.user_id,
                     payload.notas if payload else "")
+
+
+class AjusteDeRenglon(BaseModel):
+    """Corregir a mano lo que se le factura por UNA atención."""
+
+    facturado_gs: int = Field(ge=0, le=1_000_000_000)
+    motivo: str = Field(default="", max_length=200)
+
+
+@router.patch("/honorarios/{batch_id}/items/{item_id}")
+def ajustar_renglon(
+    company_id: int,
+    batch_id: int,
+    item_id: int,
+    payload: AjusteDeRenglon,
+    doctor_id: int | None = None,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Corrige el monto de una atención puntual, antes de firmar.
+
+    El camino normal es cargar el arancel del convenio, que se aplica solo y
+    a todas las liquidaciones siguientes. Esto es la excepción: un reintegro,
+    una práctica que se pactó aparte, un error del catálogo que hoy no se va
+    a arreglar.
+
+    Se guarda lo que el sistema había calculado. Un monto cambiado que no
+    deja rastro es indistinguible de un error de cálculo, y acá alguien firma
+    abajo del total.
+
+    Solo sobre un borrador: lo firmado es un documento.
+    """
+    doctor = _doctor_pedido(db, company_id, identity, doctor_id)
+    planilla = _planilla(db, company_id, batch_id, doctor)
+    if planilla.estado != "borrador":
+        raise HTTPException(
+            409,
+            {
+                "motivo": (
+                    f"Esta planilla ya está {planilla.estado}: los montos quedaron "
+                    "congelados cuando la cerraste."
+                ),
+                "codigo": "planilla_cerrada",
+            },
+        )
+    item = db.get(FeeBatchItem, item_id)
+    if not item or item.company_id != company_id or item.batch_id != batch_id:
+        raise HTTPException(404, "Ese renglón no es de esta planilla")
+
+    # La primera vez se guarda lo calculado. En un segundo ajuste NO se pisa,
+    # porque si no el original se perdería y quedaría "ajustado de X a X".
+    if not item.ajustado_a_mano:
+        item.facturado_calculado_gs = item.facturado_gs
+        item.honorario_calculado_gs = item.honorario_gs
+
+    item.facturado_gs = payload.facturado_gs
+    item.honorario_gs = aranceles.honorario_gs(payload.facturado_gs, planilla.honorario_pct)
+    item.ajustado_a_mano = True
+    item.ajuste_motivo = payload.motivo[:200]
+    item.origen_arancel = "ajustado a mano"
+
+    # Los totales de la planilla se recalculan desde sus renglones, no se les
+    # suma la diferencia: sumar deltas acumula el error del primer ajuste mal
+    # aplicado y nadie lo vuelve a mirar.
+    db.flush()
+    renglones = _items(db, company_id, batch_id)
+    planilla.total_facturado_gs = sum(i.facturado_gs for i in renglones)
+    planilla.total_honorario_gs = sum(i.honorario_gs for i in renglones)
+    db.commit()
+
+    audit(
+        db, "honorarios.ajustar", user_id=identity.user_id, company_id=company_id,
+        detail={
+            "planilla": batch_id,
+            "renglon": item_id,
+            "paciente": item.paciente,
+            "calculado_gs": item.facturado_calculado_gs,
+            "ajustado_gs": item.facturado_gs,
+            "motivo": item.ajuste_motivo,
+        },
+    )
+    db.refresh(planilla)
+    return _salida(planilla, _items(db, company_id, batch_id))
 
 
 # ─── El otro lado del mostrador: la clínica ──────────────────────────────

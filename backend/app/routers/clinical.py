@@ -122,6 +122,9 @@ class CoverageIn(BaseModel):
     coverage_pct: int = Field(default=0, ge=0, le=100)
     copay_gs: int = Field(default=0, ge=0)
     excluded: bool = False
+    # Lo que la aseguradora paga por esta práctica según su nomenclador,
+    # cargado a mano. Si está, gana sobre el porcentaje. 0 = no configurado.
+    arancel_gs: int = Field(default=0, ge=0)
 
 
 @router.put("/companies/{company_id}/insurers/{insurer_id}/coverage")
@@ -151,8 +154,43 @@ def set_coverage(company_id: int, insurer_id: int, payload: CoverageIn,
     fila.coverage_pct = payload.coverage_pct
     fila.copay_gs = payload.copay_gs
     fila.excluded = payload.excluded
+    fila.arancel_gs = payload.arancel_gs
     db.commit()
     return {"ok": True}
+
+
+@router.get("/companies/{company_id}/insurers/{insurer_id}/coverage")
+def get_coverage(company_id: int, insurer_id: int, db: Session = Depends(get_db)):
+    """Qué tiene cargado este convenio, práctica por práctica.
+
+    Sin esto, la pantalla de convenios era de solo escritura: se podía cargar
+    un arancel y no había forma de volver a verlo ni de corregirlo.
+    """
+    insurer = db.get(Insurer, insurer_id)
+    if not insurer or insurer.company_id != company_id:
+        raise HTTPException(404, "Convenio no encontrado")
+    filas = (
+        db.query(ServiceCoverage, Service)
+        .join(Service, Service.id == ServiceCoverage.service_id)
+        .filter(
+            ServiceCoverage.company_id == company_id,
+            ServiceCoverage.insurer_id == insurer_id,
+        )
+        .order_by(Service.name)
+        .all()
+    )
+    return [
+        {
+            "service_id": s.id,
+            "servicio": s.name,
+            "precio_lista_gs": s.price_gs,
+            "coverage_pct": c.coverage_pct,
+            "copay_gs": c.copay_gs,
+            "excluded": c.excluded,
+            "arancel_gs": c.arancel_gs,
+        }
+        for c, s in filas
+    ]
 
 
 # --- Recetas ---

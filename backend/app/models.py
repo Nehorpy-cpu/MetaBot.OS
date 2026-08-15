@@ -602,6 +602,17 @@ class ServiceCoverage(Base):
     service_id: Mapped[int] = mapped_column(index=True)
     coverage_pct: Mapped[int] = mapped_column(default=0)
     copay_gs: Mapped[int] = mapped_column(default=0)
+    # LO QUE LA ASEGURADORA PAGA POR ESTA PRÁCTICA, en guaraníes.
+    #
+    # Es como funciona de verdad: cada aseguradora tiene su nomenclador con un
+    # monto fijo por práctica, que rara vez es un porcentaje redondo del precio
+    # de lista de la clínica. Cargado a mano por quien tiene el convenio en la
+    # mano; si está, gana sobre `coverage_pct`.
+    #
+    # 0 = no configurado, y ahí sí se calcula por porcentaje. No se usa NULL
+    # para no tener dos formas de decir lo mismo en una columna que decide
+    # plata.
+    arancel_gs: Mapped[int] = mapped_column(default=0)
     # Hay estudios que el convenio directamente no cubre: decirlo es mejor que
     # que el paciente se entere en la caja.
     excluded: Mapped[bool] = mapped_column(default=False)
@@ -700,8 +711,16 @@ class FeeBatchItem(Base):
     facturado_gs: Mapped[int] = mapped_column(default=0)
     honorario_gs: Mapped[int] = mapped_column(default=0)
     # Por qué el monto es ese. Un profesional que ve un número que no espera
-    # tiene que poder saber si salió del convenio o de una excepción.
-    origen_arancel: Mapped[str] = mapped_column(String(40), default="")
+    # tiene que poder saber si salió del convenio, de una excepción, del
+    # arancel cargado a mano, o de un ajuste puntual.
+    origen_arancel: Mapped[str] = mapped_column(String(60), default="")
+    # Alguien corrigió este renglón a mano antes de firmar. Se guarda lo que
+    # el sistema había calculado: un monto cambiado que no deja rastro es
+    # indistinguible de un error de cálculo, y acá alguien firma abajo.
+    ajustado_a_mano: Mapped[bool] = mapped_column(default=False)
+    facturado_calculado_gs: Mapped[int] = mapped_column(default=0)
+    honorario_calculado_gs: Mapped[int] = mapped_column(default=0)
+    ajuste_motivo: Mapped[str] = mapped_column(String(200), default="")
 
 
 class Prescription(Base):

@@ -263,6 +263,7 @@ def texto(company: Company, doctor: Doctor, planilla: FeeBatch,
         f"Atenciones  : {len(items)}",
         "-" * ancho,
     ]
+    ajustados = 0
     for i in items:
         lineas.append(
             f"{i.atendido_at.strftime('%d/%m')} {i.paciente[:26]:26} "
@@ -270,11 +271,25 @@ def texto(company: Company, doctor: Doctor, planilla: FeeBatch,
         )
         if i.servicio:
             lineas.append(f"       {i.servicio[:52]}")
+        if i.ajustado_a_mano:
+            # Va en el papel que se firma: quien firma tiene que ver que ese
+            # renglón no salió del cálculo, y cuánto decía antes.
+            ajustados += 1
+            detalle = f"       (*) ajustado a mano, calculado {formato_gs(i.facturado_calculado_gs)}"
+            if i.ajuste_motivo:
+                detalle += f" — {i.ajuste_motivo[:40]}"
+            lineas.append(detalle)
     lineas += [
         "-" * ancho,
         f"{'Facturado a la aseguradora:':>44} {formato_gs(planilla.total_facturado_gs):>18}",
         f"{f'Honorario del profesional ({planilla.honorario_pct}%):':>44} "
         f"{formato_gs(planilla.total_honorario_gs):>18}",
+    ]
+    if ajustados:
+        lineas.append(
+            f"(*) {ajustados} renglón(es) con el monto ajustado a mano."
+        )
+    lineas += [
         "",
         "",
         " " * 16 + "_" * 32,

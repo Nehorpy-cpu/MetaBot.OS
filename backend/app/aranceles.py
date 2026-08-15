@@ -32,6 +32,9 @@ class Cobertura:
     # De dónde salió: el convenio general o una excepción para ese estudio.
     # Sirve para explicar un número que al profesional le puede parecer raro.
     origen: str
+    # Monto fijo que paga la aseguradora por esta práctica, cargado a mano
+    # desde su nomenclador. 0 = no configurado y se calcula por porcentaje.
+    arancel_gs: int = 0
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,9 @@ class Montos:
     paga_el_paciente_gs: int
     paga_el_seguro_gs: int
     excluido: bool
+    # El monto de la aseguradora salió de un arancel cargado a mano, no de un
+    # porcentaje. Se propaga para poder decirlo en la planilla.
+    arancel_manual: bool = False
 
 
 def buscar_convenio(db: Session, company_id: int, pedido: str) -> Insurer | None:
@@ -111,7 +117,9 @@ def cobertura_de(
     if override:
         return Cobertura(
             override.coverage_pct, override.copay_gs, override.excluded,
-            "excepción para este estudio",
+            "arancel del convenio" if override.arancel_gs > 0
+            else "excepción para este estudio",
+            arancel_gs=override.arancel_gs,
         )
     return Cobertura(insurer.coverage_pct, insurer.copay_gs, False, "convenio")
 
@@ -123,17 +131,34 @@ def repartir(precio_gs: int, cobertura: Cobertura | None) -> Montos:
     paciente. El copago es un fijo que se le cobra ADEMÁS de su parte —así
     está definido el convenio— y no sale del bolsillo de la aseguradora.
 
-    Se reparte sobre el precio de lista: primero se calcula lo que pone la
-    aseguradora y el resto es del paciente, para que las dos partes sumen
-    exactamente el precio y no se pierda ni se invente un guaraní por
-    redondeo.
+    Hay dos formas de saber cuánto pone la aseguradora, y la primera manda:
+
+    1. **El arancel cargado a mano.** Es como funciona de verdad: cada
+       aseguradora tiene su nomenclador con un monto fijo por práctica. Si
+       está configurado se usa TAL CUAL, sin recalcular nada. Puede ser mayor
+       que el precio de lista de la clínica —pasa— y en ese caso el paciente
+       no pone nada.
+    2. **El porcentaje**, para lo que todavía no tiene arancel cargado. Se
+       reparte sobre el precio de lista calculando primero la parte de la
+       aseguradora y dejando el resto al paciente, para que las dos sumen
+       exactamente el precio y no se pierda ni se invente un guaraní.
     """
     precio = max(0, int(precio_gs or 0))
     if cobertura is None or cobertura.excluido:
         return Montos(precio, precio, 0, cobertura.excluido if cobertura else False)
+
+    copago = max(0, cobertura.copago_gs)
+    if cobertura.arancel_gs > 0:
+        del_seguro = int(cobertura.arancel_gs)
+        # Lo que la clínica le cobra al paciente es lo que falta para llegar a
+        # su precio. Si el arancel lo cubre entero, no paga nada (salvo el
+        # copago, que es aparte por definición del convenio).
+        del_paciente = max(0, precio - del_seguro) + copago
+        return Montos(precio, del_paciente, del_seguro, False, arancel_manual=True)
+
     pct = max(0, min(100, cobertura.cobertura_pct))
     del_seguro = round(precio * pct / 100)
-    del_paciente = precio - del_seguro + max(0, cobertura.copago_gs)
+    del_paciente = precio - del_seguro + copago
     return Montos(precio, del_paciente, del_seguro, False)
 
 

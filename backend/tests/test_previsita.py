@@ -602,16 +602,23 @@ def test_la_receta_de_esta_manana_aparece_en_el_turno_de_la_tarde():
     cid = company["id"]
     doc = _doctor(cid)
 
-    hoy = datetime.now()
-    manana_temprano = hoy.replace(hour=9, minute=0, second=0, microsecond=0)
-    turno_tarde = hoy.replace(hour=16, minute=0, second=0, microsecond=0)
+    # El reloj del contenedor es UTC y la agenda vive en hora de Paraguay: a
+    # las 22:45 de Asunción, `datetime.now()` ya devuelve el día siguiente.
+    # Armar los datos con ese reloj —como hacía este test— es caer en el
+    # mismo error que viene a probar: quedaba una cita "de mañana" y una
+    # receta tres horas en el futuro.
+    hoy = datetime.now(ZoneInfo(TIMEZONE)).replace(tzinfo=None)
+    # Anclado a `ahora` y no a horas fijas, para que dé igual a qué hora del
+    # día corra la suite.
+    manana_temprano = hoy - timedelta(hours=2)
+    turno_tarde = hoy.replace(hour=23, minute=0, second=0, microsecond=0)
 
     db = SessionLocal()
     try:
-        # Cargada a las 09:00 hora de Paraguay = 12:00 UTC, que es como se
-        # guarda. Con el turno de las 16:00 LOCAL, 12:00 < 16:00 y entra;
-        # sin la conversión se comparaba 12:00 contra 16:00 igual, pero un
-        # turno de las 10:00 quedaba afuera. Se prueba ese caso.
+        # Cargada hace dos horas, en hora de Paraguay, y guardada en UTC —que
+        # es como la guarda el sistema—. Sin la conversión al comparar, esas
+        # dos horas atrás quedan registradas UNA hora en el futuro respecto
+        # del turno, y la receta desaparece del resumen.
         receta = Prescription(
             company_id=cid, doctor_id=doc["id"], patient_name="Rosa Duarte",
             patient_phone="595981447722", diagnosis="Hipertensión arterial leve",
