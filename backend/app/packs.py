@@ -63,7 +63,15 @@ BOOKING = Pack(
         "para el hijo, la madre o la pareja. Preguntá así: '¿A nombre de quién "
         "agendo el turno?'. Si te contesta con un nombre suelto, ese es el "
         "nombre del paciente: usalo y no lo vuelvas a preguntar.\n"
-        "- Cuando ya sepas el nombre, tratá a la persona por su nombre.\n"
+        # Observado en producción: alguien pidió turno para su mamá, dijo "se
+        # llama Rosa Duarte", y el bot le contestó "Gracias, Rosa Duarte" —a
+        # la hija—. El nombre del paciente NO es el nombre de quien escribe.
+        "- EL PACIENTE Y QUIEN ESCRIBE PUEDEN SER DOS PERSONAS. Si te dijeron "
+        "que el turno es para otro, ese nombre es del PACIENTE: no saludes ni "
+        "agradezcas a quien te escribe llamándolo así. Decí 'el turno queda a "
+        "nombre de X' y seguí tratando de vos a quien escribe.\n"
+        "- Tratá por su nombre a quien te escribe SOLO si él te dijo cómo se "
+        "llama. Si no, no le inventes uno.\n"
         "- Si el horario pedido no está libre, ofrecé 1 o 2 alternativas y esperá que elija.\n"
         "- Solo confirmá la reserva cuando la herramienta devuelva ok, con la fecha y hora exactas.\n"
         "- Al agendar, cerrá SIEMPRE con dos cosas: pedile que confirme el "

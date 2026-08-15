@@ -214,7 +214,28 @@ async def chat_raw(
             except (httpx.HTTPError, KeyError, IndexError) as exc:
                 # type(exc) SIEMPRE visible: str(ReadTimeout) es vacío y
                 # ocultaba la causa real en producción.
-                errors.append(f"{p['name']}/{modelo}: {type(exc).__name__}: {exc}")
+                detalle = f"{type(exc).__name__}: {exc}"
+                # Y el CUERPO de la respuesta cuando el proveedor rechaza el
+                # pedido. Un 400 sin cuerpo no se puede diagnosticar: se veía
+                # "Client error '400'" en el log y había que adivinar qué de
+                # lo que mandamos no le gustó. El proveedor lo dice ahí.
+                respuesta = getattr(exc, "response", None)
+                if respuesta is not None:
+                    try:
+                        cuerpo = respuesta.json()
+                        motivo = (
+                            cuerpo.get("error", {}).get("message")
+                            if isinstance(cuerpo.get("error"), dict)
+                            else cuerpo.get("error") or cuerpo.get("detail")
+                        )
+                    except Exception:  # noqa: BLE001 — el cuerpo puede no ser JSON
+                        motivo = (getattr(respuesta, "text", "") or "")[:300]
+                    if motivo:
+                        detalle = (
+                            f"{type(exc).__name__} "
+                            f"{getattr(respuesta, 'status_code', '?')}: {motivo}"
+                        )
+                errors.append(f"{p['name']}/{modelo}: {detalle}")
     raise LLMError("Todos los proveedores fallaron: " + "; ".join(errors))
 
 
