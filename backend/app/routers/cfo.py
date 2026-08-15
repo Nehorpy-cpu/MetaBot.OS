@@ -15,13 +15,17 @@ from sqlalchemy.orm import Session
 
 from datetime import date, datetime, timezone
 
-from .. import cfo, cfo_conectores, cfo_csv, cfo_metricas, cfo_motor, cfo_reportes
+from .. import (
+    cfo, cfo_conectores, cfo_csv, cfo_memoria, cfo_metricas, cfo_motor,
+    cfo_reportes,
+)
 from ..auth import Identity, audit, get_identity
 from ..db import get_db
 from ..config import CFO_REPORT_BASE_URL
 from ..models import (
-    Company, FinanceConnector, FinanceIdentity, FinanceMetricState,
-    FinanceRecord, FinanceReport, FinanceReportToken, Membership, User,
+    Company, FinanceConnector, FinanceIdentity, FinanceMemory,
+    FinanceMetricState, FinanceRecord, FinanceReport, FinanceReportToken,
+    Membership, User,
 )
 from ..permissions import Perm, role_has
 
@@ -790,3 +794,91 @@ def listar_fuentes(
             "interna": f == cfo_metricas.Fuente.INTERNA,
         })
     return salida
+
+
+# ─── Memoria ─────────────────────────────────────────────────────────────
+#
+# Existen porque el dueño tiene derecho a ver qué sabe de él este sistema y a
+# borrarlo. Memoria financiera que no se puede mirar ni borrar es un pasivo:
+# el día que cambia de contador, o echa a alguien, tiene que poder decir
+# "olvidate de eso" y que se olvide de verdad.
+
+
+class MemoriaIn(BaseModel):
+    tipo: str = Field(pattern="^(preferencia|contexto|vocabulario)$")
+    clave: str = Field(min_length=1, max_length=60)
+    valor: str = Field(min_length=1, max_length=300)
+    phone: str = Field(default="", max_length=30)
+
+
+@router.get("/memoria")
+def listar_memoria(
+    company_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Todo lo recordado, incluso lo vencido: para poder auditarlo hay que
+    verlo, y lo vencido explica por qué el bot dejó de saber algo."""
+    _puede_administrar(db, company_id, identity)
+    _company(db, company_id)
+    filas = (
+        db.query(FinanceMemory)
+        .filter(FinanceMemory.company_id == company_id)
+        .order_by(FinanceMemory.updated_at.desc())
+        .all()
+    )
+    return [cfo_memoria.salida(f) for f in filas]
+
+
+@router.post("/memoria", status_code=201)
+def crear_memoria(
+    company_id: int,
+    payload: MemoriaIn,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Cargar contexto desde el panel, sin esperar a que salga en un chat."""
+    _puede_administrar(db, company_id, identity)
+    _company(db, company_id)
+    try:
+        fila = cfo_memoria.recordar(
+            db, company_id, payload.tipo, payload.clave, payload.valor,
+            phone=cfo.solo_digitos(payload.phone) if payload.phone else "",
+            fuente="panel",
+        )
+    except cfo_memoria.MemoriaRechazada as exc:
+        raise HTTPException(422, {"motivo": str(exc), "codigo": "memoria_rechazada"})
+    audit(db, "cfo.memoria.alta", user_id=identity.user_id, company_id=company_id,
+          detail={"clave": fila.clave, "tipo": fila.tipo})
+    return cfo_memoria.salida(fila)
+
+
+@router.delete("/memoria/{memoria_id}", status_code=204)
+def borrar_memoria(
+    company_id: int,
+    memoria_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    _puede_administrar(db, company_id, identity)
+    cuantas = cfo_memoria.olvidar(db, company_id, memoria_id=memoria_id)
+    if not cuantas:
+        raise HTTPException(404, "Esa memoria no existe")
+    audit(db, "cfo.memoria.baja", user_id=identity.user_id, company_id=company_id,
+          detail={"memoria": memoria_id})
+    return Response(status_code=204)
+
+
+@router.delete("/memoria", status_code=200)
+def borrar_toda_la_memoria(
+    company_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """El botón de "borrá todo lo que sabés de mí". Tiene que existir."""
+    _puede_administrar(db, company_id, identity)
+    _company(db, company_id)
+    cuantas = cfo_memoria.olvidar_todo(db, company_id)
+    audit(db, "cfo.memoria.baja_total", user_id=identity.user_id,
+          company_id=company_id, detail={"borradas": cuantas})
+    return {"borradas": cuantas}

@@ -147,7 +147,7 @@ FINANCE = Pack(
     # fases: un módulo declarado que no gatea ninguna ruta es una casilla
     # vendible de una función que no existe, y hay un test que lo frena.
     modules=("cfo",),
-    tools=("consultar_finanzas",),
+    tools=("consultar_finanzas", "recordar_contexto", "olvidar_contexto"),
     # NO requiere `booking` ni `healthcare`: una empresa puede contratar SOLO
     # el CFO. Eso es el modo "Finance Only" del pedido, y sale gratis del
     # mecanismo de bloques que ya existe —el gate del servidor por path le

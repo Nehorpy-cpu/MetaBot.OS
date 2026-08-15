@@ -253,6 +253,69 @@ TOOL_SPECS: dict[str, dict] = {
             },
         },
     },
+    "recordar_contexto": {
+        "type": "function",
+        "function": {
+            "name": "recordar_contexto",
+            "description": (
+                "Guarda un dato de CONTEXTO del negocio para no volver a "
+                "preguntarlo: cuándo cierra el mes, a qué le llama 'ventas' "
+                "este dueño, qué sucursal le preocupa, cómo prefiere que le "
+                "contestes. Usala solo cuando la persona te cuenta algo de su "
+                "negocio que va a seguir valiendo la semana que viene. "
+                "NUNCA guardes montos, permisos, autorizaciones, teléfonos ni "
+                "claves: los montos se consultan y los accesos se dan de alta "
+                "desde el panel."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tipo": {
+                        "type": "string",
+                        "enum": ["preferencia", "contexto", "vocabulario"],
+                        "description": (
+                            "preferencia: cómo quiere que le contestes. "
+                            "contexto: cómo funciona su negocio. "
+                            "vocabulario: qué quiere decir con una palabra."
+                        ),
+                    },
+                    "clave": {
+                        "type": "string",
+                        "description": "Nombre corto del dato, en minúsculas. Ej: 'cierre de mes'.",
+                    },
+                    "valor": {
+                        "type": "string",
+                        "description": "El dato, en una frase.",
+                    },
+                },
+                "required": ["tipo", "clave", "valor"],
+            },
+        },
+    },
+    "olvidar_contexto": {
+        "type": "function",
+        "function": {
+            "name": "olvidar_contexto",
+            "description": (
+                "Borra un dato de contexto guardado, cuando la persona pide "
+                "que lo olvides o cuando cambió. Borra de verdad."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "clave": {
+                        "type": "string",
+                        "description": "El nombre del dato a borrar. Vacío junto con todo=true borra todo.",
+                    },
+                    "todo": {
+                        "type": "boolean",
+                        "description": "true para borrar TODO lo recordado de esta empresa.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
     "consultar_finanzas": {
         "type": "function",
         "function": {
@@ -813,6 +876,36 @@ def _execute_tool(
             respuesta["coverage_pct"] = cobertura.cobertura_pct
         return respuesta
 
+    if name == "recordar_contexto":
+        # Contexto del negocio, no permisos y no montos. La validación vive en
+        # `cfo_memoria`, del lado del servidor: si estuviera solo en la
+        # descripción de la herramienta, alcanzaría con convencer al modelo.
+        from . import cfo_memoria
+
+        try:
+            fila = cfo_memoria.recordar(
+                db, company.id,
+                tipo=str(args.get("tipo", "")).strip(),
+                clave=str(args.get("clave", "")),
+                valor=str(args.get("valor", "")),
+                phone=conversation.contact_phone or "",
+            )
+        except cfo_memoria.MemoriaRechazada as exc:
+            return {"error": str(exc), "guardado": False}
+        return {"guardado": True, "clave": fila.clave}
+
+    if name == "olvidar_contexto":
+        from . import cfo_memoria
+
+        if args.get("todo"):
+            cuantas = cfo_memoria.olvidar_todo(db, company.id)
+            return {"borradas": cuantas, "todo": True}
+        clave = str(args.get("clave", "")).strip()
+        if not clave:
+            return {"error": "Decime qué querés que olvide.", "borradas": 0}
+        cuantas = cfo_memoria.olvidar(db, company.id, clave=clave)
+        return {"borradas": cuantas, "clave": clave}
+
     if name == "consultar_finanzas":
         # La ÚNICA puerta por la que el bot llega a un número financiero.
         #
@@ -1369,6 +1462,21 @@ def _build_system_prompt(
             "consultado ahí."
         )
     parts.extend(packs.rules_for(company))
+
+    # Lo que este negocio contó antes. Va DESPUÉS de las reglas y marcado como
+    # datos, nunca como instrucciones: lo escribió alguien por WhatsApp, y un
+    # modelo que trata ese texto como órdenes es un modelo al que se le dan
+    # órdenes por WhatsApp.
+    if "recordar_contexto" in {t["function"]["name"] for t in _tools_for(company)}:
+        from . import cfo_memoria
+
+        recordado = cfo_memoria.para_el_prompt(
+            db, company.id,
+            conversation.contact_phone if conversation else "",
+        )
+        if recordado:
+            parts.append(recordado)
+
     if "book_appointment" in {t["function"]["name"] for t in _tools_for(company)}:
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
         if doctors:
