@@ -131,6 +131,34 @@ def _texto_franjas(franjas: list[DoctorSchedule]) -> str:
     )
 
 
+def horario_publicable(db: Session, company_id: int, doctor_id: int) -> str:
+    """El horario del profesional armado desde sus franjas reales.
+
+    Existe porque el horario en texto libre del profesional lo carga la
+    clínica a mano y NADIE lo valida contra las franjas. En producción el
+    texto de un cardiólogo decía "Lun, Mié y Vie 14:00-19:00" y sus franjas
+    decían 07:00 a 12:00 esos mismos días: el bot leyó el texto, le rechazó
+    al paciente un viernes a la mañana que sí era horario del doctor, y le
+    ofreció dos horarios de la tarde en los que no atiende. No inventó nada
+    — le habíamos dado dos verdades contradictorias.
+
+    Devuelve "" si el profesional no tiene franjas cargadas: ahí el texto
+    libre es lo único que hay, y quien lo use tiene que decir que está sin
+    confirmar.
+    """
+    franjas = (
+        db.query(DoctorSchedule)
+        .filter(
+            DoctorSchedule.company_id == company_id,
+            DoctorSchedule.doctor_id == doctor_id,
+            DoctorSchedule.service_id.is_(None),
+        )
+        .order_by(DoctorSchedule.weekday, DoctorSchedule.hora_inicio)
+        .all()
+    )
+    return _texto_franjas(franjas) if franjas else ""
+
+
 def _choca(db: Session, company_id: int, doctor_id: int, inicio: datetime,
            fin: datetime, ignorar_cita_id: int | None) -> Appointment | None:
     """Solape real por intervalos. La ventana de búsqueda usa la duración

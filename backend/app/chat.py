@@ -831,12 +831,28 @@ def _execute_tool(
 
     if name == "list_doctors":
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
-        return {
-            "doctors": [
-                {"id": d.id, "name": d.name, "specialty": d.specialty, "schedule": d.schedule}
-                for d in doctors
-            ]
-        }
+        salida = []
+        for d in doctors:
+            # El horario que se le muestra al modelo sale de las FRANJAS, no
+            # del texto libre. Los dos se cargan por separado y nadie los
+            # cruza: en producción el texto de un cardiólogo decía "Lun, Mié y
+            # Vie 14:00-19:00" y sus franjas decían 07:00 a 12:00 esos mismos
+            # días. El bot leyó el texto, le rechazó al paciente un viernes a
+            # la mañana que SÍ era horario del doctor y le ofreció dos
+            # horarios en los que no atiende. Peor que no validar: seguro y
+            # equivocado.
+            real = agenda.horario_publicable(db, company.id, d.id)
+            ficha = {"id": d.id, "name": d.name, "specialty": d.specialty}
+            if real:
+                ficha["schedule"] = real
+            elif d.schedule:
+                ficha["schedule"] = d.schedule
+                ficha["schedule_sin_confirmar"] = (
+                    "Este horario está escrito a mano y nadie lo verificó: "
+                    "no lo des como seguro, ofrecé confirmarlo."
+                )
+            salida.append(ficha)
+        return {"doctors": salida}
 
     if name == "my_appointments":
         # El paciente preguntó "¿cuándo es mi turno?" y el bot le contestó con

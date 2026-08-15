@@ -640,3 +640,62 @@ def test_el_panel_recibe_los_horarios_libres_al_rechazar():
         "scheduled_at": _proximo(MIE, 19, 0).strftime("%Y-%m-%dT%H:%M:%S")})
     assert r.status_code == 409
     assert r.json()["detail"]["horarios_libres"], "el panel no puede ofrecer nada"
+
+
+def test_el_bot_ve_el_horario_de_las_franjas_y_no_el_texto_libre():
+    """`Doctor.schedule` es texto libre que la clínica carga a mano y que nadie
+    cruza contra las franjas.
+
+    En producción el texto de un cardiólogo decía "Lun, Mié y Vie 14:00-19:00"
+    y sus franjas decían 07:00 a 12:00 esos mismos días. El bot leyó el texto,
+    le rechazó al paciente un viernes a la mañana que SÍ era horario del
+    doctor, y le ofreció dos horarios de la tarde en los que no atiende. No
+    inventó nada: le habíamos dado dos verdades contradictorias.
+    """
+    from app.chat import _execute_tool
+    from app.models import Conversation
+
+    # `_armar` le pone al doctor el texto libre "Lun a Vie 08:00-14:00"; las
+    # franjas dicen otra cosa. Esa es exactamente la contradicción.
+    cid, doc, _ = _armar("Clínica Dos Horarios",
+                         [(LUN, "07:00", "12:00"), (MIE, "07:00", "12:00"),
+                          (VIE, "07:00", "12:00")])
+
+    db = SessionLocal()
+    try:
+        conv = Conversation(company_id=cid, contact_phone="595981000123", channel="test")
+        db.add(conv)
+        db.commit()
+        r = _execute_tool("list_doctors", {}, db, db.get(Company, cid), conv)
+    finally:
+        db.close()
+
+    ficha = next(d for d in r["doctors"] if d["id"] == doc)
+    assert "14:00" not in ficha["schedule"], "le pasó el texto libre que contradice las franjas"
+    assert "07:00 a 12:00" in ficha["schedule"]
+    assert "lunes" in ficha["schedule"] and "viernes" in ficha["schedule"]
+    # Y no se le manda el aviso de "sin confirmar" a un horario que SÍ está
+    # cargado: eso lo haría dudar de un dato bueno.
+    assert "schedule_sin_confirmar" not in ficha
+
+
+def test_sin_franjas_el_texto_libre_va_marcado_como_sin_confirmar():
+    """Hay clínicas operando solo con el texto a mano. No se les rompe el bot:
+    se le dice al modelo que ese dato no está verificado."""
+    from app.chat import _execute_tool
+    from app.models import Conversation
+
+    cid, doc, _ = _armar("Clínica Solo Texto", [], modo="libre")
+
+    db = SessionLocal()
+    try:
+        conv = Conversation(company_id=cid, contact_phone="595981000124", channel="test")
+        db.add(conv)
+        db.commit()
+        r = _execute_tool("list_doctors", {}, db, db.get(Company, cid), conv)
+    finally:
+        db.close()
+
+    ficha = next(d for d in r["doctors"] if d["id"] == doc)
+    assert ficha["schedule"] == "Lun a Vie 08:00-14:00"
+    assert "no lo des como seguro" in ficha["schedule_sin_confirmar"]
