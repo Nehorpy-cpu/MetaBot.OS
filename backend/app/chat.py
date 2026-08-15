@@ -534,6 +534,45 @@ def _sanear_telefonos_inventados(db: Session, company: Company, conversation: Co
     return reply.strip(), inventados
 
 
+
+# Un pedido de PIN suena así en cualquiera de sus formas. La palabra sola
+# alcanza: en una conversación de negocio no aparece por casualidad.
+_PIDE_PIN_RE = re.compile(r"\bpin\b|\bclave de acceso\b", re.IGNORECASE)
+
+_SIN_PIN_INVENTADO = (
+    "Perdón, no llegué a resolver tu consulta. ¿Me la repetís?"
+)
+
+
+def _sanear_pin_inventado(db: Session, company: Company, conversation: Conversation,
+                          reply: str) -> tuple[str, bool]:
+    """El bot no pide un PIN porque se le ocurra: lo pide si el servidor lo pidió.
+
+    Visto en producción probando la Fase 6: el dueño preguntó "cuánto vendí
+    este mes", la métrica es de riesgo bajo, la herramienta devolvió el número
+    sin pedir nada — y el modelo igual contestó "necesito el PIN de acceso,
+    ¿me lo pasás?".
+
+    Es más grave de lo que parece. No es una respuesta de más: es enseñarle al
+    dueño a tipear su PIN cuando alguien se lo pide por WhatsApp. Ese es
+    exactamente el hábito que necesita un estafador, y se lo estaríamos
+    entrenando nosotros. Además inventa un requisito de acceso que no existe,
+    con lo cual el sistema queda mintiendo sobre sus propias reglas.
+
+    El único pedido de PIN legítimo es el que dejó anotado `cfo.pedir_pin()`
+    cuando la autorización lo exigió. Si no hay consulta pendiente, no hay
+    pedido: se reemplaza la respuesta entera, porque una respuesta construida
+    alrededor de un requisito inventado no se arregla borrándole una frase.
+    """
+    if not _PIDE_PIN_RE.search(reply or ""):
+        return reply, False
+    from . import cfo as _cfo
+
+    if _cfo.consulta_pendiente(db, company.id, conversation.contact_phone):
+        return reply, False
+    return _SIN_PIN_INVENTADO, True
+
+
 def _receta_verbatim(receta, doctor, items: list, company: Company) -> str:
     """Arma el texto de la receta con los campos de la base, sin modelo.
 
@@ -1733,6 +1772,16 @@ async def handle_incoming(
         logger.warning(
             "empresa %s: el modelo inventó teléfono(s) %s; se quitaron de la respuesta",
             company.id, telefonos_inventados,
+        )
+
+    # Y ningún pedido de PIN que el servidor no haya hecho.
+    reply_text, pin_inventado = _sanear_pin_inventado(
+        db, company, conversation, reply_text
+    )
+    if pin_inventado:
+        logger.warning(
+            "empresa %s: el modelo pidió un PIN que nadie exigió; respuesta reemplazada",
+            company.id,
         )
 
     reply_a_enviar = reply_text
