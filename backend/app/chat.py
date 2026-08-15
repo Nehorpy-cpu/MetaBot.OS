@@ -755,6 +755,15 @@ def _execute_tool(
             str(args.get("pin") or "").strip() or None,
         )
         if not veredicto.ok:
+            if veredicto.codigo in ("pin_requerido", "pin_incorrecto"):
+                # Se anota QUÉ se estaba preguntando. Sin esto, cuando la
+                # persona mande el PIN nadie se acuerda de la pregunta y hay
+                # que pedirle que la repita.
+                cfo.pedir_pin(
+                    db, company.id, conversation.contact_phone, clave,
+                    args.get("desde") and date.fromisoformat(args["desde"]) or None,
+                    args.get("hasta") and date.fromisoformat(args["hasta"]) or None,
+                )
             # Se devuelve el CÓDIGO además del texto: el bot tiene que poder
             # distinguir "pedile el PIN" de "no tiene permiso" sin leer
             # castellano.
@@ -1337,6 +1346,80 @@ def _build_system_prompt(
     return "\n\n".join(parts)
 
 
+def _responder_con_pin(db: Session, company: Company, conversation: Conversation,
+                       pendiente, pin: str, channel: str) -> dict:
+    """Resuelve la consulta que quedó esperando el PIN, sin modelo de por medio.
+
+    Esta función existe para que el PIN no viaje a ninguna IA. Y de paso
+    resuelve un problema de conversación: el modelo pedía el PIN, la persona
+    lo mandaba, y el modelo tenía que acordarse de qué se estaba preguntando.
+    Acá lo recuerda el servidor.
+
+    La respuesta se arma con plantilla, no generada: es un dato financiero y
+    no hay nada que redactar.
+    """
+    from . import cfo as _cfo
+    from . import cfo_motor
+
+    riesgo = _cfo.riesgo_de([pendiente.metrica])
+    veredicto = _cfo.autorizar(
+        db, company.id, conversation.contact_phone, riesgo, pin
+    )
+    if not veredicto.ok:
+        # Un PIN equivocado no borra la consulta: la persona puede reintentar
+        # sin volver a escribir la pregunta. El bloqueo por intentos sigue
+        # contando igual.
+        if veredicto.codigo != "pin_incorrecto":
+            _cfo.cerrar_pendiente(db, company.id, conversation.contact_phone)
+        return _salida_directa(db, company, conversation, veredicto.motivo, channel)
+
+    desde = pendiente.desde
+    hasta = pendiente.hasta
+    if not desde or not hasta:
+        hoy = datetime.now(ZoneInfo(TIMEZONE)).date()
+        desde, hasta = hoy.replace(day=1), hoy
+
+    r = cfo_motor.calcular(db, company, pendiente.metrica, desde, hasta)
+    _cfo.cerrar_pendiente(db, company.id, conversation.contact_phone)
+
+    if not r.calculable:
+        texto = r.advertencias[0] if r.advertencias else "No pude calcular ese dato."
+    else:
+        monto = _fmt_gs(r.valor) if r.unidad == "PYG" else f"{r.valor} {r.unidad}"
+        lineas = [
+            f"*{r.nombre}*",
+            f"{desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}",
+            "",
+            monto,
+        ]
+        # Las advertencias van ANTES de que la persona se quede con el
+        # número: si el dato está incompleto, enterarse después no sirve.
+        if r.advertencias:
+            lineas += ["", *[f"⚠ {a}" for a in r.advertencias]]
+        lineas += ["", f"Datos al {r.corte.strftime('%d/%m/%Y %H:%M')} UTC."]
+        texto = "\n".join(lineas)
+
+    return _salida_directa(db, company, conversation, texto, channel)
+
+
+def _salida_directa(db: Session, company: Company, conversation: Conversation,
+                    texto: str, channel: str) -> dict:
+    """Guarda la respuesta y la devuelve con la misma forma que el camino normal.
+
+    Se separa para que el atajo del PIN no tenga que replicar lo que el flujo
+    largo hace con el mensaje saliente: si mañana cambia, cambia en un lugar.
+    """
+    db.add(Message(company_id=company.id, conversation_id=conversation.id,
+                   direction="out", body=texto))
+    db.commit()
+    return {
+        "reply": texto,
+        "status": conversation.status,
+        "media": [],
+        "conversation_id": conversation.id,
+    }
+
+
 async def handle_incoming(
     db: Session,
     company: Company,
@@ -1407,9 +1490,32 @@ async def handle_incoming(
         if declarado:
             conversation.stated_name = declarado
 
+    # ¿Es la respuesta a un pedido de PIN del CFO?
+    #
+    # Se decide ACÁ, antes de guardar el mensaje, porque lo que hay que evitar
+    # es justamente que el PIN quede escrito. Si lo es: se guarda tachado, se
+    # resuelve la consulta que quedó pendiente y se responde sin pasar por el
+    # modelo. El PIN no entra a la base, no entra al historial y no viaja a
+    # ningún proveedor de IA.
+    pin_recibido = ""
+    pendiente = None
+    if "consultar_finanzas" in {t["function"]["name"] for t in _tools_for(company)}:
+        from . import cfo as _cfo
+
+        if _cfo.es_pin(text):
+            pendiente = _cfo.consulta_pendiente(db, company.id, contact_phone)
+            if pendiente is not None:
+                pin_recibido = text.strip()
+
     db.add(Message(company_id=company.id, conversation_id=conversation.id, direction="in",
-                   body=text, external_id=external_id or None))
+                   body=(_cfo.PIN_TACHADO if pin_recibido else text),
+                   external_id=external_id or None))
     db.commit()
+
+    if pin_recibido and pendiente is not None:
+        return _responder_con_pin(
+            db, company, conversation, pendiente, pin_recibido, channel,
+        )
 
     # Baja de avisos: si el paciente escribe STOP hay que parar YA. Dejar eso
     # en manos de la interpretación de un modelo es como termina el número del

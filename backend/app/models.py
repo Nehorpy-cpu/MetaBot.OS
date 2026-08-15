@@ -660,6 +660,42 @@ class FinanceIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class FinanceSession(Base):
+    """Lo que el CFO está esperando de esta persona, ahora.
+
+    Existe por una razón concreta: cuando la consulta es sensible el bot pide
+    el PIN, y el dueño lo escribe en el chat. Sin esta tabla, ese mensaje se
+    guarda en `messages` y viaja al historial del modelo — el PIN termina
+    escrito en el WhatsApp de un teléfono que se puede perder, y en la base.
+
+    Con la consulta pendiente guardada acá, el servidor reconoce el mensaje
+    siguiente como un PIN, lo tacha antes de guardarlo, resuelve la consulta
+    original por su cuenta y NUNCA se lo pasa al modelo.
+
+    Es por (empresa, teléfono) y no por conversación: la misma persona puede
+    tener una conversación abierta hace semanas y la pregunta pendiente es de
+    ahora.
+    """
+
+    __tablename__ = "finance_sessions"
+    __table_args__ = (
+        UniqueConstraint("company_id", "phone", name="uq_finance_session_phone"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    phone: Mapped[str] = mapped_column(String(30), index=True)
+    # Qué se estaba preguntando cuando se pidió el PIN.
+    metrica: Mapped[str] = mapped_column(String(60), default="")
+    desde: Mapped[date | None] = mapped_column(nullable=True)
+    hasta: Mapped[date | None] = mapped_column(nullable=True)
+    # Hasta cuándo vale ese pedido. Una espera de PIN que no vence convierte
+    # cualquier número de cuatro cifras que la persona escriba mañana en un
+    # intento de PIN.
+    pin_pedido_hasta: Mapped[datetime | None] = mapped_column(nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class FinanceMetricState(Base):
     """En qué estado está una métrica PARA ESTA EMPRESA.
 

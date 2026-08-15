@@ -243,3 +243,96 @@ FUERA_DE_ALCANCE = (
     "Estoy configurado para analizar las finanzas, ventas y datos operativos "
     "de esta empresa. Puedo ayudarte con esos datos."
 )
+
+
+# ─── La consulta pendiente ───────────────────────────────────────────────
+#
+# Cuando el bot pide el PIN, la persona lo escribe en el chat. Sin esto, ese
+# mensaje se guarda en la base y viaja al historial del modelo: el PIN queda
+# escrito en un WhatsApp que se puede perder.
+
+MINUTOS_DE_ESPERA_DE_PIN = 5
+
+
+def es_pin(texto: str) -> bool:
+    """¿Este mensaje parece un PIN y nada más?
+
+    Se exige que sea SOLO dígitos: "el pin es 4721" no se tacha, porque ahí
+    la persona ya escribió el PIN dentro de una frase y tacharlo a medias da
+    una falsa sensación de que se cuidó.
+    """
+    limpio = (texto or "").strip()
+    return limpio.isdigit() and LARGO_MINIMO_DE_PIN <= len(limpio) <= 12
+
+
+def pedir_pin(db: Session, company_id: int, telefono: str, metrica: str,
+              desde=None, hasta=None) -> bool:
+    """Deja anotado qué se estaba preguntando, para poder retomarlo.
+
+    Devuelve False —y no anota nada— si esa métrica NO necesita PIN. Un
+    pedido de PIN abierto para una consulta de riesgo bajo se traga cualquier
+    número de cuatro cifras que la persona escriba después, y encima nunca lo
+    valida: la respuesta sale igual con el PIN equivocado.
+    """
+    from .models import FinanceSession
+
+    if riesgo_de([metrica]) is Riesgo.BAJA:
+        return False
+
+    digitos = solo_digitos(telefono)
+    fila = (
+        db.query(FinanceSession)
+        .filter(FinanceSession.company_id == company_id,
+                FinanceSession.phone == digitos)
+        .first()
+    )
+    if fila is None:
+        fila = FinanceSession(company_id=company_id, phone=digitos)
+        db.add(fila)
+    fila.metrica = metrica
+    fila.desde = desde
+    fila.hasta = hasta
+    fila.pin_pedido_hasta = _ahora() + timedelta(minutes=MINUTOS_DE_ESPERA_DE_PIN)
+    fila.updated_at = _ahora()
+    db.commit()
+    return True
+
+
+def consulta_pendiente(db: Session, company_id: int, telefono: str):
+    """La consulta que quedó esperando el PIN, si sigue vigente."""
+    from .models import FinanceSession
+
+    fila = (
+        db.query(FinanceSession)
+        .filter(
+            FinanceSession.company_id == company_id,
+            FinanceSession.phone == solo_digitos(telefono),
+        )
+        .first()
+    )
+    if not fila or not fila.pin_pedido_hasta or fila.pin_pedido_hasta < _ahora():
+        return None
+    return fila
+
+
+def cerrar_pendiente(db: Session, company_id: int, telefono: str) -> None:
+    """Se resolvió o se abandonó: el pedido de PIN deja de estar abierto."""
+    from .models import FinanceSession
+
+    fila = (
+        db.query(FinanceSession)
+        .filter(
+            FinanceSession.company_id == company_id,
+            FinanceSession.phone == solo_digitos(telefono),
+        )
+        .first()
+    )
+    if fila:
+        fila.pin_pedido_hasta = None
+        fila.metrica = ""
+        db.commit()
+
+
+# Lo que se guarda EN LUGAR del PIN. Que se vea que hubo un mensaje —si no,
+# la conversación queda con un hueco inexplicable— sin guardar el valor.
+PIN_TACHADO = "[PIN enviado por el usuario · no se guarda]"
