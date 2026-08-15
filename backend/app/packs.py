@@ -169,7 +169,16 @@ FINANCE = Pack(
         "- Decí SIEMPRE el período y desde cuándo están actualizados los "
         "datos. Un número sin fecha no sirve para decidir.\n"
         "- Si los datos están incompletos o desactualizados, avisalo ANTES "
-        "del número, no después."
+        "del número, no después.\n"
+        # El PIN es la única prueba de que quien pregunta es quien dice ser.
+        # Repetirlo en el chat lo deja escrito en el historial de WhatsApp de
+        # un teléfono que se puede perder.
+        "- Si te piden el PIN, pedíselo y pasalo a la herramienta. NUNCA lo "
+        "repitas en tu respuesta, ni para confirmar que lo recibiste, ni "
+        "tachado. Y jamás lo inventes.\n"
+        "- Si la herramienta te dice que falta conectar una fuente, decíselo "
+        "tal cual: qué falta y que por eso ese número todavía no se puede "
+        "calcular. No lo reemplaces por otro parecido."
     ),
 )
 

@@ -165,9 +165,9 @@ def test_una_metrica_sin_clasificar_es_de_riesgo_alto():
 def test_el_riesgo_de_la_consulta_es_el_de_su_peor_metrica():
     """"Ventas y saldo bancario" en un mismo mensaje no se cuela como consulta
     de riesgo bajo porque la primera lo sea."""
-    assert cfo.riesgo_de(["ventas_del_dia"]) is Riesgo.BAJA
-    assert cfo.riesgo_de(["ventas_del_dia", "margen_bruto"]) is Riesgo.MEDIA
-    assert cfo.riesgo_de(["ventas_del_dia", "saldos_bancarios"]) is Riesgo.ALTA
+    assert cfo.riesgo_de(["ventas_netas"]) is Riesgo.BAJA
+    assert cfo.riesgo_de(["ventas_netas", "margen_bruto"]) is Riesgo.MEDIA
+    assert cfo.riesgo_de(["ventas_netas", "flujo_de_caja"]) is Riesgo.ALTA
     assert cfo.riesgo_de([]) is Riesgo.BAJA
 
 
@@ -352,7 +352,31 @@ def test_el_catalogo_de_riesgos_es_de_solo_lectura():
     c = _empresa("Empresa Catálogo")
     cid = c["id"]
     datos = client.get(f"/api/companies/{cid}/cfo/riesgos").json()
-    assert "saldos_bancarios" in datos["niveles"]["alta"]
-    assert "ventas_del_dia" in datos["niveles"]["baja"]
+    assert "flujo_de_caja" in datos["niveles"]["alta"]
+    assert "ventas_netas" in datos["niveles"]["baja"]
     # No existe forma de escribirlo.
     assert client.put(f"/api/companies/{cid}/cfo/riesgos", json={}).status_code in (404, 405)
+
+
+def test_toda_metrica_del_catalogo_esta_clasificada():
+    """Las claves del mapa de riesgo y las del catálogo tienen que ser LAS
+    MISMAS.
+
+    Estaban desalineadas: el mapa decía "ventas_resumen" y el catálogo
+    "ventas_netas", así que la métrica más común caía en "sin clasificar" y
+    por lo tanto en riesgo ALTO. La regla de deny-by-default funcionó —le
+    pedía PIN al dueño para preguntar las ventas del mes— pero el mapa estaba
+    mal, y sin este test se arregla el día que alguien se queja.
+    """
+    from app.cfo_metricas import CATALOGO
+
+    sin_clasificar = sorted(set(CATALOGO) - set(cfo.RIESGO_POR_METRICA))
+    assert not sin_clasificar, (
+        f"métricas del catálogo sin nivel de riesgo: {sin_clasificar}. "
+        "Sin clasificar se tratan como ALTA, así que el dueño necesita PIN "
+        "para preguntar cualquiera de ellas."
+    )
+    fantasmas = sorted(set(cfo.RIESGO_POR_METRICA) - set(CATALOGO))
+    assert not fantasmas, (
+        f"niveles de riesgo para métricas que no existen: {fantasmas}"
+    )

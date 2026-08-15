@@ -51,34 +51,20 @@ def alcanza(techo: str, pedido: Riesgo) -> bool:
 # métrica nueva sin clasificar no puede nacer siendo pública.
 RIESGO_POR_METRICA: dict[str, Riesgo] = {
     # Lo que cualquiera en el mostrador ya ve
-    "ventas_del_dia": Riesgo.BAJA,
-    "ventas_resumen": Riesgo.BAJA,
-    "cantidad_de_pedidos": Riesgo.BAJA,
+    "ventas_brutas": Riesgo.BAJA,
+    "ventas_netas": Riesgo.BAJA,
     "cumplimiento_de_metas": Riesgo.BAJA,
-    "productos_mas_vendidos": Riesgo.BAJA,
-    "ventas_por_sucursal": Riesgo.BAJA,
-    "frescura_de_datos": Riesgo.BAJA,
     # Lo que le sirve a un competidor o a un empleado
     "margen_bruto": Riesgo.MEDIA,
-    "gastos_resumen": Riesgo.MEDIA,
-    "comisiones": Riesgo.MEDIA,
+    "gastos": Riesgo.MEDIA,
     "cuentas_por_cobrar": Riesgo.MEDIA,
-    "inventario_valorizado": Riesgo.MEDIA,
-    "rotacion_de_inventario": Riesgo.MEDIA,
-    "ventas_por_vendedor": Riesgo.MEDIA,
-    "cobranza_resumen": Riesgo.MEDIA,
+    "cobrado": Riesgo.MEDIA,
     # Lo que no se le muestra ni al contador sin que el dueño lo sepa
-    "saldo_en_caja": Riesgo.ALTA,
-    "saldos_bancarios": Riesgo.ALTA,
-    "nomina": Riesgo.ALTA,
-    "impuestos": Riesgo.ALTA,
-    "proyeccion_de_caja": Riesgo.ALTA,
-    "cuentas_por_pagar": Riesgo.ALTA,
-    "utilidad_neta": Riesgo.ALTA,
-    "concentracion_de_clientes": Riesgo.ALTA,
+    "entradas_de_caja": Riesgo.ALTA,
+    "salidas_de_caja": Riesgo.ALTA,
     "flujo_de_caja": Riesgo.ALTA,
+    "utilidad_neta": Riesgo.ALTA,
 }
-
 
 def riesgo_de(metricas: list[str]) -> Riesgo:
     """El riesgo de una consulta es el de su métrica MÁS sensible.

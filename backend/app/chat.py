@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("metabot.chat")
@@ -250,6 +250,34 @@ TOOL_SPECS: dict[str, dict] = {
                     "notes": {"type": "string", "description": "Motivo"},
                 },
                 "required": ["doctor_id", "patient_name", "datetime_iso"],
+            },
+        },
+    },
+    "consultar_finanzas": {
+        "type": "function",
+        "function": {
+            "name": "consultar_finanzas",
+            "description": (
+                "Consulta un dato financiero REAL de esta empresa: ventas, cobranzas, "
+                "margen, caja. Es la única forma de dar un número: nunca lo estimes ni "
+                "lo calcules vos. Si la herramienta dice que falta conectar una fuente, "
+                "decíselo tal cual al dueño."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "metrica": {
+                        "type": "string",
+                        "description": "Clave de la métrica: ventas_netas, ventas_brutas, cobrado, margen_bruto, flujo_de_caja, cuentas_por_cobrar, gastos, cumplimiento_de_metas.",
+                    },
+                    "desde": {"type": "string", "description": "AAAA-MM-DD. Vacío = desde el 1 de este mes."},
+                    "hasta": {"type": "string", "description": "AAAA-MM-DD. Vacío = hoy."},
+                    "pin": {
+                        "type": "string",
+                        "description": "El PIN que te dio la persona, solo si te lo acaba de escribir. NUNCA lo inventes ni lo repitas en tu respuesta.",
+                    },
+                },
+                "required": ["metrica"],
             },
         },
     },
@@ -697,6 +725,81 @@ def _execute_tool(
         else:
             respuesta["coverage_pct"] = cobertura.cobertura_pct
         return respuesta
+
+    if name == "consultar_finanzas":
+        # La ÚNICA puerta por la que el bot llega a un número financiero.
+        #
+        # El orden importa y no es negociable: primero se resuelve quién está
+        # preguntando —del teléfono de ESTA conversación, nunca de un
+        # argumento del modelo—, después si esa persona puede hacer esa
+        # pregunta, y recién ahí se calcula. Verificar el permiso después de
+        # consultar sería traer el dato y confiar en no mostrarlo.
+        from . import cfo, cfo_metricas, cfo_motor
+
+        clave = str(args.get("metrica", "")).strip()
+        if clave not in cfo_metricas.CATALOGO:
+            aprobadas = [
+                m["clave"] for m in cfo_motor.catalogo_para(db, company)
+                if m["estado"] == "activa"
+            ]
+            return {
+                "error": f"No conozco la métrica '{clave}'.",
+                "metricas_disponibles": aprobadas,
+            }
+
+        # El riesgo sale del catálogo, no del modelo: si el modelo pudiera
+        # declarar "esto es de riesgo bajo", el PIN sería opcional.
+        riesgo = cfo.riesgo_de([clave])
+        veredicto = cfo.autorizar(
+            db, company.id, conversation.contact_phone, riesgo,
+            str(args.get("pin") or "").strip() or None,
+        )
+        if not veredicto.ok:
+            # Se devuelve el CÓDIGO además del texto: el bot tiene que poder
+            # distinguir "pedile el PIN" de "no tiene permiso" sin leer
+            # castellano.
+            return {
+                "error": veredicto.motivo,
+                "codigo": veredicto.codigo,
+                "pin_requerido": veredicto.codigo in ("pin_requerido", "pin_incorrecto"),
+            }
+
+        hoy = datetime.now(ZoneInfo(TIMEZONE)).date()
+        try:
+            desde = (
+                date.fromisoformat(args["desde"]) if args.get("desde")
+                else hoy.replace(day=1)
+            )
+            hasta = date.fromisoformat(args["hasta"]) if args.get("hasta") else hoy
+        except (ValueError, TypeError):
+            return {"error": "No entendí el período. Necesito fechas AAAA-MM-DD."}
+        if desde > hasta:
+            return {"error": "El período empieza después de terminar."}
+
+        r = cfo_motor.calcular(db, company, clave, desde, hasta)
+        if not r.calculable:
+            # Con el motivo, siempre. Un "no puedo" a secas deja a alguien
+            # esperando un número que no va a llegar.
+            return {
+                "error": r.advertencias[0] if r.advertencias else "No se pudo calcular.",
+                "calculable": False,
+            }
+
+        return {
+            "metrica": r.nombre,
+            "periodo": f"{r.desde.strftime('%d/%m/%Y')} al {r.hasta.strftime('%d/%m/%Y')}",
+            "valor": _fmt_gs(r.valor) if r.unidad == "PYG" else f"{r.valor} {r.unidad}",
+            "actualizado": r.corte.strftime("%d/%m/%Y %H:%M UTC"),
+            "fuentes": list(r.fuentes),
+            # Lo que hace defendible el número: si vino incompleto, se dice
+            # ANTES de que alguien decida con él.
+            "completitud": r.completitud,
+            "advertencias": list(r.advertencias),
+            "nota": (
+                "Decí el monto, el período y desde cuándo están actualizados "
+                "los datos. Si hay advertencias, decilas ANTES del número."
+            ),
+        }
 
     if name == "get_prescription":
         # Se busca por el teléfono DE ESTA conversación, nunca por un nombre
@@ -1197,6 +1300,32 @@ def _build_system_prompt(
             )
         else:
             parts.append("Aún no hay doctores cargados: no ofrezcas turnos, escalá a humano si piden cita.")
+    if "consultar_finanzas" in {t["function"]["name"] for t in _tools_for(company)}:
+        # Qué métricas tiene APROBADAS esta empresa. Va en el prompt para que
+        # el bot no ofrezca lo que no puede contestar: prometer un dato y
+        # después decir "falta conectar la fuente" es peor que no ofrecerlo.
+        from . import cfo_motor
+
+        activas = [m for m in cfo_motor.catalogo_para(db, company) if m["estado"] == "activa"]
+        if activas:
+            lista = "; ".join(
+                f"{m['clave']} ({m['nombre']})"
+                + (" — se puede calcular" if m["se_puede_calcular"]
+                   else " — definida, pero su fuente todavía no está conectada")
+                for m in activas
+            )
+            parts.append(
+                f"Datos financieros que esta empresa tiene aprobados: {lista}. "
+                "Para cualquiera de ellos usá consultar_finanzas. No ofrezcas "
+                "ninguno que no esté en esta lista."
+            )
+        else:
+            parts.append(
+                "Esta empresa todavía no aprobó ninguna métrica financiera. "
+                "Si te preguntan un número, decí que hay que definir y aprobar "
+                "las métricas desde el panel antes de poder contestarlo."
+            )
+
     terms = db.query(GlossaryTerm).filter(GlossaryTerm.company_id == company.id).all()
     if terms:
         glossary = "; ".join(f"'{t.heard}' significa '{t.meaning or t.corrected}'" for t in terms[:30])
