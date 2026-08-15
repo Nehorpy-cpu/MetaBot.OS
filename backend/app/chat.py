@@ -573,6 +573,54 @@ def _sanear_pin_inventado(db: Session, company: Company, conversation: Conversat
     return _SIN_PIN_INVENTADO, True
 
 
+
+# Palabras que solo aparecen cuando alguien pregunta por la plata del negocio.
+# Deliberadamente cortas y pocas: un guardia que salta de más se termina
+# apagando, y entonces no protege nada. No entran "precio", "cuesta" ni
+# "cuánto sale", que son preguntas de un cliente sobre un producto.
+_PREGUNTA_DE_PLATA_RE = re.compile(
+    r"\b(vend[íi]|vendimos|vendi[óo]|ventas|factur|cobranz|cobramos|"
+    r"gast(?:os|amos|é|e)|margen|utilidad|ganancia|rentabilidad|"
+    r"flujo de caja|caja chica|cuentas por cobrar|balance|"
+    r"c[óo]mo (?:vengo|vamos|estamos|viene el negocio))",
+    re.IGNORECASE,
+)
+
+_NO_PUDE_CONSULTAR = (
+    "Perdón, no pude completar esa consulta recién. Probá de nuevo en un "
+    "momento."
+)
+
+
+def _sin_herramienta_no_hay_numero(company: Company, texto: str,
+                                   herramientas: list, reply: str) -> tuple[str, bool]:
+    """Una pregunta sobre plata que no pasó por la herramienta no se contesta.
+
+    Visto en producción probando la Fase 6: ante "cuánto vendí este mes" el
+    modelo no llamó a ninguna herramienta y contestó de memoria. Dos problemas
+    en uno:
+
+    1. El número, si lo hubiera dicho, sería inventado.
+    2. Sin llamada tampoco corre `cfo.autorizar()`. O sea que ni siquiera se
+       verificó si esa persona podía preguntar. Un número no autorizado
+       recibió una respuesta servicial ofreciéndole elegir el período.
+
+    Todo el módulo se apoya en que el permiso se verifica al pedir el dato.
+    Si el modelo puede saltear la herramienta, se saltea el permiso, y las
+    reglas de acceso pasan a ser una sugerencia.
+
+    Por eso esto no vive en el prompt: el prompt ya lo dice y el modelo lo
+    ignoró igual.
+    """
+    if "consultar_finanzas" in (herramientas or []):
+        return reply, False
+    if "consultar_finanzas" not in packs.tools_for(company):
+        return reply, False
+    if not _PREGUNTA_DE_PLATA_RE.search(texto or ""):
+        return reply, False
+    return _NO_PUDE_CONSULTAR, True
+
+
 def _receta_verbatim(receta, doctor, items: list, company: Company) -> str:
     """Arma el texto de la receta con los campos de la base, sin modelo.
 
@@ -1782,6 +1830,17 @@ async def handle_incoming(
         logger.warning(
             "empresa %s: el modelo pidió un PIN que nadie exigió; respuesta reemplazada",
             company.id,
+        )
+
+    # Y ninguna respuesta sobre plata que no haya pasado por la herramienta:
+    # sin llamada tampoco se verificó el permiso de quien pregunta.
+    reply_text, sin_consultar = _sin_herramienta_no_hay_numero(
+        company, text, [a["tool"] for a in actions], reply_text
+    )
+    if sin_consultar:
+        logger.warning(
+            "empresa %s: pregunta financiera contestada sin llamar a "
+            "consultar_finanzas; respuesta reemplazada", company.id,
         )
 
     reply_a_enviar = reply_text

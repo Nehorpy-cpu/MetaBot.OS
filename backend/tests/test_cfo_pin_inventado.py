@@ -101,3 +101,76 @@ def test_la_palabra_pin_adentro_de_otra_no_dispara():
         assert salida == texto
     finally:
         db.close()
+
+
+# ─── Sin herramienta no hay número ───────────────────────────────────────
+
+
+def test_una_pregunta_de_plata_sin_llamar_a_la_herramienta_no_se_contesta():
+    """Sin llamada tampoco corre la verificación de permiso: no se sabe si
+    esa persona podía preguntar."""
+    from app.chat import _sin_herramienta_no_hay_numero
+
+    cid, _, db = _escenario("Sin Herramienta")
+    try:
+        company = db.get(Company, cid)
+        salida, reemplazada = _sin_herramienta_no_hay_numero(
+            company, "cuanto vendi este mes?", [],
+            "Este mes vendiste alrededor de 12 millones.",
+        )
+        assert reemplazada is True
+        assert "12 millones" not in salida
+    finally:
+        db.close()
+
+
+def test_si_la_herramienta_se_llamo_la_respuesta_pasa():
+    from app.chat import _sin_herramienta_no_hay_numero
+
+    cid, _, db = _escenario("Con Herramienta")
+    try:
+        company = db.get(Company, cid)
+        texto = "Vendiste ₲ 8.550.000 entre el 1 y el 15 de agosto."
+        salida, reemplazada = _sin_herramienta_no_hay_numero(
+            company, "cuanto vendi este mes?", ["consultar_finanzas"], texto)
+        assert reemplazada is False
+        assert salida == texto
+    finally:
+        db.close()
+
+
+def test_una_pregunta_que_no_es_de_plata_pasa():
+    """Un guardia que salta de más se termina apagando, y entonces no protege
+    nada."""
+    from app.chat import _sin_herramienta_no_hay_numero
+
+    cid, _, db = _escenario("Pregunta Común")
+    try:
+        company = db.get(Company, cid)
+        for pregunta in ("hola, están abiertos?", "cuánto sale una consulta?",
+                         "qué precio tiene el producto?"):
+            texto = "Sí, claro."
+            salida, reemplazada = _sin_herramienta_no_hay_numero(
+                company, pregunta, [], texto)
+            assert reemplazada is False, f"saltó de más con: {pregunta}"
+            assert salida == texto
+    finally:
+        db.close()
+
+
+def test_sin_el_bloque_de_finanzas_el_guardia_no_se_mete():
+    """Una empresa que no compró finanzas no tiene de qué protegerse acá, y
+    el guardia no puede romperle una conversación normal."""
+    from app.chat import _sin_herramienta_no_hay_numero
+
+    c = _create_company(name="Comercio Sin Finanzas")
+    db = SessionLocal()
+    try:
+        company = db.get(Company, c["id"])
+        texto = "Las ventas de la promo terminan el viernes."
+        salida, reemplazada = _sin_herramienta_no_hay_numero(
+            company, "hasta cuándo dura la promo de ventas?", [], texto)
+        assert reemplazada is False
+        assert salida == texto
+    finally:
+        db.close()
