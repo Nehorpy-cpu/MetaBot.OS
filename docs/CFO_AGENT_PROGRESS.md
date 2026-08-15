@@ -236,3 +236,75 @@ todo; el segundo intento da 404.
 
 Fase 6, conectores: es la que vuelve útil al módulo. Hoy la única fuente es
 interna y el CFO puede contestar bien tres preguntas de diez.
+
+---
+
+## Fase 6 — Conectores y frescura ✅ (parte 1: cimiento + planilla)
+
+Desplegado y probado en producción el 15-ago-2026. 635 pruebas verdes, 43
+nuevas.
+
+### La constante que mentía
+
+El motor tenía `FUENTES_DISPONIBLES = {INTERNA, VENTAS}` fija en el módulo,
+igual para todas las empresas. Era mentira —no hay ninguna tabla de ventas— y
+era la peor clase de mentira: la que hace que el sistema se crea capaz de
+calcular algo que no puede.
+
+Ahora sale de lo que CADA empresa conectó, con una regla: **conectado no es
+disponible**. Una fuente cuenta cuando trajo filas al menos una vez.
+
+De paso apareció la contradicción que la constante tapaba: el catálogo decía
+que `ventas_netas` sale de VENTAS mientras su cálculo la sacaba de las
+atenciones. Se agregó el concepto de **fuente alternativa**: una distribuidora
+factura con su sistema, un sanatorio factura por atención, las dos son ventas
+de verdad, y el resultado dice cuál se usó. Nunca una mezcla.
+
+### El primer conector es una planilla, no una API
+
+Porque un comercio paraguayo no tiene una API: tiene un botón de "exportar".
+El parser está escrito contra archivos reales —separador `;`, montos
+`1.234.567`, fechas `dd/mm/aaaa`, cp1252— y **si una fila no se entiende no
+carga ninguna**: cargar 98 de 100 da un total que se ve bien, cierra mal, y
+nadie sabe por qué.
+
+Verificado en producción: 1.500.000 + 2.300.000 + 4.750.000 = ₲ 8.550.000, con
+la procedencia declarada; una fila rota devuelve `Fila 3: no es una fecha:
+'ayer'` y el número no se mueve.
+
+### Dos defectos que solo aparecieron preguntándole al bot
+
+**El bot pedía un PIN que nadie le había exigido.** `ventas_netas` es de
+riesgo bajo, la herramienta devolvió el número sin pedir nada, y el modelo
+contestó "necesito el PIN de acceso, ¿me lo pasás?". No es una respuesta de
+más: es enseñarle al dueño a tipear su PIN cuando alguien se lo pide por
+WhatsApp — el hábito exacto que necesita un estafador, entrenado por nosotros.
+La regla del prompt decía "Si te piden el PIN, pedíselo" (en el sentido de "si
+la herramienta lo pide") y el modelo la leyó como permiso.
+
+**Sin llamar a la herramienta, el modelo se saltea también el permiso.** Ante
+"cuánto vendí este mes" no llamó a nada y contestó de memoria; `tools_used`
+vacío en `agent_runs`. Lo grave no es el número —que sería inventado— sino que
+sin llamada tampoco corre `cfo.autorizar()`: un número NO autorizado recibió
+una respuesta servicial ofreciéndole elegir el período. Todo el módulo se
+apoya en que el permiso se verifica al pedir el dato.
+
+Los dos guardias viven en el servidor, no en el prompt, porque el prompt ya lo
+decía y el modelo lo ignoró igual.
+
+### Lo que queda abierto y no se puede tapar
+
+Los modelos gratuitos de Groq llaman a la herramienta de forma inconsistente:
+`gpt-oss-120b` no la llamó en ninguna de las pruebas, `gpt-oss-20b` sí en una
+de dos. Con "cómo vengo con las ventas de agosto" el circuito completo
+funciona —número, período, corte y advertencia antes del número—; con "cuánto
+vendí este mes" el guardia tiene que atajar. **No es un problema de lógica:
+es la calidad del modelo.** Se resuelve con un modelo que respete tool-calling,
+no con más prompt.
+
+## Lo que sigue
+
+Fase 6 parte 2: conectores REST y PostgreSQL, que sí necesitan credenciales
+—y por lo tanto cifrado en reposo y el guardia SSRF sobre el host, incluido el
+DSN de PostgreSQL: un DSN apuntando a nuestra propia base leería los datos de
+todos los clientes.
