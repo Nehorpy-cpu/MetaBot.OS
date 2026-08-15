@@ -515,6 +515,15 @@ def crear_informe(
     }
 
 
+def _vigente(llave: FinanceReportToken) -> bool:
+    """Un enlace vigente es el que todavía abriría el informe."""
+    if llave.revocado_at is not None:
+        return False
+    if llave.expira_at <= datetime.now(timezone.utc).replace(tzinfo=None):
+        return False
+    return not (llave.un_solo_uso and llave.aperturas >= 1)
+
+
 @router.get("/informes")
 def listar_informes(
     company_id: int,
@@ -546,9 +555,10 @@ def listar_informes(
             "desde": r.desde.isoformat(),
             "hasta": r.hasta.isoformat(),
             "creado": r.created_at.isoformat(),
-            "enlaces_vigentes": sum(
-                1 for k in llaves if k.revocado_at is None and k.expira_at > datetime.now(timezone.utc).replace(tzinfo=None)
-            ),
+            # Un enlace de un solo uso ya gastado no está vigente, aunque no
+            # esté revocado ni vencido. Decirle al dueño que le quedan enlaces
+            # vivos cuando no le queda ninguno es peor que no decirle nada.
+            "enlaces_vigentes": sum(1 for k in llaves if _vigente(k)),
             "aperturas": sum(k.aperturas for k in llaves),
             "ultima_apertura": max(
                 (k.ultima_apertura_at.isoformat() for k in llaves if k.ultima_apertura_at),

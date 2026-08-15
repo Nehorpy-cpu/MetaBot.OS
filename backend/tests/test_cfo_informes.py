@@ -419,3 +419,14 @@ def test_la_portada_solo_puede_enviarse_a_este_mismo_sitio():
     # El informe en sí sigue sin formularios.
     informe = client.post(f"/r/{_token_de(_crear(cid)['enlace'])}")
     assert "form-action 'none'" in informe.headers["content-security-policy"]
+
+
+def test_un_enlace_de_un_solo_uso_gastado_deja_de_estar_vigente():
+    """Decirle al dueño que le quedan enlaces vivos cuando no le queda
+    ninguno es peor que no decirle nada."""
+    cid = _empresa("Informe Vigencia Honesta")
+    token = _token_de(_crear(cid, un_solo_uso=True)["enlace"])
+    listado = lambda: client.get(f"/api/companies/{cid}/cfo/informes").json()[0]  # noqa: E731
+    assert listado()["enlaces_vigentes"] == 1
+    client.post(f"/r/{token}")
+    assert listado()["enlaces_vigentes"] == 0
