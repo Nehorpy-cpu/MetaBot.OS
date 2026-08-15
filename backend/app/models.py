@@ -6,6 +6,7 @@ decimales). El formato con puntos de miles es responsabilidad del frontend.
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
@@ -1283,3 +1284,83 @@ class GlossaryTerm(Base):
     heard: Mapped[str] = mapped_column(String(200))      # lo que transcribió el ASR
     corrected: Mapped[str] = mapped_column(String(200))  # forma correcta
     meaning: Mapped[str] = mapped_column(String(500), default="")
+
+
+class FinanceConnector(Base):
+    """De dónde salen los datos de una empresa, y cuándo llegaron.
+
+    Una fuente conectada NO es una fuente disponible: cuenta cuando trajo
+    filas al menos una vez. Un conector recién creado y todavía vacío haría
+    que el motor calcule sobre cero registros y conteste ₲ 0 — que es
+    exactamente el cero mentiroso que este módulo existe para evitar.
+
+    `ultima_sync_at` no es un dato de operación: es parte de la respuesta. Un
+    número financiero sin la fecha de sus datos no sirve para decidir.
+    """
+
+    __tablename__ = "finance_connectors"
+    __table_args__ = (
+        UniqueConstraint("company_id", "id", name="uq_finance_connector_company_id"),
+        UniqueConstraint("company_id", "nombre", name="uq_finance_connector_nombre"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    # Qué alimenta: una de cfo_metricas.Fuente (ventas, gastos, caja_y_bancos…).
+    fuente: Mapped[str] = mapped_column(String(30), index=True)
+    # csv | rest | postgres
+    tipo: Mapped[str] = mapped_column(String(20))
+    nombre: Mapped[str] = mapped_column(String(120))
+    # Configuración SIN credenciales: URL, tabla, mapeo de columnas.
+    config: Mapped[str] = mapped_column(Text, default="{}")
+    activo: Mapped[bool] = mapped_column(default=True)
+    ultima_sync_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    ultima_sync_ok: Mapped[bool] = mapped_column(default=False)
+    # El motivo del último fallo, en castellano y sin credenciales adentro.
+    ultimo_error: Mapped[str] = mapped_column(Text, default="")
+    filas_ultima_sync: Mapped[int] = mapped_column(default=0)
+    filas_totales: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class FinanceRecord(Base):
+    """Un hecho económico ya normalizado: fecha, monto y de dónde vino.
+
+    Los conectores traen y guardan acá; el motor calcula solo sobre esto. Es
+    a propósito: consultar el sistema del cliente en el momento de la
+    pregunta ataría la respuesta a que su ERP esté vivo y rápido, y dejaría
+    al CFO sin poder decir de cuándo son los datos.
+
+    El monto va en guaraníes ENTEROS. Un decimal flotante en plata termina en
+    un total que no cierra por un guaraní, y el dueño deja de creerle al
+    sistema por algo que no era el sistema.
+    """
+
+    __tablename__ = "finance_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "connector_id"],
+            ["finance_connectors.company_id", "finance_connectors.id"],
+            name="fk_finance_record_tenant", ondelete="CASCADE",
+        ),
+        # Idempotencia: volver a cargar la misma planilla no duplica nada. Sin
+        # esto, un dueño que sube dos veces el mismo archivo ve sus ventas al
+        # doble y no tiene forma de saber por qué.
+        UniqueConstraint(
+            "company_id", "connector_id", "referencia",
+            name="uq_finance_record_referencia",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    connector_id: Mapped[int] = mapped_column(index=True)
+    fuente: Mapped[str] = mapped_column(String(30), index=True)
+    fecha: Mapped[date] = mapped_column(index=True)
+    monto_gs: Mapped[int] = mapped_column(BigInteger)
+    categoria: Mapped[str] = mapped_column(String(120), default="")
+    # El identificador del hecho en el sistema de origen: número de factura,
+    # id de la fila. Es lo que vuelve idempotente la recarga.
+    referencia: Mapped[str] = mapped_column(String(120))
+    detalle: Mapped[str] = mapped_column(Text, default="{}")
+    cargado_at: Mapped[datetime] = mapped_column(default=utcnow)

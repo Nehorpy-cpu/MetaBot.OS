@@ -103,7 +103,7 @@ def test_la_utilidad_neta_no_se_puede_habilitar():
 def test_el_mensaje_dice_QUE_falta_conectar():
     """Decir 'no puedo' sin decir qué falta deja a alguien esperando un número
     que nunca va a llegar."""
-    texto = cfo_metricas.explicar_faltante("flujo_de_caja", cfo_motor.FUENTES_DISPONIBLES)
+    texto = cfo_metricas.explicar_faltante("flujo_de_caja", cfo_motor.FUENTES_SIN_CONECTORES)
     assert "caja_y_bancos" in texto
     assert "flujo de caja" in texto.lower()
 

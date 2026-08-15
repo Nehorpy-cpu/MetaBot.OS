@@ -23,13 +23,26 @@ from . import cfo_metricas
 from .cfo_metricas import CATALOGO, Fuente
 from .models import Appointment, Company, FinanceMetricState, Service
 
-# Lo que el sistema tiene HOY sin conectar nada de afuera.
+# Lo que el sistema tiene sin conectar nada de afuera: las atenciones con su
+# servicio y su precio, los convenios, las planillas de honorarios. Nada más.
 #
-# Es poco a propósito de decirlo: MetaBot.OS no tiene tabla de facturas, de
-# cobranzas, de gastos ni de metas. Lo único con forma de ingreso son las
-# atenciones con su servicio y su precio. Fingir que hay más es lo que hace
-# que un CFO conteste con seguridad un número que nadie puede sostener.
-FUENTES_DISPONIBLES = frozenset({Fuente.INTERNA, Fuente.VENTAS})
+# MetaBot.OS no tiene tabla de facturas, de cobranzas, de gastos ni de metas.
+# Eso llega por conectores, y llega POR EMPRESA: qué puede calcular una
+# empresa depende de lo que ESA empresa conectó y de si ese conector trajo
+# filas alguna vez.
+#
+# Antes acá había una constante global que decía `{INTERNA, VENTAS}` para
+# todo el mundo. Era mentira —no hay ninguna tabla de ventas— y era la peor
+# clase de mentira: la que hace que el sistema se crea capaz de calcular algo
+# que no puede.
+FUENTES_SIN_CONECTORES = frozenset({Fuente.INTERNA})
+
+
+def fuentes_de(db: Session, company_id: int) -> frozenset:
+    """Las fuentes que esta empresa realmente tiene."""
+    from . import cfo_conectores
+
+    return cfo_conectores.fuentes_disponibles(db, company_id)
 
 # El estado de una atención que ya ocurrió. Igual que en las planillas de
 # honorarios: un turno confirmado al que el paciente no vino no es plata.
@@ -134,11 +147,12 @@ def calcular(db: Session, company: Company, clave: str,
             "anterior habría que decir con qué criterio se calculó entonces.",
         )
 
-    faltan = cfo_metricas.faltantes(clave, FUENTES_DISPONIBLES)
+    disponibles = fuentes_de(db, company.id)
+    faltan = cfo_metricas.faltantes(clave, disponibles)
     if faltan:
         return _no_calculable(
             clave, desde, hasta,
-            cfo_metricas.explicar_faltante(clave, FUENTES_DISPONIBLES),
+            cfo_metricas.explicar_faltante(clave, disponibles),
         )
 
     calculador = _CALCULADORES.get(clave)
@@ -148,7 +162,10 @@ def calcular(db: Session, company: Company, clave: str,
             f"{m.nombre} está definida y aprobada, pero su cálculo todavía no "
             "está implementado.",
         )
-    return calculador(db, company, m, estado, desde, hasta)
+    # Con qué fuentes se calcula REALMENTE. Nunca una mezcla: un número mitad
+    # del sistema de facturación y mitad de los turnos no se puede explicar.
+    usadas = cfo_metricas.fuentes_usadas(clave, disponibles)
+    return calculador(db, company, m, estado, desde, hasta, usadas)
 
 
 # ─── Los cálculos ────────────────────────────────────────────────────────
@@ -170,7 +187,7 @@ def _atenciones(db: Session, company_id: int, desde: date, hasta: date):
 
 
 def _ventas(db: Session, company: Company, m, estado, desde: date,
-            hasta: date) -> Resultado:
+            hasta: date, usadas=()) -> Resultado:
     """Lo facturado por atenciones, en guaraníes enteros.
 
     Hoy la única fuente de ingreso del sistema son las atenciones con su
@@ -181,6 +198,9 @@ def _ventas(db: Session, company: Company, m, estado, desde: date,
     fuente de descuentos, devoluciones ni anulaciones. Se informa: un neto
     que en realidad es bruto, presentado como neto, es una mentira prolija.
     """
+    if Fuente.VENTAS in usadas:
+        return _ventas_conectadas(db, company, m, estado, desde, hasta)
+
     citas = _atenciones(db, company.id, desde, hasta)
     precios = {
         s.id: s.price_gs
@@ -244,6 +264,51 @@ def _ventas(db: Session, company: Company, m, estado, desde: date,
     )
 
 
+
+def _ventas_conectadas(db: Session, company: Company, m, estado, desde: date,
+                       hasta: date) -> Resultado:
+    """Ventas del sistema de facturación del cliente, vía conector.
+
+    Es el mismo número que pide el dueño, pero con otra procedencia, y por eso
+    va en otra función: mezclar las dos daría un total mitad de un sistema y
+    mitad de otro, imposible de explicar cuando el contador pregunte.
+
+    Acá el cero sí puede ser un cero de verdad, así que hay que separarlo del
+    cero por falta de datos: por eso `sumar()` devuelve también las filas.
+    """
+    from . import cfo_conectores
+
+    total, filas = cfo_conectores.sumar(
+        db, company.id, Fuente.VENTAS, desde, hasta
+    )
+    frescura = cfo_conectores.frescura(db, company.id, [Fuente.VENTAS])
+
+    advertencias = list(frescura["advertencias"])
+    if not filas:
+        advertencias.insert(
+            0,
+            "No hay ninguna venta cargada en ese período. El cero no es una "
+            "caída de ventas: es que no llegó nada del sistema de facturación.",
+        )
+    if m.clave == "ventas_netas":
+        advertencias.append(
+            "Sin fuente de descuentos, devoluciones ni anulaciones conectada, "
+            "este neto coincide con lo que trajo el conector de ventas."
+        )
+
+    return Resultado(
+        clave=m.clave, nombre=m.nombre, version=estado.version,
+        desde=desde, hasta=hasta, valor=total, unidad=m.unidad,
+        # El corte de los datos, no la hora en que se preguntó. Un informe que
+        # dice "ahora" sobre datos de anteayer es peor que uno sin fecha.
+        corte=frescura["corte"] or _corte(),
+        fuentes=("sistema de facturación conectado",),
+        completitud=1.0 if filas else 0.0,
+        advertencias=tuple(advertencias),
+        detalle={"registros": filas},
+    )
+
+
 # Solo las métricas que HOY se pueden calcular con datos propios. Las demás
 # quedan definidas y aprobables, y devuelven "falta conectar la fuente".
 _CALCULADORES = {
@@ -265,10 +330,11 @@ def catalogo_para(db: Session, company: Company) -> list[dict]:
         .filter(FinanceMetricState.company_id == company.id)
         .all()
     }
+    disponibles = fuentes_de(db, company.id)
     salida = []
     for clave, m in CATALOGO.items():
         e = estados.get(clave)
-        faltan = cfo_metricas.faltantes(clave, FUENTES_DISPONIBLES)
+        faltan = cfo_metricas.faltantes(clave, disponibles)
         salida.append({
             "clave": clave,
             "nombre": m.nombre,

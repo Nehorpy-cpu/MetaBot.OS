@@ -68,7 +68,21 @@ class Metrica:
     # después discute el número con su contador.
     formula: str
     version: int
+    # Todas estas hacen falta para calcularla bien.
     fuentes: tuple[Fuente, ...]
+    # El plan B, cuando existe: con estas TAMBIÉN se puede calcular, peor.
+    #
+    # Una distribuidora factura con su sistema y sus ventas salen de ahí; un
+    # sanatorio factura por atención y salen de los turnos. Las dos son
+    # ventas de verdad, y no es lo mismo: por eso el resultado dice cuál de
+    # las dos se usó y qué le falta a la segunda.
+    #
+    # Esto existe porque la alternativa era peor. `ventas_netas` declaraba
+    # que salía de VENTAS mientras su cálculo la sacaba de las atenciones, y
+    # el sistema se lo creía porque la lista de fuentes disponibles estaba
+    # fija a mano e incluía VENTAS. Un número que declara una procedencia que
+    # no es la suya es exactamente lo que este módulo existe para no hacer.
+    fuentes_alternativas: tuple[Fuente, ...] = ()
     unidad: str = "PYG"
     # Por qué dimensión se puede abrir: sucursal, vendedor, producto…
     dimensiones: tuple[str, ...] = ()
@@ -92,6 +106,10 @@ CATALOGO: dict[str, Metrica] = {
         formula="Suma de todo lo facturado, antes de descuentos, devoluciones y anulaciones.",
         version=1,
         fuentes=(Fuente.VENTAS,),
+        # Un negocio que factura por atención —un sanatorio, una veterinaria—
+        # tiene sus ventas en los turnos con su prestación y su precio. No es
+        # facturación contable y el resultado lo dice.
+        fuentes_alternativas=(Fuente.INTERNA,),
         dimensiones=("sucursal", "vendedor", "producto", "servicio"),
         excluye="Presupuestos y pedidos no facturados.",
     ),
@@ -104,6 +122,10 @@ CATALOGO: dict[str, Metrica] = {
         ),
         version=1,
         fuentes=(Fuente.VENTAS,),
+        # Un negocio que factura por atención —un sanatorio, una veterinaria—
+        # tiene sus ventas en los turnos con su prestación y su precio. No es
+        # facturación contable y el resultado lo dice.
+        fuentes_alternativas=(Fuente.INTERNA,),
         dimensiones=("sucursal", "vendedor", "producto", "servicio"),
         excluye="Impuestos que se cobran por cuenta del fisco.",
         notas_contables=(
@@ -230,11 +252,35 @@ CATALOGO: dict[str, Metrica] = {
 FUENTES_INTERNAS = frozenset({Fuente.INTERNA, Fuente.VENTAS, Fuente.METAS})
 
 
+def fuentes_usadas(clave: str, disponibles: frozenset[Fuente]) -> tuple:
+    """Con qué fuentes se va a calcular realmente. Vacío si no se puede.
+
+    Primero la buena; si no está completa, el plan B. Nunca una mezcla: un
+    número mitad de un sistema y mitad de otro no se puede explicar.
+    """
+    m = CATALOGO.get(clave)
+    if not m:
+        return ()
+    if all(f in disponibles for f in m.fuentes):
+        return m.fuentes
+    if m.fuentes_alternativas and all(
+        f in disponibles for f in m.fuentes_alternativas
+    ):
+        return m.fuentes_alternativas
+    return ()
+
+
 def faltantes(clave: str, disponibles: frozenset[Fuente]) -> list[str]:
-    """Qué fuentes le faltan a una métrica para poder calcularse."""
+    """Qué fuentes le faltan a una métrica para poder calcularse.
+
+    Si el plan B alcanza, no falta nada: se calcula peor, y el resultado
+    tiene que decirlo.
+    """
     m = CATALOGO.get(clave)
     if not m:
         return ["la métrica no existe"]
+    if fuentes_usadas(clave, disponibles):
+        return []
     return sorted(f.value for f in m.fuentes if f not in disponibles)
 
 

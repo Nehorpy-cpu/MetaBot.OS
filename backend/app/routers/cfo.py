@@ -8,20 +8,20 @@ Todo lo de acá lo hace quien administra la empresa, nunca el dueño desde
 WhatsApp: dar de alta un número autorizado es exactamente la operación que un
 atacante querría hacer.
 """
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from datetime import date, datetime, timezone
 
-from .. import cfo, cfo_metricas, cfo_motor, cfo_reportes
+from .. import cfo, cfo_conectores, cfo_csv, cfo_metricas, cfo_motor, cfo_reportes
 from ..auth import Identity, audit, get_identity
 from ..db import get_db
 from ..config import CFO_REPORT_BASE_URL
 from ..models import (
-    Company, FinanceIdentity, FinanceMetricState, FinanceReport,
-    FinanceReportToken, Membership, User,
+    Company, FinanceConnector, FinanceIdentity, FinanceMetricState,
+    FinanceRecord, FinanceReport, FinanceReportToken, Membership, User,
 )
 from ..permissions import Perm, role_has
 
@@ -323,13 +323,13 @@ def aprobar_metrica(
             },
         )
 
-    faltan = cfo_metricas.faltantes(clave, cfo_motor.FUENTES_DISPONIBLES)
+    faltan = cfo_metricas.faltantes(clave, cfo_motor.fuentes_de(db, company_id))
     if faltan:
         raise HTTPException(
             409,
             {
                 "motivo": cfo_metricas.explicar_faltante(
-                    clave, cfo_motor.FUENTES_DISPONIBLES
+                    clave, cfo_motor.fuentes_de(db, company_id)
                 ),
                 "codigo": "fuente_no_conectada",
                 "faltantes": faltan,
@@ -586,3 +586,207 @@ def revocar_informe(
         detail={"informe": informe_id, "enlaces": cuantos},
     )
     return {"revocados": cuantos}
+
+
+# ─── Conectores ──────────────────────────────────────────────────────────
+
+
+class ConectorIn(BaseModel):
+    fuente: str = Field(min_length=2, max_length=30)
+    tipo: str = Field(default="csv", max_length=20)
+    nombre: str = Field(min_length=1, max_length=120)
+
+
+class ConectorUpdate(BaseModel):
+    activo: bool | None = None
+    nombre: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+def _conector(db: Session, company_id: int, conector_id: int) -> FinanceConnector:
+    fila = db.get(FinanceConnector, conector_id)
+    if not fila or fila.company_id != company_id:
+        raise HTTPException(404, "Conector no encontrado")
+    return fila
+
+
+@router.get("/conectores")
+def listar_conectores(
+    company_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    _puede_administrar(db, company_id, identity)
+    _company(db, company_id)
+    return [
+        cfo_conectores.estado(db, c)
+        for c in cfo_conectores.conectores(db, company_id, solo_activos=False)
+    ]
+
+
+@router.post("/conectores", status_code=201)
+def crear_conector(
+    company_id: int,
+    payload: ConectorIn,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Declara de dónde van a venir los datos de una fuente.
+
+    Nace SIN habilitar la fuente: recién cuando trae filas, el motor la
+    considera disponible. Un conector vacío que habilitara el cálculo haría
+    que el CFO conteste ₲ 0 con cara de certeza.
+    """
+    _puede_administrar(db, company_id, identity)
+    _company(db, company_id)
+
+    if payload.fuente not in cfo_csv.fuentes_validas():
+        raise HTTPException(
+            422,
+            {
+                "motivo": "Fuente desconocida. Válidas: "
+                          + ", ".join(cfo_csv.fuentes_validas()) + ".",
+                "codigo": "fuente_desconocida",
+            },
+        )
+    if payload.tipo not in cfo_conectores.TIPOS:
+        raise HTTPException(422, {"motivo": "Tipo de conector desconocido.",
+                                  "codigo": "tipo_desconocido"})
+    if payload.tipo != "csv":
+        raise HTTPException(
+            501,
+            {
+                "motivo": "Por ahora solo hay conector de planilla (csv). "
+                          "REST y PostgreSQL llegan en la etapa siguiente.",
+                "codigo": "tipo_no_implementado",
+            },
+        )
+
+    fila = FinanceConnector(
+        company_id=company_id, fuente=payload.fuente, tipo=payload.tipo,
+        nombre=payload.nombre.strip(),
+    )
+    db.add(fila)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, {"motivo": "Ya hay un conector con ese nombre.",
+                                  "codigo": "nombre_repetido"})
+    db.refresh(fila)
+    audit(db, "cfo.conector.alta", user_id=identity.user_id, company_id=company_id,
+          detail={"conector": fila.id, "fuente": payload.fuente, "tipo": payload.tipo})
+    return cfo_conectores.estado(db, fila)
+
+
+@router.patch("/conectores/{conector_id}")
+def editar_conector(
+    company_id: int,
+    conector_id: int,
+    payload: ConectorUpdate,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    _puede_administrar(db, company_id, identity)
+    fila = _conector(db, company_id, conector_id)
+    datos = payload.model_dump(exclude_unset=True)
+    for campo, valor in datos.items():
+        setattr(fila, campo, valor)
+    db.commit()
+    db.refresh(fila)
+    # Apagar un conector cambia qué puede contestar el CFO: queda escrito.
+    if "activo" in datos:
+        audit(db, "cfo.conector.cambio", user_id=identity.user_id,
+              company_id=company_id,
+              detail={"conector": conector_id, "activo": datos["activo"]})
+    return cfo_conectores.estado(db, fila)
+
+
+@router.delete("/conectores/{conector_id}", status_code=204)
+def borrar_conector(
+    company_id: int,
+    conector_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Borra el conector Y sus datos.
+
+    Lo ya calculado no se mueve: los informes son snapshots. Es a propósito
+    —el dueño mandó ese número a su contador— y por eso borrar acá no
+    reescribe la historia.
+    """
+    _puede_administrar(db, company_id, identity)
+    fila = _conector(db, company_id, conector_id)
+    borradas = (
+        db.query(FinanceRecord)
+        .filter(FinanceRecord.company_id == company_id,
+                FinanceRecord.connector_id == conector_id)
+        .delete(synchronize_session=False)
+    )
+    db.delete(fila)
+    db.commit()
+    audit(db, "cfo.conector.baja", user_id=identity.user_id, company_id=company_id,
+          detail={"conector": conector_id, "registros_borrados": borradas})
+    return Response(status_code=204)
+
+
+@router.post("/conectores/{conector_id}/cargar")
+async def cargar_planilla(
+    company_id: int,
+    conector_id: int,
+    archivo: UploadFile = File(...),
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Sube la exportación del sistema del cliente.
+
+    Si alguna fila no se entiende no se carga NINGUNA, y se devuelven los
+    renglones con problema. Cargar 98 de 100 da un total que se ve bien,
+    cierra mal, y nadie sabe por qué.
+    """
+    _puede_administrar(db, company_id, identity)
+    fila = _conector(db, company_id, conector_id)
+    if fila.tipo != "csv":
+        raise HTTPException(422, {"motivo": "Ese conector no es de planilla.",
+                                  "codigo": "tipo_incorrecto"})
+
+    datos = await archivo.read()
+    try:
+        resumen = cfo_csv.cargar(db, fila, datos)
+    except cfo_csv.PlanillaInvalida as exc:
+        cfo_conectores.anotar_sync(db, fila, 0, error=exc.motivo)
+        raise HTTPException(
+            422,
+            {"motivo": exc.motivo, "renglones": exc.renglones,
+             "codigo": "planilla_invalida"},
+        )
+
+    cfo_conectores.anotar_sync(db, fila, resumen["nuevas"])
+    audit(db, "cfo.conector.carga", user_id=identity.user_id, company_id=company_id,
+          detail={"conector": conector_id, **resumen})
+    return {**resumen, "conector": cfo_conectores.estado(db, fila)}
+
+
+@router.get("/fuentes")
+def listar_fuentes(
+    company_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Qué fuentes tiene esta empresa y de cuándo son sus datos.
+
+    Es la vista honesta del producto: se ve de un vistazo qué puede contestar
+    el CFO, en vez de descubrirlo cuando el dueño pregunta.
+    """
+    _puede_administrar(db, company_id, identity)
+    _company(db, company_id)
+    disponibles = cfo_conectores.fuentes_disponibles(db, company_id)
+    salida = []
+    for f in cfo_metricas.Fuente:
+        corte = cfo_conectores.corte_de(db, company_id, f)
+        salida.append({
+            "fuente": f.value,
+            "disponible": f in disponibles,
+            "corte": corte.isoformat() if corte else None,
+            "interna": f == cfo_metricas.Fuente.INTERNA,
+        })
+    return salida
