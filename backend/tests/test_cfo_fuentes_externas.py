@@ -318,3 +318,41 @@ def test_crear_y_listar_devuelven_la_misma_forma():
     listado = client.get(f"/api/companies/{cid}/cfo/conectores").json()[0]
     assert set(creado) == set(listado)
     assert creado["config"]["tiene_credencial"] is True
+
+
+# ─── Rotación de la llave ────────────────────────────────────────────────
+
+
+def test_una_llave_nueva_no_descifra_lo_viejo(monkeypatch):
+    """Es la razón de existir del script de rotación: sin recifrar, cambiar la
+    llave deja inservibles todas las credenciales guardadas."""
+    from cryptography.fernet import Fernet
+
+    guardado = cfo_secretos.cifrar("contrasena")
+    monkeypatch.setattr(cfo_secretos, "_LLAVE", Fernet.generate_key().decode())
+    with pytest.raises(cfo_secretos.SinLlave) as exc:
+        cfo_secretos.descifrar(guardado)
+    assert "rotó" in str(exc.value) or "volver a cargar" in str(exc.value)
+
+
+def test_la_rotacion_es_todo_o_nada():
+    """Una rotación a medias deja unas credenciales con la llave vieja y otras
+    con la nueva, y ninguna de las dos abre todo. El script descifra TODO
+    antes de escribir nada."""
+    import pathlib
+
+    fuente = (pathlib.Path(__file__).parent.parent
+              / "scripts" / "rotar_llave_cfo.py").read_text(encoding="utf-8")
+    # El bucle que descifra tiene que terminar ANTES del que reescribe.
+    assert fuente.index("en_claro[f.id] = ") < fuente.index("f.secreto_cifrado = ")
+    assert "No se rotó nada" in fuente
+
+
+def test_el_script_de_rotacion_no_imprime_credenciales():
+    import pathlib
+
+    fuente = (pathlib.Path(__file__).parent.parent
+              / "scripts" / "rotar_llave_cfo.py").read_text(encoding="utf-8")
+    for linea in fuente.splitlines():
+        if "print(" in linea:
+            assert "en_claro" not in linea and "secreto" not in linea, linea

@@ -192,3 +192,93 @@ def test_no_existe_ningun_camino_de_codigo_que_las_use_para_actuar():
         texto = archivo.read_text(encoding="utf-8")
         for p in peligrosas:
             assert p not in texto, f"{archivo.name} podría ejecutar: {p}"
+
+
+# ─── El tope de mensajes por número ──────────────────────────────────────
+#
+# Existe por plata: desde que la tarea `finanzas` arranca con un modelo pago,
+# cada mensaje entrante cuesta. Un número en bucle gasta la cuenta del dueño
+# sin que nadie se entere hasta la factura.
+
+
+def _mandar(cid: int, texto: str, telefono="595981777222"):
+    import asyncio
+
+    from app.chat import handle_incoming
+
+    db = SessionLocal()
+    try:
+        return asyncio.run(handle_incoming(
+            db, db.get(Company, cid), telefono, texto, channel="whatsapp"))
+    finally:
+        db.close()
+
+
+def test_un_numero_en_bucle_deja_de_gastar_turnos(monkeypatch):
+    llamadas = []
+
+    async def _modelo(*a, **kw):
+        llamadas.append(1)
+        return {"role": "assistant", "content": "Listo.",
+                "_modelo_usado": "prueba", "_proveedor_usado": "prueba"}
+
+    monkeypatch.setattr("app.chat.chat_raw", _modelo)
+    cid, _, db = _escenario("Tope Bucle")
+    db.close()
+
+    for i in range(chat.MENSAJES_POR_HORA + 3):
+        r = _mandar(cid, f"hola {i}")
+    assert r["status"] == "tope_de_mensajes"
+    # El modelo dejó de correr: eso es lo que se estaba pagando.
+    assert len(llamadas) <= chat.MENSAJES_POR_HORA + 1
+
+
+def test_el_tope_esta_alto_para_no_dispararse_con_una_persona():
+    """Un tope que se le dispara a un cliente legítimo cuesta más que la plata
+    que ahorra."""
+    assert chat.MENSAJES_POR_HORA >= 30
+
+
+def test_el_mensaje_del_cliente_igual_queda_registrado(monkeypatch):
+    """Que no se le conteste con un modelo no significa que no haya escrito:
+    si el dueño después revisa la conversación, tiene que estar."""
+    from app.models import Message
+
+    async def _modelo(*a, **kw):
+        return {"role": "assistant", "content": "Listo.",
+                "_modelo_usado": "prueba", "_proveedor_usado": "prueba"}
+
+    monkeypatch.setattr("app.chat.chat_raw", _modelo)
+    cid, _, db = _escenario("Tope Registro")
+    db.close()
+
+    for i in range(chat.MENSAJES_POR_HORA + 2):
+        _mandar(cid, f"mensaje {i}")
+
+    db = SessionLocal()
+    try:
+        entrantes = (
+            db.query(Message)
+            .filter(Message.company_id == cid, Message.direction == "in")
+            .count()
+        )
+        assert entrantes == chat.MENSAJES_POR_HORA + 2
+    finally:
+        db.close()
+
+
+def test_el_tope_es_por_numero_y_no_por_empresa(monkeypatch):
+    """Si fuera por empresa, un cliente pesado dejaría sin bot a todos los
+    demás."""
+    async def _modelo(*a, **kw):
+        return {"role": "assistant", "content": "Listo.",
+                "_modelo_usado": "prueba", "_proveedor_usado": "prueba"}
+
+    monkeypatch.setattr("app.chat.chat_raw", _modelo)
+    cid, _, db = _escenario("Tope Por Número")
+    db.close()
+
+    for i in range(chat.MENSAJES_POR_HORA + 2):
+        _mandar(cid, f"m{i}", telefono="595981000001")
+    otro = _mandar(cid, "hola", telefono="595981000002")
+    assert otro["status"] != "tope_de_mensajes"

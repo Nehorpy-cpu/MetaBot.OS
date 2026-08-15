@@ -19,6 +19,7 @@ logger = logging.getLogger("metabot.chat")
 
 DEFAULT_SLOT_MIN = 30  # duración por defecto de una cita, para detectar solapes
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import agenda, aranceles, job_handlers, packs, supervisor
@@ -561,6 +562,46 @@ def _solo_digitos(texto: str) -> str:
 # Sin esto, un guardia que salta cincuenta veces llena la bandeja y la vuelve
 # ilegible, que es la forma más común de apagar un control sin apagarlo.
 _HORAS_ENTRE_HALLAZGOS_IGUALES = 24
+
+
+
+# Tope de mensajes por número y por hora, antes de que corra ningún modelo.
+#
+# Existe por plata, no por prolijidad: desde que la tarea `finanzas` arranca
+# con un modelo pago, cada mensaje entrante cuesta. Un número en bucle —un
+# reenvío automático, un integrador mal escrito, alguien probando— gasta la
+# cuenta del dueño sin que nadie se entere hasta la factura.
+#
+# Está alto a propósito. Una persona real no le manda 40 mensajes por hora a
+# un negocio; 40 mensajes por hora es un bucle. Un tope que se le dispara a un
+# cliente legítimo cuesta más que la plata que ahorra.
+MENSAJES_POR_HORA = 40
+
+_DEMASIADOS = (
+    "Recibí muchos mensajes seguidos de este número y voy a esperar un rato "
+    "antes de seguir. Si es urgente, llamanos."
+)
+
+
+def _paso_el_tope(db: Session, company: Company, conversation: Conversation) -> bool:
+    """¿Este número ya mandó demasiado en la última hora?
+
+    Se cuenta sobre `messages`, que ya existe y ya está indexada por
+    conversación: un contador aparte sería una segunda verdad sobre lo mismo,
+    y la que se desincroniza es siempre la del contador.
+    """
+    desde = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    cuantos = (
+        db.query(func.count())
+        .select_from(Message)
+        .filter(
+            Message.conversation_id == conversation.id,
+            Message.direction == "in",
+            Message.created_at >= desde,
+        )
+        .scalar()
+    ) or 0
+    return cuantos > MENSAJES_POR_HORA
 
 
 def _anotar_hallazgo(db: Session, company: Company, conversation: Conversation | None,
@@ -1758,6 +1799,18 @@ async def handle_incoming(
         return _responder_con_pin(
             db, company, conversation, pendiente, pin_recibido, channel,
         )
+
+    # El tope va DESPUÉS de guardar el mensaje y ANTES de cualquier modelo:
+    # queda registro de que escribió, y no se gasta un turno pago en
+    # contestarle a un bucle.
+    if _paso_el_tope(db, company, conversation):
+        logger.warning("empresa %s: %s pasó el tope de mensajes por hora",
+                       company.id, contact_phone)
+        db.add(Message(company_id=company.id, conversation_id=conversation.id,
+                       direction="out", body=_DEMASIADOS))
+        db.commit()
+        return {"reply": _DEMASIADOS, "status": "tope_de_mensajes",
+                "media": [], "duplicate": False}
 
     # Baja de avisos: si el paciente escribe STOP hay que parar YA. Dejar eso
     # en manos de la interpretación de un modelo es como termina el número del
