@@ -660,6 +660,75 @@ class FinanceIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class FinanceReport(Base):
+    """Un informe congelado. Lo que se abre desde el enlace de WhatsApp.
+
+    Es un SNAPSHOT, no una consulta que se recalcula al abrirla. El dueño
+    reenvía el enlace a su contador tres días después y los dos tienen que
+    ver el mismo número: si el informe se recalculara, el contador vería
+    otra cosa y la discusión pasaría a ser sobre el software.
+
+    Guarda además con qué definición se calculó cada métrica. Cambiar la
+    definición mañana no altera lo que ya se mostró.
+    """
+
+    __tablename__ = "finance_reports"
+    __table_args__ = (
+        UniqueConstraint("company_id", "id", name="uq_finance_report_company_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    titulo: Mapped[str] = mapped_column(String(200), default="")
+    # Quién lo pidió. Se guarda el teléfono normalizado, no un nombre: es
+    # el mismo dato con el que se autorizó la consulta.
+    pedido_por: Mapped[str] = mapped_column(String(30), default="")
+    desde: Mapped[date]
+    hasta: Mapped[date]
+    # JSON con los resultados YA calculados: valores, fuentes, completitud y
+    # advertencias de cada métrica. El informe se arma con esto y con nada
+    # más — no vuelve a tocar las tablas de negocio.
+    snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class FinanceReportToken(Base):
+    """La llave del enlace. Se guarda el HASH, nunca el token.
+
+    Si se guardara el token, cualquiera con acceso de lectura a la base
+    —un respaldo, un log de consultas lentas— podría abrir todos los
+    informes financieros de todos los clientes.
+
+    El token no lleva adentro el id de la empresa ni el teléfono ni la
+    fecha: es opaco. Un enlace no tiene por qué contarle a quien lo
+    intercepta de qué empresa es.
+    """
+
+    __tablename__ = "finance_report_tokens"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "report_id"],
+            ["finance_reports.company_id", "finance_reports.id"],
+            name="fk_report_token_tenant", ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    report_id: Mapped[int] = mapped_column(index=True)
+    # SHA-256 del token. Único: dos informes no pueden compartir llave.
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expira_at: Mapped[datetime] = mapped_column(index=True)
+    revocado_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Para lo más sensible: el enlace sirve una sola vez. Reenviarlo por un
+    # grupo de WhatsApp deja de ser una filtración.
+    un_solo_uso: Mapped[bool] = mapped_column(default=False)
+    aperturas: Mapped[int] = mapped_column(default=0)
+    primera_apertura_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    ultima_apertura_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class FinanceSession(Base):
     """Lo que el CFO está esperando de esta persona, ahora.
 

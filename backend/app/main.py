@@ -16,7 +16,7 @@ from .config import ADMIN_TOKEN
 from .llm import available_providers
 from .models import Company, Membership
 from .permissions import Role
-from .routers import agents, auth, blocks, bridge, campaigns, catalog, cfo, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, portal, services, whatsapp_webhook
+from .routers import agents, auth, blocks, bridge, campaigns, catalog, cfo, chat, companies, creatives, clinical, dashboard, glossary, intelligence, medical, portal, reportes, services, whatsapp_webhook
 from .scheduler import _start_job_worker, start_scheduler
 
 # El esquema lo gestiona Alembic (entrypoint.sh corre `alembic upgrade head`).
@@ -203,6 +203,12 @@ def health():
         "llm_providers": [p["name"] for p in available_providers()],
     }
 
+
+# El informe privado vive FUERA de /api: el dueño lo abre desde WhatsApp, en
+# el navegador del teléfono, sin haber entrado nunca al panel. Su autorización
+# es el token opaco, no una sesión. Va antes de los mounts estáticos porque en
+# Starlette las rutas se evalúan en orden.
+app.include_router(reportes.router)
 
 # Los mounts van al FINAL: en Starlette las rutas se evalúan en orden y un
 # mount en "/" taparía la API si se registrara antes.

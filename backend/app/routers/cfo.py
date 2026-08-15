@@ -15,11 +15,13 @@ from sqlalchemy.orm import Session
 
 from datetime import date, datetime, timezone
 
-from .. import cfo, cfo_metricas, cfo_motor
+from .. import cfo, cfo_metricas, cfo_motor, cfo_reportes
 from ..auth import Identity, audit, get_identity
 from ..db import get_db
+from ..config import CFO_REPORT_BASE_URL
 from ..models import (
-    Company, FinanceIdentity, FinanceMetricState, Membership, User,
+    Company, FinanceIdentity, FinanceMetricState, FinanceReport,
+    FinanceReportToken, Membership, User,
 )
 from ..permissions import Perm, role_has
 
@@ -439,3 +441,127 @@ def calcular_metrica(
         "advertencias": list(r.advertencias),
         "detalle": r.detalle,
     }
+
+
+# ─── Informes privados ───────────────────────────────────────────────────
+
+
+class InformeIn(BaseModel):
+    metricas: list[str] = Field(min_length=1, max_length=15)
+    desde: str
+    hasta: str
+    titulo: str = Field(default="", max_length=200)
+    # Para lo más sensible: el enlace sirve una sola vez, así que reenviarlo
+    # por un grupo de WhatsApp deja de ser una filtración.
+    un_solo_uso: bool = False
+    horas_de_vigencia: int = Field(default=24, ge=1, le=720)
+
+
+@router.post("/informes", status_code=201)
+def crear_informe(
+    company_id: int,
+    payload: InformeIn,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Calcula, congela y devuelve el enlace. El token se muestra UNA vez."""
+    _puede_administrar(db, company_id, identity)
+    company = _company(db, company_id)
+    try:
+        desde = date.fromisoformat(payload.desde)
+        hasta = date.fromisoformat(payload.hasta)
+    except ValueError:
+        raise HTTPException(422, "Fechas inválidas: se esperan AAAA-MM-DD")
+    if desde > hasta:
+        raise HTTPException(422, "El período empieza después de terminar")
+
+    desconocidas = [m for m in payload.metricas if m not in cfo_metricas.CATALOGO]
+    if desconocidas:
+        raise HTTPException(422, f"Métricas que no existen: {desconocidas}")
+
+    informe = cfo_reportes.armar(
+        db, company, payload.metricas, desde, hasta,
+        pedido_por=cfo.solo_digitos(""), titulo=payload.titulo,
+    )
+    token = cfo_reportes.emitir_token(
+        db, informe, horas=payload.horas_de_vigencia,
+        un_solo_uso=payload.un_solo_uso,
+    )
+    audit(
+        db, "cfo.informe.crear", user_id=identity.user_id, company_id=company_id,
+        detail={"informe": informe.id, "metricas": payload.metricas,
+                "un_solo_uso": payload.un_solo_uso},
+    )
+    return {
+        "id": informe.id,
+        "titulo": informe.titulo,
+        # El enlace completo, una sola vez. Después queda el hash y no hay
+        # forma de recuperarlo: se emite uno nuevo.
+        "enlace": f"{CFO_REPORT_BASE_URL}/r/{token}",
+        "vence_en_horas": payload.horas_de_vigencia,
+        "un_solo_uso": payload.un_solo_uso,
+        "aviso": "Este enlace se muestra una sola vez y da acceso a los datos.",
+    }
+
+
+@router.get("/informes")
+def listar_informes(
+    company_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Qué informes existen y cuántas veces se abrieron. Sin los tokens."""
+    _puede_administrar(db, company_id, identity)
+    filas = (
+        db.query(FinanceReport)
+        .filter(FinanceReport.company_id == company_id)
+        .order_by(FinanceReport.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    salida = []
+    for r in filas:
+        llaves = (
+            db.query(FinanceReportToken)
+            .filter(
+                FinanceReportToken.company_id == company_id,
+                FinanceReportToken.report_id == r.id,
+            )
+            .all()
+        )
+        salida.append({
+            "id": r.id,
+            "titulo": r.titulo,
+            "desde": r.desde.isoformat(),
+            "hasta": r.hasta.isoformat(),
+            "creado": r.created_at.isoformat(),
+            "enlaces_vigentes": sum(
+                1 for k in llaves if k.revocado_at is None and k.expira_at > datetime.now(timezone.utc).replace(tzinfo=None)
+            ),
+            "aperturas": sum(k.aperturas for k in llaves),
+            "ultima_apertura": max(
+                (k.ultima_apertura_at.isoformat() for k in llaves if k.ultima_apertura_at),
+                default=None,
+            ),
+        })
+    return salida
+
+
+@router.post("/informes/{informe_id}/revocar")
+def revocar_informe(
+    company_id: int,
+    informe_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Mata todos los enlaces de ese informe. Para cuando llegó a quien no debía."""
+    _puede_administrar(db, company_id, identity)
+    informe = db.get(FinanceReport, informe_id)
+    if not informe or informe.company_id != company_id:
+        raise HTTPException(404, "Informe no encontrado")
+    cuantos = cfo_reportes.revocar(db, company_id, informe_id)
+    audit(
+        db, "cfo.informe.revocar", user_id=identity.user_id, company_id=company_id,
+        detail={"informe": informe_id, "enlaces": cuantos},
+    )
+    return {"revocados": cuantos}

@@ -96,6 +96,10 @@ OPENAI_TTS_MODEL = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 
 # Que OpenAI no guarde las respuestas del CFO de su lado. La memoria canónica
 # del sistema vive en PostgreSQL.
+# Dominio desde el que se sirven los informes. Vacío = el mismo del panel,
+# que es lo correcto en un despliegue de un solo dominio.
+CFO_REPORT_BASE_URL = os.environ.get("CFO_REPORT_BASE_URL", "").rstrip("/")
+
 OPENAI_STORE_RESPONSES = os.environ.get("OPENAI_STORE_RESPONSES", "false").lower() == "true"
 
 # Qué hace el CFO con la IA. `deterministico` es el ÚNICO valor que no
