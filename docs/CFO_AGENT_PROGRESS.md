@@ -437,3 +437,42 @@ bot      → "No puedo guardar el número autorizado […] esos accesos se
         guardado: nada
 0982-777-888 → "cuánto vendimos este mes?" → sin acceso
 ```
+
+---
+
+## Fase 10 — El panel ✅
+
+Desplegado el 15-ago-2026. Se adelantó a la Fase 9 por una razón simple: cinco
+fases tenían API y ninguna pantalla. El dueño no podía autorizar un número,
+aprobar una métrica, conectar una fuente ni ver qué recuerda el bot de él —
+todo eso existía solo por `curl`. El Scout de la Fase 9, en cambio, necesita
+datos de uso que todavía no hay.
+
+Cinco solapas, una por cada cosa que una **persona** tiene que hacer y el bot
+no puede hacer solo, por diseño:
+
+| Solapa | Por qué la hace una persona |
+|---|---|
+| Quién pregunta | Autorizar un número es la operación que un atacante querría conseguir por chat |
+| Métricas | Aprobar es un acto administrativo con nombre y fecha, no una frase en una conversación |
+| Datos | Conectar una fuente decide qué números va a dar el sistema |
+| Informes | Emitir, ver aperturas y revocar; el enlace se muestra UNA vez |
+| Memoria | Mirar y borrar, con botón de borrar todo |
+
+**La pantalla no calcula ni un monto.** Si mostrara un total sumado en el
+navegador, ese número no tendría definición, ni versión, ni fecha de corte —
+que es justo lo que el módulo entero existe para garantizar.
+
+Detalles que salen del diseño y no de la estética: un conector aparece como
+"sin datos" hasta que trae filas (la distinción que evita el ₲ 0 con cara de
+certeza); el modal del PIN aclara que se comunique por un canal distinto del
+WhatsApp que se está protegiendo; y el enlace recién emitido viene con el
+aviso de copiarlo ahora.
+
+### Cómo se verificó
+
+Typecheck y build en verde; el bundle desplegado contiene la vista; y los seis
+endpoints que consume responden 200 con datos en producción.
+
+**Lo que NO se verificó:** el aspecto visual. Entrar al panel pide escribir una
+contraseña en un formulario, y eso no lo hago. Queda para una mirada humana.
