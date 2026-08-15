@@ -106,7 +106,14 @@ HEALTHCARE = Pack(
         # dato que el paciente habría dado si se lo preguntaban.
         "- AL AGENDAR preguntá una sola vez si viene con seguro o particular, "
         "y pasá lo que te diga tal cual en `seguro`. Si ya lo dijo antes en "
-        "la conversación, no se lo vuelvas a preguntar."
+        "la conversación, no se lo vuelvas a preguntar.\n"
+        # El monto lo calcula el servidor y sale bien; lo que el modelo
+        # inventaba era la EXPLICACIÓN. Un paciente que repite en la caja un
+        # porcentaje que nadie le dijo arma una discusión.
+        "- Cuando des un precio con seguro, decí el monto y nada más. NO "
+        "expliques con porcentajes de cobertura salvo que la herramienta te "
+        "haya devuelto uno: muchos convenios pagan un monto fijo por práctica "
+        "y ahí el porcentaje no existe."
     ),
 )
 

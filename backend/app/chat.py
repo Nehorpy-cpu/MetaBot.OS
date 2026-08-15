@@ -667,18 +667,33 @@ def _execute_tool(
                 "covered": False, "patient_pays": _fmt_gs(montos.paga_el_paciente_gs),
                 "note": "Este estudio NO está cubierto por ese convenio: se abona particular.",
             }
-        return {
+        respuesta = {
             "service": service.name,
             "insurer": f"{insurer.name} {insurer.plan}".strip(),
             "covered": True,
             "list_price": _fmt_gs(service.price_gs),
-            "coverage_pct": cobertura.cobertura_pct,
             "patient_pays": (
                 _fmt_gs(montos.paga_el_paciente_gs)
                 if montos.paga_el_paciente_gs else "sin costo"
             ),
             "prep": service.prep,
         }
+        # Con un arancel cargado a mano NO hay porcentaje, y mandarle uno al
+        # modelo es pedirle que invente. Se vio en producción: el número que
+        # le dio al paciente era el correcto —lo calcula el servidor— pero lo
+        # explicó con "tu plan cubre el 70%", que no era ni el porcentaje
+        # guardado ni la proporción real. Un paciente que repite eso en la
+        # caja arma una discusión por algo que nadie le dijo.
+        if montos.arancel_manual:
+            respuesta["cubre_el_seguro"] = _fmt_gs(montos.paga_el_seguro_gs)
+            respuesta["note"] = (
+                "El convenio paga un MONTO FIJO por esta práctica, no un porcentaje. "
+                "Decí cuánto abona el paciente y nada más: no hables de porcentajes "
+                "de cobertura porque acá no existen."
+            )
+        else:
+            respuesta["coverage_pct"] = cobertura.cobertura_pct
+        return respuesta
 
     if name == "get_prescription":
         # Se busca por el teléfono DE ESTA conversación, nunca por un nombre

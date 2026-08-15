@@ -634,6 +634,70 @@ def test_el_bot_le_dice_al_paciente_el_mismo_numero():
         db.close()
 
 
+def test_con_arancel_fijo_no_se_le_manda_un_porcentaje_al_modelo():
+    """El monto lo calcula el servidor y sale bien; lo que el modelo inventaba
+    era la EXPLICACIÓN.
+
+    Visto en producción: con un arancel fijo de 180.000 sobre un precio de
+    250.000, el bot le dijo al paciente los 70.000 correctos y los justificó
+    con "tu plan cubre el 70%", que no era ni el porcentaje guardado ni la
+    proporción real. Un paciente que repite eso en la caja arma una discusión
+    por algo que nadie le dijo. Si no hay porcentaje, no se le manda uno.
+    """
+    from app.chat import _execute_tool
+    from app.db import SessionLocal as _S
+    from app.models import Company as _C, Conversation as _Cv
+
+    c = _clinica("Sanatorio Sin Porcentaje")
+    cid = c["id"]
+    eco = _servicio(cid, "Ecografía abdominal", 250_000)
+    seguro = _convenio(cid, "Prepaga Fija", pct=80)
+    _arancel(cid, seguro, eco, 180_000)
+
+    db = _S()
+    try:
+        conv = _Cv(company_id=cid, contact_phone="595981000000", channel="test")
+        db.add(conv)
+        db.commit()
+        r = _execute_tool(
+            "check_coverage", {"service": "ecografia abdominal", "insurer": "Prepaga Fija"},
+            db, db.get(_C, cid), conv,
+        )
+    finally:
+        db.close()
+
+    assert r["patient_pays"] == "₲ 70.000"
+    assert "coverage_pct" not in r, "le mandó un porcentaje que no significa nada"
+    assert r["cubre_el_seguro"] == "₲ 180.000"
+    assert "MONTO FIJO" in r["note"]
+
+
+def test_con_porcentaje_si_se_le_manda_el_porcentaje():
+    """Al revés: donde el convenio SÍ es un porcentaje, el bot lo puede decir."""
+    from app.chat import _execute_tool
+    from app.db import SessionLocal as _S
+    from app.models import Company as _C, Conversation as _Cv
+
+    c = _clinica("Sanatorio Con Porcentaje")
+    cid = c["id"]
+    _servicio(cid, "Consulta clínica", 200_000)
+    _convenio(cid, "Prepaga Porcentual", pct=75)
+
+    db = _S()
+    try:
+        conv = _Cv(company_id=cid, contact_phone="595981000001", channel="test")
+        db.add(conv)
+        db.commit()
+        r = _execute_tool(
+            "check_coverage", {"service": "consulta clinica", "insurer": "Prepaga Porcentual"},
+            db, db.get(_C, cid), conv,
+        )
+    finally:
+        db.close()
+    assert r["coverage_pct"] == 75
+    assert r["patient_pays"] == "₲ 50.000"
+
+
 def test_un_arancel_mayor_al_precio_no_le_cobra_al_paciente():
     """Pasa: el nomenclador de la aseguradora puede estar por encima del
     precio de lista de la clínica. El paciente no puede terminar pagando un
