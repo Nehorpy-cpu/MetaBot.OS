@@ -29,6 +29,7 @@ from .models import (
     Agent,
     AgentRun,
     Appointment,
+    AuditFinding,
     Company,
     Conversation,
     Doctor,
@@ -553,6 +554,52 @@ def _nombre_declarado(texto: str) -> str:
 
 def _solo_digitos(texto: str) -> str:
     return re.sub(r"\D", "", texto or "")
+
+
+
+# Cada cuánto se vuelve a anotar el MISMO problema en la MISMA conversación.
+# Sin esto, un guardia que salta cincuenta veces llena la bandeja y la vuelve
+# ilegible, que es la forma más común de apagar un control sin apagarlo.
+_HORAS_ENTRE_HALLAZGOS_IGUALES = 24
+
+
+def _anotar_hallazgo(db: Session, company: Company, conversation: Conversation | None,
+                     severity: str, clave: str, note: str) -> None:
+    """Deja escrito lo que un guardia atajó, para que alguien lo lea.
+
+    Los hallazgos del Auditor los produce un modelo mirando conversaciones: son
+    sospechas. Estos son de otra clase — un guardia determinístico no sospecha,
+    SABE que algo salió mal— y hasta ahora terminaban en un `logger.warning`
+    que no lee nadie. Un control que atrapa algo y no lo cuenta sirve una sola
+    vez: la vez que alguien mira los logs.
+
+    `clave` es el identificador estable del tipo de problema, y va al principio
+    de la nota para poder agrupar sin parsear castellano.
+    """
+    if conversation is None:
+        return
+    desde = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        hours=_HORAS_ENTRE_HALLAZGOS_IGUALES
+    )
+    repetido = (
+        db.query(AuditFinding)
+        .filter(
+            AuditFinding.company_id == company.id,
+            AuditFinding.conversation_id == conversation.id,
+            AuditFinding.note.like(f"[{clave}]%"),
+            AuditFinding.created_at >= desde,
+        )
+        .first()
+    )
+    if repetido:
+        return
+    db.add(AuditFinding(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        severity=severity,
+        note=f"[{clave}] {note}",
+    ))
+    db.commit()
 
 
 def _sanear_telefonos_inventados(db: Session, company: Company, conversation: Conversation,
@@ -1940,6 +1987,12 @@ async def handle_incoming(
             "empresa %s: el modelo inventó teléfono(s) %s; se quitaron de la respuesta",
             company.id, telefonos_inventados,
         )
+        _anotar_hallazgo(
+            db, company, conversation, "warning", "telefono_inventado",
+            f"El modelo inventó un teléfono ({', '.join(telefonos_inventados)}) "
+            "y se quitó de la respuesta. Suele pasar cuando la empresa no "
+            "tiene un teléfono cargado: cargalo y deja de inventarlo.",
+        )
 
     # Y ningún pedido de PIN que el servidor no haya hecho.
     reply_text, pin_inventado = _sanear_pin_inventado(
@@ -1949,6 +2002,16 @@ async def handle_incoming(
         logger.warning(
             "empresa %s: el modelo pidió un PIN que nadie exigió; respuesta reemplazada",
             company.id,
+        )
+        # Crítico y no advertencia: pedir un PIN sin motivo le enseña al dueño
+        # a tipearlo cuando se lo piden por WhatsApp. Eso es entrenarlo para
+        # que caiga en una estafa.
+        _anotar_hallazgo(
+            db, company, conversation, "critical", "pin_inventado",
+            "El modelo pidió un PIN que el servidor no exigió. Se reemplazó la "
+            "respuesta. Revisar la regla del PIN en el prompt del bloque de "
+            "finanzas: pedirlo sin motivo le enseña al dueño a tipearlo cuando "
+            "se lo piden.",
         )
 
     # Y ninguna respuesta sobre plata que no haya pasado por la herramienta:
@@ -1960,6 +2023,16 @@ async def handle_incoming(
         logger.warning(
             "empresa %s: pregunta financiera contestada sin llamar a "
             "consultar_finanzas; respuesta reemplazada", company.id,
+        )
+        # Crítico: sin la llamada tampoco corrió la verificación de permiso.
+        # Ahí no se pierde un número, se pierde el control de acceso.
+        _anotar_hallazgo(
+            db, company, conversation, "critical", "sin_herramienta",
+            "El modelo contestó una pregunta de plata sin llamar a "
+            "consultar_finanzas, así que tampoco se verificó el permiso de "
+            "quien preguntó. Se reemplazó la respuesta. Si se repite, el "
+            "modelo de la cadena `finanzas` no está respetando las "
+            "herramientas.",
         )
 
     reply_a_enviar = reply_text
