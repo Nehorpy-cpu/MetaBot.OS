@@ -281,15 +281,23 @@ def test_activar_un_bloque_lo_prende_de_verdad():
     assert client.get(f"/api/companies/{cid}/doctors/1/pre-visit").status_code == 404
 
 
-def test_el_catalogo_lista_los_cuatro_bloques():
+def test_el_catalogo_lista_TODOS_los_bloques():
     """El panel arma la oferta con esto. Si un bloque no tiene qué decir, no
-    se puede vender; si el orden cambia, la escalera comercial se rompe."""
+    se puede vender.
+
+    La lista se deriva de PACKS y no se fija a mano: cuando se agregó
+    `finance`, este test comparaba contra cuatro claves literales, así que
+    pasó en verde mientras el catálogo omitía en silencio un bloque vendible.
+    Un bloque invisible es un bloque que no se vende.
+    """
     from tests.test_api import client
 
     r = client.get("/api/packs")
     assert r.status_code == 200, r.text
     datos = r.json()
-    assert [b["key"] for b in datos] == ["core", "booking", "healthcare", "practitioner"]
+    assert {b["key"] for b in datos} == set(PACKS), "el catálogo se comió un bloque"
+    # El núcleo primero: es la base de la escalera comercial.
+    assert datos[0]["key"] == "core"
     for b in datos:
         assert b["incluye"], f"el bloque '{b['key']}' no dice qué incluye"
     assert datos[0]["incluido"] is True          # el núcleo va con todo

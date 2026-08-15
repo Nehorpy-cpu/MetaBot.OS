@@ -34,6 +34,12 @@ _ARGUMENTO: dict[str, list[str]] = {
         "Padrón de profesionales del Círculo de Médicos del Paraguay",
         "Reglas sanitarias: sin diagnósticos por chat, urgencias derivadas",
     ],
+    "finance": [
+        "Preguntale por WhatsApp cuánto vendiste, cuánto cobraste y cuánto falta",
+        "Responde con datos calculados de tus sistemas, no con estimaciones",
+        "Solo los números autorizados llegan a cada número autorizado",
+        "Informe completo en un enlace privado que vence y se puede revocar",
+    ],
     "practitioner": [
         "Cada profesional entra con su propio usuario",
         "Ve solo SUS pacientes, nunca los de otro colega",
@@ -42,8 +48,16 @@ _ARGUMENTO: dict[str, list[str]] = {
     ],
 }
 
-# El orden en que se muestran y se venden: de abajo hacia arriba.
-_ORDEN = ("core", "booking", "healthcare", "practitioner")
+# El orden en que se muestran y se venden: de abajo hacia arriba. Los que no
+# figuren acá van al final por orden alfabético, para que un bloque nuevo
+# aparezca en el catálogo aunque nadie se acuerde de agregarlo a esta lista:
+# un bloque invisible es un bloque que no se vende.
+_ORDEN = ("core", "booking", "healthcare", "practitioner", "finance")
+
+
+def _orden_completo() -> tuple[str, ...]:
+    restantes = sorted(k for k in PACKS if k not in _ORDEN)
+    return tuple(k for k in _ORDEN if k in PACKS) + tuple(restantes)
 
 
 @router.get("")
@@ -55,7 +69,7 @@ def list_packs():
     que todavía no compró—.
     """
     salida = []
-    for clave in _ORDEN:
+    for clave in _orden_completo():
         pack = PACKS[clave]
         salida.append(
             {
