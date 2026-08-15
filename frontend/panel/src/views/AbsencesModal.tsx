@@ -65,12 +65,12 @@ export function AbsencesModal({ companyId, doctors, onClose, onSaved }: {
   return (
     <Modal title="Licencias y feriados" onClose={onClose}>
       <div className="space-y-4">
-        <p className="text-xs text-zinc-400 leading-relaxed">
+        <p className="text-xs text-zinc-600 leading-relaxed">
           Días en los que no se atiende. El bot deja de dar turnos ahí — sin esto, le agenda
           pacientes a alguien que está de vacaciones y se enteran cuando llegan a la clínica.
         </p>
 
-        <form onSubmit={agregar} className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-3">
+        <form onSubmit={agregar} className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-1">
@@ -78,9 +78,9 @@ export function AbsencesModal({ companyId, doctors, onClose, onSaved }: {
               </label>
               <select className={input} value={form.doctor_id}
                 onChange={(e) => setForm({ ...form, doctor_id: e.target.value })}>
-                <option value="" className="bg-[#090b10]">Todo el centro (feriado)</option>
+                <option value="" className="bg-white">Todo el centro (feriado)</option>
                 {doctors.map((d) => (
-                  <option key={d.id} value={d.id} className="bg-[#090b10]">{d.name}</option>
+                  <option key={d.id} value={d.id} className="bg-white">{d.name}</option>
                 ))}
               </select>
             </div>
@@ -106,7 +106,7 @@ export function AbsencesModal({ companyId, doctors, onClose, onSaved }: {
                 onChange={(e) => setForm({ ...form, hasta: e.target.value })} />
             </div>
           </div>
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p className="text-red-600 text-xs">{error}</p>}
           <div className="flex justify-end">
             <button type="submit" disabled={guardando} className={btnPrimary}>
               <Plus size={14} /> Agregar
@@ -116,23 +116,23 @@ export function AbsencesModal({ companyId, doctors, onClose, onSaved }: {
 
         {afectadas.length > 0 && (
           <div className="bg-amber-500/[0.07] border border-amber-500/25 rounded-xl p-3 space-y-2">
-            <p className="text-xs text-amber-300 font-bold flex items-center gap-1.5">
+            <p className="text-xs text-amber-700 font-bold flex items-center gap-1.5">
               <AlertTriangle size={13} /> {afectadas.length} turno
               {afectadas.length > 1 ? "s" : ""} caen en esos días
             </p>
-            <p className="text-[11px] text-zinc-400">
-              <strong className="text-zinc-300">No se cancelaron.</strong> Hay que avisarles.
+            <p className="text-[11px] text-zinc-600">
+              <strong className="text-zinc-700">No se cancelaron.</strong> Hay que avisarles.
             </p>
             {afectadas.map((c) => (
-              <div key={c.id} className="text-xs bg-black/30 rounded-lg px-2.5 py-1.5">
-                <span className="text-zinc-100 font-medium">{c.paciente}</span>
+              <div key={c.id} className="text-xs bg-zinc-900/10 rounded-lg px-2.5 py-1.5">
+                <span className="text-zinc-900 font-medium">{c.paciente}</span>
                 <span className="text-zinc-500"> · {c.cuando}</span>
                 {c.telefono && (
                   <>
-                    <span className="text-zinc-600"> · </span>
+                    <span className="text-zinc-500"> · </span>
                     <a href={`https://wa.me/${c.telefono.replace(/\D/g, "")}`} target="_blank"
                       rel="noopener noreferrer" title="Escribirle por WhatsApp"
-                      className="text-cyan-400 hover:text-cyan-300">{c.telefono}</a>
+                      className="text-violet-600 hover:text-violet-700">{c.telefono}</a>
                   </>
                 )}
               </div>
@@ -142,10 +142,10 @@ export function AbsencesModal({ companyId, doctors, onClose, onSaved }: {
 
         <div className="space-y-1.5 max-h-64 overflow-y-auto">
           {ausencias.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 bg-white/[0.02] border border-white/5 rounded-xl px-3 py-2">
-              <CalendarOff size={14} className={a.doctor_id ? "text-zinc-500" : "text-amber-400"} />
+            <div key={a.id} className="flex items-center gap-3 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2">
+              <CalendarOff size={14} className={a.doctor_id ? "text-zinc-500" : "text-amber-700"} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-zinc-100 truncate">{nombreDe(a.doctor_id)}</p>
+                <p className="text-sm text-zinc-900 truncate">{nombreDe(a.doctor_id)}</p>
                 <p className="text-[11px] text-zinc-500">
                   {new Date(a.desde + "T00:00:00").toLocaleDateString("es-PY")} al{" "}
                   {new Date(a.hasta + "T00:00:00").toLocaleDateString("es-PY")}
@@ -153,11 +153,11 @@ export function AbsencesModal({ companyId, doctors, onClose, onSaved }: {
                 </p>
               </div>
               <button onClick={() => borrar(a.id)} title="Quitar"
-                className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={14} /></button>
+                className="text-zinc-500 hover:text-red-600 p-1"><Trash2 size={14} /></button>
             </div>
           ))}
           {!ausencias.length && (
-            <p className="text-xs text-zinc-600 text-center py-4">
+            <p className="text-xs text-zinc-500 text-center py-4">
               Sin licencias cargadas para los próximos días.
             </p>
           )}

@@ -92,13 +92,13 @@ export function EditorDeFranjas({ franjas, onChange }: {
       <div className="flex flex-wrap gap-2">
         {ATAJOS.map((a) => (
           <button key={a.nombre} type="button" onClick={() => aplicarAtajo(a)}
-            className="text-[11px] bg-white/[0.04] hover:bg-cyan-500/10 hover:text-cyan-300 text-zinc-400 border border-white/10 px-2.5 py-1 rounded-lg">
+            className="text-[11px] bg-zinc-50 hover:bg-violet-50 hover:text-violet-700 text-zinc-600 border border-zinc-200 px-2.5 py-1 rounded-lg">
             {a.nombre}
           </button>
         ))}
         {franjas.length > 0 && (
           <button type="button" onClick={() => onChange([])}
-            className="text-[11px] text-zinc-500 hover:text-red-400 px-2.5 py-1">
+            className="text-[11px] text-zinc-500 hover:text-red-600 px-2.5 py-1">
             Vaciar
           </button>
         )}
@@ -109,10 +109,10 @@ export function EditorDeFranjas({ franjas, onChange }: {
           const delDia = porDia(d);
           return (
             <div key={d} className={`flex items-start gap-3 rounded-xl px-3 py-2 ${
-              delDia.length ? "bg-cyan-500/[0.06] border border-cyan-500/20" : "bg-white/[0.02] border border-white/5"
+              delDia.length ? "bg-violet-600/[0.06] border border-cyan-500/20" : "bg-zinc-50 border border-zinc-200"
             }`}>
               <span className={`text-xs font-bold w-20 pt-2 shrink-0 ${
-                delDia.length ? "text-cyan-300" : "text-zinc-600"
+                delDia.length ? "text-violet-600" : "text-zinc-500"
               }`}>
                 {nombre}
               </span>
@@ -120,33 +120,33 @@ export function EditorDeFranjas({ franjas, onChange }: {
                 {delDia.map((f, i) => (
                   <div key={i} className="flex items-center gap-2 flex-wrap">
                     <input type="time" value={f.desde} onChange={(e) => editar(f, "desde", e.target.value)}
-                      className="bg-white/[0.03] border border-white/10 rounded-lg px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:border-cyan-500" />
-                    <span className="text-zinc-600 text-xs">a</span>
+                      className="bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1 text-sm text-zinc-900 focus:outline-none focus:border-cyan-500" />
+                    <span className="text-zinc-500 text-xs">a</span>
                     <input type="time" value={f.hasta} onChange={(e) => editar(f, "hasta", e.target.value)}
-                      className="bg-white/[0.03] border border-white/10 rounded-lg px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:border-cyan-500" />
+                      className="bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1 text-sm text-zinc-900 focus:outline-none focus:border-cyan-500" />
                     <button type="button" onClick={() => quitar(f)} title="Quitar esta franja"
-                      className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={13} /></button>
+                      className="text-zinc-500 hover:text-red-600 p-1"><Trash2 size={13} /></button>
                     {d <= 4 && (
                       <button type="button" onClick={() => copiarADiasHabiles(f)}
                         title="Copiar este horario a los demás días hábiles"
-                        className="text-zinc-600 hover:text-cyan-400 p-1"><Copy size={13} /></button>
+                        className="text-zinc-500 hover:text-violet-600 p-1"><Copy size={13} /></button>
                     )}
                   </div>
                 ))}
                 {!delDia.length && (
-                  <span className="text-xs text-zinc-600 leading-8">No atiende</span>
+                  <span className="text-xs text-zinc-500 leading-8">No atiende</span>
                 )}
               </div>
               <button type="button" onClick={() => agregar(d)}
                 title={delDia.length ? "Agregar otra franja (ej. la tarde)" : "Agregar horario"}
-                className="text-cyan-400 hover:text-cyan-300 p-1 pt-2 shrink-0"><Plus size={15} /></button>
+                className="text-violet-600 hover:text-violet-700 p-1 pt-2 shrink-0"><Plus size={15} /></button>
             </div>
           );
         })}
       </div>
 
       {error && (
-        <p className="text-xs text-amber-400 flex items-start gap-1.5">
+        <p className="text-xs text-amber-700 flex items-start gap-1.5">
           <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {error}
         </p>
       )}
@@ -158,25 +158,25 @@ function CitasQueQuedanAfuera({ citas }: { citas: CitaFueraDeHorario[] }) {
   if (!citas.length) return null;
   return (
     <div className="bg-amber-500/[0.07] border border-amber-500/25 rounded-xl p-3 space-y-2">
-      <p className="text-xs text-amber-300 font-bold flex items-center gap-1.5">
+      <p className="text-xs text-amber-700 font-bold flex items-center gap-1.5">
         <AlertTriangle size={13} /> {citas.length} turno{citas.length > 1 ? "s" : ""} queda
         {citas.length > 1 ? "n" : ""} fuera del horario nuevo
       </p>
-      <p className="text-[11px] text-zinc-400">
-        Son personas que ya reservaron. <strong className="text-zinc-300">No se cancelaron</strong>:
+      <p className="text-[11px] text-zinc-600">
+        Son personas que ya reservaron. <strong className="text-zinc-700">No se cancelaron</strong>:
         hay que llamarlas para reprogramar.
       </p>
       <div className="space-y-1 max-h-48 overflow-y-auto">
         {citas.map((c) => (
-          <div key={c.id} className="text-xs bg-black/30 rounded-lg px-2.5 py-1.5">
-            <span className="text-zinc-100 font-medium">{c.paciente}</span>
+          <div key={c.id} className="text-xs bg-zinc-900/10 rounded-lg px-2.5 py-1.5">
+            <span className="text-zinc-900 font-medium">{c.paciente}</span>
             <span className="text-zinc-500"> · {c.cuando}</span>
             {c.telefono && (
               <>
-                <span className="text-zinc-600"> · </span>
+                <span className="text-zinc-500"> · </span>
                 <a href={`https://wa.me/${c.telefono.replace(/\D/g, "")}`} target="_blank"
                   rel="noopener noreferrer" title="Escribirle por WhatsApp"
-                  className="text-cyan-400 hover:text-cyan-300">{c.telefono}</a>
+                  className="text-violet-600 hover:text-violet-700">{c.telefono}</a>
               </>
             )}
           </div>
@@ -232,7 +232,7 @@ export function ScheduleModal({ companyId, doctor, onClose, onSaved }: {
           <div className={`rounded-xl p-3 text-xs leading-relaxed ${
             horario.agenda_mode === "estructurado"
               ? "bg-emerald-500/[0.07] border border-emerald-500/25 text-emerald-200"
-              : "bg-amber-500/[0.07] border border-amber-500/25 text-amber-200"
+              : "bg-amber-500/[0.07] border border-amber-500/25 text-amber-800"
           }`}>
             {horario.agenda_mode === "estructurado" ? (
               <><Check size={13} className="inline mr-1" />El bot verifica los turnos contra este horario.</>
@@ -244,11 +244,11 @@ export function ScheduleModal({ companyId, doctor, onClose, onSaved }: {
           </div>
 
           {horario.texto_libre && (
-            <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
+            <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3">
               <p className="text-[10px] uppercase tracking-widest text-zinc-500 mb-1">
                 Como está cargado hoy (texto libre)
               </p>
-              <p className="text-sm text-zinc-200 font-mono">{horario.texto_libre}</p>
+              <p className="text-sm text-zinc-800 font-mono">{horario.texto_libre}</p>
               <p className="text-[11px] text-zinc-500 mt-1.5">
                 Pasalo abajo vos: el sistema no lo interpreta solo, porque agendar sobre una
                 adivinanza es justo lo que queremos evitar.
@@ -259,16 +259,16 @@ export function ScheduleModal({ companyId, doctor, onClose, onSaved }: {
           <EditorDeFranjas franjas={franjas} onChange={(f) => { setFranjas(f); setAfuera(null); }} />
 
           {afuera && <CitasQueQuedanAfuera citas={afuera} />}
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p className="text-red-600 text-xs">{error}</p>}
 
-          <div className="flex justify-between items-center pt-3 border-t border-white/5">
+          <div className="flex justify-between items-center pt-3 border-t border-zinc-200">
             <span className="text-[11px] text-zinc-500">
               {franjas.length
                 ? `${franjas.length} franja${franjas.length > 1 ? "s" : ""} en la semana`
                 : "Sin franjas: vuelve a modo pedido"}
             </span>
             <div className="flex gap-3">
-              <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white">
+              <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-600 hover:text-zinc-900">
                 {afuera ? "Cerrar" : "Cancelar"}
               </button>
               <button onClick={guardar} disabled={guardando} className={btnPrimary}>
@@ -315,9 +315,9 @@ export function ClinicScheduleModal({ companyId, onClose, onSaved }: {
   return (
     <Modal title="Horario del centro" onClose={onClose}>
       <div className="space-y-4">
-        <p className="text-xs text-zinc-400 leading-relaxed">
+        <p className="text-xs text-zinc-600 leading-relaxed">
           Cuándo abre la institución. Es lo primero que conviene cargar:{" "}
-          <strong className="text-zinc-200">con esto solo, el bot ya deja de aceptar turnos
+          <strong className="text-zinc-800">con esto solo, el bot ya deja de aceptar turnos
           un domingo a las 23:00</strong> para todos los profesionales, sin esperar a que cada
           uno cargue el suyo. {nota && <span className="text-zinc-500">{nota}</span>}
         </p>
@@ -326,9 +326,9 @@ export function ClinicScheduleModal({ companyId, onClose, onSaved }: {
         ) : (
           <EditorDeFranjas franjas={franjas} onChange={setFranjas} />
         )}
-        {error && <p className="text-red-400 text-xs">{error}</p>}
-        <div className="flex justify-end gap-3 pt-3 border-t border-white/5">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white">Cancelar</button>
+        {error && <p className="text-red-600 text-xs">{error}</p>}
+        <div className="flex justify-end gap-3 pt-3 border-t border-zinc-200">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-600 hover:text-zinc-900">Cancelar</button>
           <button onClick={guardar} disabled={guardando} className={btnPrimary}>
             <CalendarClock size={14} /> Guardar
           </button>

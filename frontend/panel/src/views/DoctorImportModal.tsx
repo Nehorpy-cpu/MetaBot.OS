@@ -33,8 +33,8 @@ function Certificacion({ m }: { m: RegistryMatch }) {
       title={m.vigente ? `Certificación vigente hasta ${fecha}` : `${VENCIDO} (${fecha})`}
       className={`text-[10px] px-2 py-0.5 rounded-full border font-bold whitespace-nowrap ${
         m.vigente
-          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-          : "bg-white/[0.03] text-zinc-400 border-white/10"
+          ? "bg-emerald-50 text-emerald-700 border-emerald-500/20"
+          : "bg-zinc-50 text-zinc-600 border-zinc-200"
       }`}>
       Reg. {m.cert_number}{m.vigente ? "" : " · vence " + fecha}
     </span>
@@ -47,12 +47,12 @@ export function DoctorImportModal({ companyId, onClose, onSaved }: {
   const [tab, setTab] = useState<"padron" | "planilla">("padron");
   return (
     <Modal title="Agregar profesionales" onClose={onClose}>
-      <div className="flex gap-2 mb-5 border-b border-white/5 pb-3">
+      <div className="flex gap-2 mb-5 border-b border-zinc-200 pb-3">
         {([["padron", "Buscar en el padrón", Search], ["planilla", "Subir planilla", FileSpreadsheet]] as const).map(
           ([k, label, Icon]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-2 ${
-                tab === k ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/30" : "text-zinc-500 hover:text-zinc-300"
+                tab === k ? "bg-violet-50 text-violet-600 border border-violet-300" : "text-zinc-500 hover:text-zinc-800"
               }`}>
               <Icon size={14} /> {label}
             </button>
@@ -110,16 +110,16 @@ function BuscarPadron({ companyId, onSaved }: { companyId: number; onSaved: () =
   return (
     <div className="space-y-4">
       <p className="text-xs text-zinc-500 leading-relaxed">
-        Marcá solo a los profesionales que <strong className="text-zinc-300">realmente atienden</strong> en tu
+        Marcá solo a los profesionales que <strong className="text-zinc-700">realmente atienden</strong> en tu
         institución. El padrón confirma la certificación; no dice dónde trabaja cada uno.
       </p>
 
       <form onSubmit={buscar} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2">
         <input className={input} placeholder="Apellido o nombre" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className={input} value={especialidad} onChange={(e) => setEspecialidad(e.target.value)}>
-          <option value="" className="bg-[#090b10]">Todas las especialidades</option>
+          <option value="" className="bg-white">Todas las especialidades</option>
           {opciones.map((e) => (
-            <option key={e.clave} value={e.clave} className="bg-[#090b10]">
+            <option key={e.clave} value={e.clave} className="bg-white">
               {e.etiqueta} ({e.cantidad})
             </option>
           ))}
@@ -136,7 +136,7 @@ function BuscarPadron({ companyId, onSaved }: { companyId: number; onSaved: () =
       )}
 
       {resultados !== null && total > resultados.length && (
-        <p className="text-xs text-amber-400/90">
+        <p className="text-xs text-amber-700/90">
           Mostrando {resultados.length} de {total}, los de certificación más vigente primero.
           Agregá el apellido para acotar la lista.
         </p>
@@ -146,25 +146,25 @@ function BuscarPadron({ companyId, onSaved }: { companyId: number; onSaved: () =
         {(resultados ?? []).map((m) => (
           <div key={m.registry_id} className={`${card} p-3 flex flex-col md:flex-row md:items-center gap-3`}>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-zinc-100 truncate">{m.full_name}</p>
-              <p className="text-[11px] text-cyan-300">{m.specialty}</p>
+              <p className="text-sm font-bold text-zinc-900 truncate">{m.full_name}</p>
+              <p className="text-[11px] text-violet-600">{m.specialty}</p>
             </div>
             <Certificacion m={m} />
             <input className={`${input} md:w-48`} placeholder="Horario en tu clínica"
               value={horarios[m.registry_id] ?? ""}
               onChange={(e) => setHorarios({ ...horarios, [m.registry_id]: e.target.value })} />
             {agregados[m.registry_id] === "ok" ? (
-              <span className="text-xs text-emerald-400 font-bold flex items-center gap-1 whitespace-nowrap">
+              <span className="text-xs text-emerald-700 font-bold flex items-center gap-1 whitespace-nowrap">
                 <BadgeCheck size={14} /> Agregado
               </span>
             ) : (
               <button onClick={() => agregar(m)}
-                className="text-xs bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-3 py-2 rounded-lg flex items-center gap-1 whitespace-nowrap">
+                className="text-xs bg-violet-50 hover:bg-violet-100 text-violet-600 border border-violet-300 px-3 py-2 rounded-lg flex items-center gap-1 whitespace-nowrap">
                 <UserPlus size={13} /> Agregar
               </button>
             )}
             {agregados[m.registry_id] && agregados[m.registry_id] !== "ok" && (
-              <span className="text-xs text-amber-400">{agregados[m.registry_id]}</span>
+              <span className="text-xs text-amber-700">{agregados[m.registry_id]}</span>
             )}
           </div>
         ))}
@@ -229,28 +229,28 @@ function SubirPlanilla({ companyId, onSaved, onClose }: {
           Subí la lista como la tengas: Excel (.xlsx) o CSV. No hace falta renombrar columnas —
           se reconocen "Nombre", "Profesional", "Médico", "Especialidad", "Horario" y sus variantes.
         </p>
-        <label className="block border-2 border-dashed border-white/10 hover:border-cyan-500/40 rounded-2xl p-10 text-center cursor-pointer transition-colors">
-          <Upload size={28} className="mx-auto text-zinc-600 mb-3" />
-          <span className="text-sm text-zinc-400">
+        <label className="block border-2 border-dashed border-zinc-200 hover:border-violet-400 rounded-2xl p-10 text-center cursor-pointer transition-colors">
+          <Upload size={28} className="mx-auto text-zinc-500 mb-3" />
+          <span className="text-sm text-zinc-600">
             {cargando ? "Leyendo la planilla…" : "Elegí el archivo (.xlsx o .csv, hasta 5 MB)"}
           </span>
           <input type="file" accept=".csv,.xlsx,.xlsm,text/csv" className="hidden" disabled={cargando}
             onChange={(e) => e.target.files?.[0] && subir(e.target.files[0])} />
         </label>
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-red-600 text-xs">{error}</p>}
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-4 text-xs text-zinc-400">
-        <span><strong className="text-white">{preview.total}</strong> en el archivo</span>
-        <span><strong className="text-emerald-400">{preview.en_padron}</strong> hallados en el padrón</span>
+      <div className="flex flex-wrap gap-4 text-xs text-zinc-600">
+        <span><strong className="text-zinc-900">{preview.total}</strong> en el archivo</span>
+        <span><strong className="text-emerald-700">{preview.en_padron}</strong> hallados en el padrón</span>
         {preview.ya_cargados > 0 && (
-          <span><strong className="text-amber-400">{preview.ya_cargados}</strong> ya cargados</span>
+          <span><strong className="text-amber-700">{preview.ya_cargados}</strong> ya cargados</span>
         )}
-        <span className="text-zinc-600">Todavía no se guardó nada.</span>
+        <span className="text-zinc-500">Todavía no se guardó nada.</span>
       </div>
 
       <div className="space-y-2 max-h-[45vh] overflow-y-auto">
@@ -264,9 +264,9 @@ function SubirPlanilla({ companyId, onSaved, onClose }: {
               }}
               className="accent-cyan-500 w-4 h-4 shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-zinc-100 truncate">{f.name}</p>
-              <p className="text-[11px] text-cyan-300">{f.specialty || "sin especialidad"}</p>
-              {f.ya_cargado && <p className="text-[10px] text-amber-400">Ya está en tu lista</p>}
+              <p className="text-sm font-bold text-zinc-900 truncate">{f.name}</p>
+              <p className="text-[11px] text-violet-600">{f.specialty || "sin especialidad"}</p>
+              {f.ya_cargado && <p className="text-[10px] text-amber-700">Ya está en tu lista</p>}
               {!f.ya_cargado && !f.padron && f.sugerencias.length > 0 && (
                 <p className="text-[10px] text-zinc-500 mt-1">
                   ¿Será {f.sugerencias.map((s) => s.full_name).join(" o ")}? Revisá cómo está escrito.
@@ -275,7 +275,7 @@ function SubirPlanilla({ companyId, onSaved, onClose }: {
             </div>
             {f.padron
               ? <Certificacion m={f.padron} />
-              : <span className="text-[10px] px-2 py-0.5 rounded-full border bg-white/[0.03] text-zinc-500 border-white/10" title={SIN_VERIFICAR}>
+              : <span className="text-[10px] px-2 py-0.5 rounded-full border bg-zinc-50 text-zinc-500 border-zinc-200" title={SIN_VERIFICAR}>
                   sin coincidencia
                 </span>}
             <input className={`${input} md:w-48`} placeholder="Horario" value={f.schedule}
@@ -284,10 +284,10 @@ function SubirPlanilla({ companyId, onSaved, onClose }: {
         ))}
       </div>
 
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-      <div className="flex justify-between items-center pt-3 border-t border-white/5">
+      {error && <p className="text-red-600 text-xs">{error}</p>}
+      <div className="flex justify-between items-center pt-3 border-t border-zinc-200">
         <button onClick={() => { setPreview(null); setFilas([]); setError(""); }}
-          className="px-4 py-2 text-sm text-zinc-400 hover:text-white">Elegir otro archivo</button>
+          className="px-4 py-2 text-sm text-zinc-600 hover:text-zinc-900">Elegir otro archivo</button>
         <button onClick={confirmar} disabled={cargando || !marcadas.size} className={btnPrimary}>
           <UserPlus size={14} /> Cargar {marcadas.size} profesionales
         </button>

@@ -30,14 +30,14 @@ export function ClinicalView({ company }: { company: Company }) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-3xl font-bold text-white tracking-tight">Recetas y Convenios</h2>
-        <p className="text-zinc-400 text-sm mt-1">
+        <h2 className="text-3xl font-bold text-zinc-900 tracking-tight">Recetas y Convenios</h2>
+        <p className="text-zinc-600 text-sm mt-1">
           Lo que el profesional carga acá es lo que el bot le entrega al paciente,
           palabra por palabra. El bot nunca redacta ni interpreta una indicación médica.
         </p>
       </div>
-      {error && <p className="text-red-400 text-sm">{error}</p>}
-      {aviso && <p className="text-amber-300 text-sm">{aviso}</p>}
+      {error && <p className="text-red-600 text-sm">{error}</p>}
+      {aviso && <p className="text-amber-700 text-sm">{aviso}</p>}
 
       <NuevaReceta
         company={company} doctors={doctors}
@@ -108,8 +108,8 @@ function NuevaReceta({ company, doctors, onCreated, onError }: {
   return (
     <form onSubmit={submit} className={`${card} p-6 space-y-4`}>
       <div className="flex items-center justify-between">
-        <h3 className="font-bold text-white flex items-center gap-2"><Pill size={18} /> Nueva receta</h3>
-        <button type="button" onClick={() => setAbierto(false)} className="text-zinc-500 hover:text-white">
+        <h3 className="font-bold text-zinc-900 flex items-center gap-2"><Pill size={18} /> Nueva receta</h3>
+        <button type="button" onClick={() => setAbierto(false)} className="text-zinc-500 hover:text-zinc-900">
           <X size={18} />
         </button>
       </div>
@@ -136,7 +136,7 @@ function NuevaReceta({ company, doctors, onCreated, onError }: {
 
       <div className="space-y-3">
         {items.map((it, i) => (
-          <div key={i} className="bg-white/[0.02] border border-white/10 rounded-xl p-3 space-y-2">
+          <div key={i} className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 space-y-2">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <input className={input} required placeholder="Medicamento (ej. Amoxicilina 500 mg)"
                 value={it.medication} onChange={(e) => setItem(i, "medication", e.target.value)} />
@@ -162,19 +162,19 @@ function NuevaReceta({ company, doctors, onCreated, onError }: {
             <input className={input} placeholder="Instrucciones (ej. tomar con las comidas)"
               value={it.instructions} onChange={(e) => setItem(i, "instructions", e.target.value)} />
             {it.every_hours === 0 && (
-              <p className="text-[11px] text-amber-300/80">
+              <p className="text-[11px] text-amber-700/80">
                 Sin horario fijo: no se programan recordatorios de toma. Una pauta a demanda
                 no se convierte en horario, sería inventar una indicación que no diste.
               </p>
             )}
             {items.length > 1 && (
               <button type="button" onClick={() => setItems(items.filter((_, n) => n !== i))}
-                className="text-xs text-zinc-500 hover:text-red-400">Quitar medicamento</button>
+                className="text-xs text-zinc-500 hover:text-red-600">Quitar medicamento</button>
             )}
           </div>
         ))}
         <button type="button" onClick={() => setItems([...items, { ...ITEM_VACIO }])}
-          className="text-xs text-cyan-400 hover:text-cyan-300">+ Agregar otro medicamento</button>
+          className="text-xs text-violet-600 hover:text-violet-700">+ Agregar otro medicamento</button>
       </div>
 
       <input className={input} placeholder="Indicaciones generales (reposo, dieta, control)"
@@ -182,12 +182,12 @@ function NuevaReceta({ company, doctors, onCreated, onError }: {
         onChange={(e) => setForm({ ...form, indications: e.target.value })} />
 
       <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 space-y-2">
-        <label className="flex items-start gap-2 text-sm text-zinc-200 cursor-pointer">
+        <label className="flex items-start gap-2 text-sm text-zinc-800 cursor-pointer">
           <input type="checkbox" className="accent-cyan-500 mt-0.5" checked={form.reminders_enabled}
             onChange={(e) => setForm({ ...form, reminders_enabled: e.target.checked })} />
           <span>
             El paciente <b>pidió</b> recibir recordatorios de cada toma por WhatsApp.
-            <span className="block text-[11px] text-zinc-400 mt-0.5">
+            <span className="block text-[11px] text-zinc-600 mt-0.5">
               Solo se envían si el número escribió antes a la clínica, nunca entre las
               22:00 y las 07:00, y el paciente puede cortarlos respondiendo STOP.
             </span>
@@ -202,7 +202,7 @@ function NuevaReceta({ company, doctors, onCreated, onError }: {
 
       <div className="flex justify-end gap-3">
         <button type="button" onClick={() => setAbierto(false)}
-          className="px-4 py-2 text-sm text-zinc-400 hover:text-white">Cancelar</button>
+          className="px-4 py-2 text-sm text-zinc-600 hover:text-zinc-900">Cancelar</button>
         <button type="submit" disabled={guardando} className={btnPrimary}>
           {guardando ? "Guardando…" : "Guardar receta"}
         </button>
@@ -233,7 +233,7 @@ function ListaRecetas({ company, prescriptions, onChanged, onError }: {
         <div key={r.id} className={`${card} p-4`}>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-white font-semibold text-sm">
+              <p className="text-zinc-900 font-semibold text-sm">
                 {r.patient_name}
                 <span className="text-zinc-500 font-normal"> · {r.patient_phone}</span>
               </p>
@@ -244,22 +244,22 @@ function ListaRecetas({ company, prescriptions, onChanged, onError }: {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {r.reminders_enabled && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 border border-cyan-500/20">
                   con recordatorios
                 </span>
               )}
               <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
                 r.status === "active"
-                  ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
-                  : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"}`}>
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-500/20"
+                  : "bg-zinc-500/10 text-zinc-600 border-zinc-500/20"}`}>
                 {r.status === "active" ? "activa" : "suspendida"}
               </span>
             </div>
           </div>
-          {r.diagnosis && <p className="text-xs text-zinc-400 mt-2">{r.diagnosis}</p>}
+          {r.diagnosis && <p className="text-xs text-zinc-600 mt-2">{r.diagnosis}</p>}
           <ul className="mt-2 space-y-1">
             {r.items.map((it) => (
-              <li key={it.id} className="text-xs text-zinc-300">
+              <li key={it.id} className="text-xs text-zinc-700">
                 • <b>{it.medication}</b> — {it.dose}
                 {it.every_hours > 0
                   ? ` · cada ${it.every_hours} h por ${it.duration_days} días`
@@ -269,7 +269,7 @@ function ListaRecetas({ company, prescriptions, onChanged, onError }: {
           </ul>
           {r.status === "active" && (
             <button onClick={() => cancelar(r.id)}
-              className="mt-3 text-xs text-zinc-500 hover:text-red-400">
+              className="mt-3 text-xs text-zinc-500 hover:text-red-600">
               Suspender tratamiento
             </button>
           )}
@@ -306,10 +306,10 @@ function Convenios({ company, insurers, onChanged, onError }: {
           onClose={() => { setAranceles(null); onChanged(); }} />
       )}
       <div>
-        <h3 className="font-bold text-white flex items-center gap-2">
+        <h3 className="font-bold text-zinc-900 flex items-center gap-2">
           <ShieldCheck size={18} /> Convenios con seguros
         </h3>
-        <p className="text-xs text-zinc-400 mt-1">
+        <p className="text-xs text-zinc-600 mt-1">
           Los que <b>esta</b> empresa tiene firmados. El bot los usa para responder
           cuánto le sale un estudio al paciente con su seguro; el cálculo lo hace el
           servidor, no el modelo. Tocá un convenio para cargar el <b>arancel</b> que
@@ -322,15 +322,15 @@ function Convenios({ company, insurers, onChanged, onError }: {
           {insurers.map((i) => (
             <button key={i.id} onClick={() => setAranceles(i)}
               className="w-full text-left flex items-center justify-between gap-3 text-sm
-                         bg-white/[0.02] hover:bg-white/[0.05] border border-white/5
+                         bg-zinc-50 hover:bg-zinc-100 border border-zinc-200
                          rounded-lg px-3 py-2 transition-colors">
-              <span className="text-zinc-200">
+              <span className="text-zinc-800">
                 {i.name} <span className="text-zinc-500">{i.plan}</span>
               </span>
-              <span className="text-xs text-zinc-400 tabular-nums flex items-center gap-2">
+              <span className="text-xs text-zinc-600 tabular-nums flex items-center gap-2">
                 cubre {i.coverage_pct}%
                 {i.copay_gs > 0 && ` · copago ₲ ${i.copay_gs.toLocaleString("es-PY")}`}
-                <span className="text-cyan-400 flex items-center gap-1">
+                <span className="text-violet-600 flex items-center gap-1">
                   <Coins size={12} /> aranceles
                 </span>
               </span>

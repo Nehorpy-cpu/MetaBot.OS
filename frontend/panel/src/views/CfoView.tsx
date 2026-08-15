@@ -57,10 +57,10 @@ const fecha = (s: string | null) =>
 
 function Aviso({ texto, onCerrar }: { texto: string; onCerrar: () => void }) {
   return (
-    <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+    <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
       <AlertTriangle size={14} className="mt-0.5 shrink-0" />
       <pre className="flex-1 whitespace-pre-wrap font-sans">{texto}</pre>
-      <button onClick={onCerrar} className="text-amber-400 hover:text-amber-200">
+      <button onClick={onCerrar} className="text-amber-700 hover:text-amber-800">
         <X size={14} />
       </button>
     </div>
@@ -74,7 +74,7 @@ export function CfoView({ companyId }: { companyId: number }) {
   return (
     <div>
       <div className="mb-5">
-        <h1 className="text-xl font-bold text-white">CFO de Finanzas</h1>
+        <h1 className="text-xl font-bold text-zinc-900">CFO de Finanzas</h1>
         <p className="mt-1 text-xs text-zinc-500">
           El dueño pregunta por WhatsApp; los números salen calculados del
           servidor, con su definición y la fecha de sus datos.
@@ -88,11 +88,11 @@ export function CfoView({ companyId }: { companyId: number }) {
             onClick={() => { setSolapa(id); setError(""); }}
             className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition-all ${
               solapa === id
-                ? "border border-white/10 bg-white/5 text-white"
-                : "text-zinc-500 hover:bg-white/[0.02] hover:text-zinc-300"
+                ? "border border-zinc-200 bg-zinc-50 text-zinc-900"
+                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
             }`}
           >
-            <Icon size={14} className={solapa === id ? "text-cyan-400" : ""} />
+            <Icon size={14} className={solapa === id ? "text-violet-600" : ""} />
             {label}
           </button>
         ))}
@@ -149,7 +149,7 @@ function Accesos({ companyId, onError }: Props) {
         <p className="max-w-2xl text-xs text-zinc-500">
           Un WhatsApp no es una identidad: se clona, se hereda con un chip
           reciclado y se pierde en un taxi. Por eso lo sensible pide además un
-          PIN, y el permiso es <strong className="text-zinc-300">por
+          PIN, y el permiso es <strong className="text-zinc-700">por
           empresa</strong>, no por número.
         </p>
         <button onClick={() => setAlta(true)} className={btnPrimary}>
@@ -158,12 +158,12 @@ function Accesos({ companyId, onError }: Props) {
       </div>
 
       {filas.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-600">
+        <p className="py-8 text-center text-sm text-zinc-500">
           Nadie autorizado todavía. Sin esto, el CFO no le contesta a nadie.
         </p>
       ) : (
         <table className="w-full text-sm">
-          <thead className="text-left text-[10px] uppercase tracking-wider text-zinc-600">
+          <thead className="text-left text-[10px] uppercase tracking-wider text-zinc-500">
             <tr>
               <th className="pb-2">Teléfono</th>
               <th className="pb-2">Nombre</th>
@@ -175,31 +175,31 @@ function Accesos({ companyId, onError }: Props) {
           </thead>
           <tbody>
             {filas.map((f) => (
-              <tr key={f.id} className="border-t border-white/5">
-                <td className="py-2.5 font-mono text-xs text-zinc-300">{f.phone}</td>
-                <td className="py-2.5 text-zinc-400">{f.nombre || "—"}</td>
+              <tr key={f.id} className="border-t border-zinc-200">
+                <td className="py-2.5 font-mono text-xs text-zinc-700">{f.phone}</td>
+                <td className="py-2.5 text-zinc-600">{f.nombre || "—"}</td>
                 <td className="py-2.5">
-                  <span className="rounded-lg bg-white/5 px-2 py-0.5 text-[11px] text-zinc-300">
+                  <span className="rounded-lg bg-zinc-50 px-2 py-0.5 text-[11px] text-zinc-700">
                     {RIESGO_ES[f.sensibilidad_max]}
                   </span>
                 </td>
                 <td className="py-2.5">
                   {f.tiene_pin ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700">
                       <Check size={12} /> configurado
                     </span>
                   ) : (
-                    <span className="text-[11px] text-amber-400">sin PIN</span>
+                    <span className="text-[11px] text-amber-700">sin PIN</span>
                   )}
                   {f.pin_bloqueado && (
-                    <span className="ml-2 text-[11px] text-rose-400">bloqueado</span>
+                    <span className="ml-2 text-[11px] text-rose-600">bloqueado</span>
                   )}
                 </td>
                 <td className="py-2.5 text-[11px] text-zinc-500">{fecha(f.ultimo_uso_at)}</td>
                 <td className="py-2.5 text-right">
                   <button
                     onClick={() => { setPinDe(f); setPin(""); }}
-                    className="mr-3 text-[11px] text-cyan-400 hover:text-cyan-300"
+                    className="mr-3 text-[11px] text-violet-600 hover:text-violet-700"
                   >
                     {f.tiene_pin ? "Cambiar PIN" : "Poner PIN"}
                   </button>
@@ -210,7 +210,7 @@ function Accesos({ companyId, onError }: Props) {
                         cargar();
                       } catch (e) { onError(motivoDe(e)); }
                     }}
-                    className="text-[11px] text-zinc-500 hover:text-zinc-300"
+                    className="text-[11px] text-zinc-500 hover:text-zinc-800"
                   >
                     {f.activo ? "Desactivar" : "Activar"}
                   </button>
@@ -246,7 +246,7 @@ function Accesos({ companyId, onError }: Props) {
               <option value="alta">Crítico — caja, bancos, utilidad</option>
             </select>
             <p className="text-[11px] text-zinc-500">
-              Nace <strong className="text-zinc-300">sin PIN</strong>, así que
+              Nace <strong className="text-zinc-700">sin PIN</strong>, así que
               todavía no ve nada sensible aunque le pongas un nivel alto. El PIN
               se configura después, desde acá.
             </p>
@@ -293,7 +293,7 @@ function Metricas({ companyId, onError }: Props) {
     <div className={`${card} p-5`}>
       <p className="mb-4 max-w-2xl text-xs text-zinc-500">
         "Ventas" no quiere decir lo mismo para vos, para tu contador y para la
-        aseguradora. Acá se aprueba <strong className="text-zinc-300">qué
+        aseguradora. Acá se aprueba <strong className="text-zinc-700">qué
         significa cada número</strong> — con tu nombre y la fecha —, y recién
         entonces el CFO puede contestarlo.
       </p>
@@ -302,17 +302,17 @@ function Metricas({ companyId, onError }: Props) {
         {filas.map((m) => {
           const activa = m.estado === "activa";
           return (
-            <div key={m.clave} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <div key={m.clave} className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-white">{m.nombre}</h3>
+                  <h3 className="text-sm font-semibold text-zinc-900">{m.nombre}</h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">{m.formula}</p>
                 </div>
                 <span
                   className={`shrink-0 rounded-lg px-2 py-0.5 text-[10px] font-semibold ${
                     activa
-                      ? "bg-emerald-500/15 text-emerald-400"
-                      : "bg-white/5 text-zinc-500"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-zinc-50 text-zinc-500"
                   }`}
                 >
                   {activa ? `activa v${m.version}` : m.estado}
@@ -320,7 +320,7 @@ function Metricas({ companyId, onError }: Props) {
               </div>
 
               {m.faltan.length > 0 && (
-                <p className="mt-3 rounded-lg border-l-2 border-amber-500 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
+                <p className="mt-3 rounded-lg border-l-2 border-amber-500 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-700">
                   Falta conectar: {m.faltan.map((f) => FUENTES_ES[f] || f).join(", ")}
                 </p>
               )}
@@ -328,7 +328,7 @@ function Metricas({ companyId, onError }: Props) {
               <div className="mt-3 flex items-center gap-3">
                 <button
                   onClick={() => setDetalle(m)}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-300"
+                  className="text-[11px] text-zinc-500 hover:text-zinc-800"
                 >
                   Ver definición
                 </button>
@@ -338,7 +338,7 @@ function Metricas({ companyId, onError }: Props) {
                       try { await cfoApi.deprecar(companyId, m.clave); cargar(); }
                       catch (e) { onError(motivoDe(e)); }
                     }}
-                    className="text-[11px] text-zinc-500 hover:text-rose-400"
+                    className="text-[11px] text-zinc-500 hover:text-rose-600"
                   >
                     Dar de baja
                   </button>
@@ -348,7 +348,7 @@ function Metricas({ companyId, onError }: Props) {
                       try { await cfoApi.aprobar(companyId, m.clave, m.version); cargar(); }
                       catch (e) { onError(motivoDe(e)); }
                     }}
-                    className="text-[11px] font-semibold text-cyan-400 hover:text-cyan-300"
+                    className="text-[11px] font-semibold text-violet-600 hover:text-violet-700"
                   >
                     Aprobar v{m.version}
                   </button>
@@ -363,31 +363,31 @@ function Metricas({ companyId, onError }: Props) {
         <Modal title={detalle.nombre} onClose={() => setDetalle(null)}>
           <dl className="space-y-4 text-sm">
             <div>
-              <dt className="text-[10px] uppercase tracking-wider text-zinc-600">Cómo se calcula</dt>
-              <dd className="mt-1 text-zinc-300">{detalle.formula}</dd>
+              <dt className="text-[10px] uppercase tracking-wider text-zinc-500">Cómo se calcula</dt>
+              <dd className="mt-1 text-zinc-700">{detalle.formula}</dd>
             </div>
             {detalle.excluye && (
               <div>
-                <dt className="text-[10px] uppercase tracking-wider text-zinc-600">Qué NO entra</dt>
-                <dd className="mt-1 text-zinc-300">{detalle.excluye}</dd>
+                <dt className="text-[10px] uppercase tracking-wider text-zinc-500">Qué NO entra</dt>
+                <dd className="mt-1 text-zinc-700">{detalle.excluye}</dd>
               </div>
             )}
             {detalle.notas_contables && (
               <div>
-                <dt className="text-[10px] uppercase tracking-wider text-zinc-600">Para tener en cuenta</dt>
-                <dd className="mt-1 text-amber-300">{detalle.notas_contables}</dd>
+                <dt className="text-[10px] uppercase tracking-wider text-zinc-500">Para tener en cuenta</dt>
+                <dd className="mt-1 text-amber-700">{detalle.notas_contables}</dd>
               </div>
             )}
             <div>
-              <dt className="text-[10px] uppercase tracking-wider text-zinc-600">De dónde sale</dt>
-              <dd className="mt-1 text-zinc-300">
+              <dt className="text-[10px] uppercase tracking-wider text-zinc-500">De dónde sale</dt>
+              <dd className="mt-1 text-zinc-700">
                 {detalle.fuentes.map((f) => FUENTES_ES[f] || f).join(", ")}
               </dd>
             </div>
             {detalle.vigente_desde && (
               <div>
-                <dt className="text-[10px] uppercase tracking-wider text-zinc-600">Rige desde</dt>
-                <dd className="mt-1 text-zinc-300">{detalle.vigente_desde}</dd>
+                <dt className="text-[10px] uppercase tracking-wider text-zinc-500">Rige desde</dt>
+                <dd className="mt-1 text-zinc-700">{detalle.vigente_desde}</dd>
               </div>
             )}
           </dl>
@@ -427,9 +427,9 @@ function Datos({ companyId, onError }: Props) {
   return (
     <div className="space-y-4">
       <div className={`${card} p-5`}>
-        <h3 className="mb-1 text-sm font-semibold text-white">Qué puede contestar hoy</h3>
+        <h3 className="mb-1 text-sm font-semibold text-zinc-900">Qué puede contestar hoy</h3>
         <p className="mb-4 text-xs text-zinc-500">
-          Una fuente cuenta cuando <strong className="text-zinc-300">trajo datos
+          Una fuente cuenta cuando <strong className="text-zinc-700">trajo datos
           al menos una vez</strong>. Un conector recién creado y vacío haría que
           el CFO conteste ₲ 0 con cara de certeza.
         </p>
@@ -440,8 +440,8 @@ function Datos({ companyId, onError }: Props) {
               title={f.corte ? `Datos hasta ${fecha(f.corte)}` : "Sin datos cargados"}
               className={`rounded-lg px-2.5 py-1 text-[11px] ${
                 f.disponible
-                  ? "bg-emerald-500/15 text-emerald-400"
-                  : "bg-white/5 text-zinc-600"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-zinc-50 text-zinc-500"
               }`}
             >
               {FUENTES_ES[f.fuente] || f.fuente}
@@ -464,13 +464,13 @@ function Datos({ companyId, onError }: Props) {
         </div>
 
         {ok && (
-          <p className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-300">
+          <p className="mb-3 rounded-xl border border-emerald-300 bg-emerald-50 p-2.5 text-xs text-emerald-700">
             {ok}
           </p>
         )}
 
         {conectores.length === 0 ? (
-          <p className="py-8 text-center text-sm text-zinc-600">
+          <p className="py-8 text-center text-sm text-zinc-500">
             Sin fuentes conectadas. El CFO solo puede usar lo que ya está en el
             sistema: atenciones, prestaciones y convenios.
           </p>
@@ -479,30 +479,30 @@ function Datos({ companyId, onError }: Props) {
             {conectores.map((c) => (
               <div
                 key={c.id}
-                className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3"
+                className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3"
               >
                 <div className="min-w-48 flex-1">
-                  <p className="text-sm font-medium text-white">{c.nombre}</p>
+                  <p className="text-sm font-medium text-zinc-900">{c.nombre}</p>
                   <p className="text-[11px] text-zinc-500">
                     {FUENTES_ES[c.fuente] || c.fuente} · {c.filas_totales} filas ·
                     {c.ultima_sync ? ` datos al ${fecha(c.ultima_sync)}` : " nunca cargado"}
                   </p>
                   {c.ultimo_error && (
-                    <p className="mt-1 text-[11px] text-rose-400">{c.ultimo_error}</p>
+                    <p className="mt-1 text-[11px] text-rose-600">{c.ultimo_error}</p>
                   )}
                 </div>
 
                 <span
                   className={`rounded-lg px-2 py-0.5 text-[10px] font-semibold ${
                     c.habilita_la_fuente
-                      ? "bg-emerald-500/15 text-emerald-400"
-                      : "bg-amber-500/15 text-amber-400"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-700"
                   }`}
                 >
                   {c.habilita_la_fuente ? "en uso" : "sin datos"}
                 </span>
 
-                <label className="cursor-pointer text-[11px] text-cyan-400 hover:text-cyan-300">
+                <label className="cursor-pointer text-[11px] text-violet-600 hover:text-violet-700">
                   {subiendo === c.id ? "Subiendo…" : (
                     <span className="inline-flex items-center gap-1">
                       <Upload size={12} /> Subir planilla
@@ -527,7 +527,7 @@ function Datos({ companyId, onError }: Props) {
                       cargar();
                     } catch (e) { onError(motivoDe(e)); }
                   }}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-300"
+                  className="text-[11px] text-zinc-500 hover:text-zinc-800"
                 >
                   {c.activo ? "Apagar" : "Encender"}
                 </button>
@@ -538,7 +538,7 @@ function Datos({ companyId, onError }: Props) {
                     try { await cfoApi.borrarConector(companyId, c.id); cargar(); }
                     catch (e) { onError(motivoDe(e)); }
                   }}
-                  className="text-zinc-600 hover:text-rose-400"
+                  className="text-zinc-500 hover:text-rose-600"
                 >
                   <Trash2 size={13} />
                 </button>
@@ -568,8 +568,8 @@ function Datos({ companyId, onError }: Props) {
             />
             <p className="text-[11px] text-zinc-500">
               Por ahora solo planilla (CSV). Las columnas son:{" "}
-              <code className="text-zinc-400">fecha, monto, categoria, referencia</code>.
-              Si una fila no se entiende <strong className="text-zinc-300">no se
+              <code className="text-zinc-600">fecha, monto, categoria, referencia</code>.
+              Si una fila no se entiende <strong className="text-zinc-700">no se
               carga ninguna</strong> y te decimos cuál: cargar 98 de 100 da un
               total que se ve bien y cierra mal.
             </p>
@@ -621,7 +621,7 @@ function Informes({ companyId, onError }: Props) {
     <div className={`${card} p-5`}>
       <div className="mb-4 flex items-start justify-between gap-4">
         <p className="max-w-2xl text-xs text-zinc-500">
-          El informe queda <strong className="text-zinc-300">congelado</strong>:
+          El informe queda <strong className="text-zinc-700">congelado</strong>:
           si lo reenviás a tu contador tres días después, los dos ven el mismo
           número. El enlace vence, se puede revocar y se muestra una sola vez.
         </p>
@@ -631,10 +631,10 @@ function Informes({ companyId, onError }: Props) {
       </div>
 
       {filas.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-600">Todavía no emitiste ninguno.</p>
+        <p className="py-8 text-center text-sm text-zinc-500">Todavía no emitiste ninguno.</p>
       ) : (
         <table className="w-full text-sm">
-          <thead className="text-left text-[10px] uppercase tracking-wider text-zinc-600">
+          <thead className="text-left text-[10px] uppercase tracking-wider text-zinc-500">
             <tr>
               <th className="pb-2">Informe</th>
               <th className="pb-2">Período</th>
@@ -645,11 +645,11 @@ function Informes({ companyId, onError }: Props) {
           </thead>
           <tbody>
             {filas.map((f) => (
-              <tr key={f.id} className="border-t border-white/5">
-                <td className="py-2.5 text-zinc-300">{f.titulo || `Informe ${f.id}`}</td>
+              <tr key={f.id} className="border-t border-zinc-200">
+                <td className="py-2.5 text-zinc-700">{f.titulo || `Informe ${f.id}`}</td>
                 <td className="py-2.5 text-[11px] text-zinc-500">{f.desde} al {f.hasta}</td>
                 <td className="py-2.5">
-                  <span className={f.enlaces_vigentes ? "text-emerald-400" : "text-zinc-600"}>
+                  <span className={f.enlaces_vigentes ? "text-emerald-700" : "text-zinc-500"}>
                     {f.enlaces_vigentes}
                   </span>
                 </td>
@@ -664,7 +664,7 @@ function Informes({ companyId, onError }: Props) {
                         try { await cfoApi.revocarInforme(companyId, f.id); cargar(); }
                         catch (e) { onError(motivoDe(e)); }
                       }}
-                      className="text-[11px] text-zinc-500 hover:text-rose-400"
+                      className="text-[11px] text-zinc-500 hover:text-rose-600"
                     >
                       Revocar
                     </button>
@@ -693,18 +693,18 @@ function Informes({ companyId, onError }: Props) {
             </div>
 
             <div>
-              <p className="mb-2 text-[10px] uppercase tracking-wider text-zinc-600">
+              <p className="mb-2 text-[10px] uppercase tracking-wider text-zinc-500">
                 Qué incluir
               </p>
               {metricas.length === 0 ? (
-                <p className="text-xs text-amber-400">
+                <p className="text-xs text-amber-700">
                   No hay métricas aprobadas todavía. Aprobá alguna en la solapa
                   Métricas.
                 </p>
               ) : (
                 <div className="space-y-1.5">
                   {metricas.map((m) => (
-                    <label key={m.clave} className="flex items-center gap-2 text-xs text-zinc-300">
+                    <label key={m.clave} className="flex items-center gap-2 text-xs text-zinc-700">
                       <input
                         type="checkbox"
                         checked={form.metricas.includes(m.clave)}
@@ -724,7 +724,7 @@ function Informes({ companyId, onError }: Props) {
               )}
             </div>
 
-            <label className="flex items-center gap-2 text-xs text-zinc-300">
+            <label className="flex items-center gap-2 text-xs text-zinc-700">
               <input
                 type="checkbox"
                 checked={form.un_solo_uso}
@@ -759,7 +759,7 @@ function Informes({ companyId, onError }: Props) {
       {recien && (
         <Modal title="El enlace del informe" onClose={() => setRecien(null)}>
           <div className="space-y-3">
-            <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <p className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
               {recien.aviso} Copialo ahora: no se puede volver a ver, hay que
               emitir uno nuevo.
             </p>
@@ -811,7 +811,7 @@ function Memoria({ companyId, onError }: Props) {
               try { await cfoApi.borrarTodaLaMemoria(companyId); cargar(); }
               catch (e) { onError(motivoDe(e)); }
             }}
-            className="shrink-0 rounded-xl border border-white/10 px-3 py-2 text-xs font-semibold text-zinc-400 hover:border-rose-500/40 hover:text-rose-400"
+            className="shrink-0 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-600 hover:border-rose-400 hover:text-rose-600"
           >
             Borrar todo
           </button>
@@ -819,7 +819,7 @@ function Memoria({ companyId, onError }: Props) {
       </div>
 
       {filas.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-600">
+        <p className="py-8 text-center text-sm text-zinc-500">
           Todavía no recuerda nada. Se va llenando solo cuando le contás cosas
           de tu negocio por WhatsApp.
         </p>
@@ -828,11 +828,11 @@ function Memoria({ companyId, onError }: Props) {
           {filas.map((m) => (
             <div
               key={m.id}
-              className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3"
+              className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3"
             >
               <div className="flex-1">
-                <p className="text-sm text-zinc-200">{m.valor}</p>
-                <p className="mt-1 text-[11px] text-zinc-600">
+                <p className="text-sm text-zinc-800">{m.valor}</p>
+                <p className="mt-1 text-[11px] text-zinc-500">
                   {m.clave} · {m.tipo} · lo cargó {m.fuente === "panel" ? "el panel" : "una persona por chat"}
                   {m.phone && ` · solo para ${m.phone}`}
                   {m.vence && ` · vence ${fecha(m.vence)}`}
@@ -843,7 +843,7 @@ function Memoria({ companyId, onError }: Props) {
                   try { await cfoApi.borrarMemoria(companyId, m.id); cargar(); }
                   catch (e) { onError(motivoDe(e)); }
                 }}
-                className="text-zinc-600 hover:text-rose-400"
+                className="text-zinc-500 hover:text-rose-600"
               >
                 <Trash2 size={13} />
               </button>

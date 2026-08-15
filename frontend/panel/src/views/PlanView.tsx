@@ -34,9 +34,9 @@ function motivoDe(e: unknown): string {
 function Barra({ usados, tope }: { usados: number; tope: number }) {
   const pct = tope > 0 ? Math.min(100, Math.round((usados / tope) * 100)) : 0;
   const color =
-    pct >= 100 ? "bg-rose-500" : pct >= 80 ? "bg-amber-500" : "bg-cyan-500";
+    pct >= 100 ? "bg-rose-500" : pct >= 80 ? "bg-amber-500" : "bg-violet-600";
   return (
-    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
       <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
     </div>
   );
@@ -47,9 +47,9 @@ function Medidor({
 }: { titulo: string; usados: number; tope: number; nota: string }) {
   const quedan = Math.max(0, tope - usados);
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <p className="text-[10px] uppercase tracking-wider text-zinc-600">{titulo}</p>
-      <p className="mt-1 text-2xl font-extrabold tracking-tight text-white">
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+      <p className="text-[10px] uppercase tracking-wider text-zinc-500">{titulo}</p>
+      <p className="mt-1 text-2xl font-extrabold tracking-tight text-zinc-900">
         {usados.toLocaleString("es-PY")}
         <span className="ml-1 text-sm font-medium text-zinc-500">
           / {tope.toLocaleString("es-PY")}
@@ -58,7 +58,7 @@ function Medidor({
       <Barra usados={usados} tope={tope} />
       <p className="mt-2 text-[11px] text-zinc-500">
         {quedan === 0 ? (
-          <span className="text-rose-400">No queda nada este mes.</span>
+          <span className="text-rose-600">No queda nada este mes.</span>
         ) : (
           <>Quedan {quedan.toLocaleString("es-PY")}. {nota}</>
         )}
@@ -83,7 +83,7 @@ export function PlanView({ companyId }: { companyId: number }) {
 
   if (!consumo) {
     return (
-      <p className="py-10 text-center text-sm text-zinc-600">
+      <p className="py-10 text-center text-sm text-zinc-500">
         {error || "Cargando…"}
       </p>
     );
@@ -98,14 +98,14 @@ export function PlanView({ companyId }: { companyId: number }) {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold text-white">Tu plan</h1>
+        <h1 className="text-xl font-bold text-zinc-900">Tu plan</h1>
         <p className="mt-1 text-xs text-zinc-500">
           Lo que llevás usado desde el {desde}. Se reinicia el 1° de cada mes.
         </p>
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+        <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           {error}
         </div>
@@ -114,10 +114,10 @@ export function PlanView({ companyId }: { companyId: number }) {
       <div className={`${card} p-5`}>
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-zinc-600">Plan actual</p>
-            <h2 className="text-lg font-bold text-white">{plan.nombre}</h2>
+            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Plan actual</p>
+            <h2 className="text-lg font-bold text-zinc-900">{plan.nombre}</h2>
           </div>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-zinc-600">
             {plan.precio_gs > 0 ? `${formatGs(plan.precio_gs)} / mes` : "Sin costo"}
           </p>
         </div>
@@ -141,7 +141,7 @@ export function PlanView({ companyId }: { companyId: number }) {
       <div className={`${card} p-5`}>
         <div className="mb-3 flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-sm font-semibold text-white">Consumo de inteligencia artificial</h3>
+            <h3 className="text-sm font-semibold text-zinc-900">Consumo de inteligencia artificial</h3>
             <p className="mt-1 max-w-xl text-xs text-zinc-500">
               Lo que costó atender tus conversaciones este mes.{" "}
               {consumo.clave_en_uso === "plataforma"
@@ -150,22 +150,22 @@ export function PlanView({ companyId }: { companyId: number }) {
             </p>
           </div>
           <p className="shrink-0 text-right">
-            <span className="block text-lg font-extrabold text-white">
+            <span className="block text-lg font-extrabold text-zinc-900">
               {formatGs(ia.costo_gs)}
             </span>
-            <span className="text-[11px] text-zinc-600">
+            <span className="text-[11px] text-zinc-500">
               {ia.tokens.toLocaleString("es-PY")} tokens
             </span>
           </p>
         </div>
 
         {ia.por_modelo.length === 0 ? (
-          <p className="py-4 text-center text-xs text-zinc-600">
+          <p className="py-4 text-center text-xs text-zinc-500">
             Todavía no hubo conversaciones este mes.
           </p>
         ) : (
           <table className="w-full text-sm">
-            <thead className="text-left text-[10px] uppercase tracking-wider text-zinc-600">
+            <thead className="text-left text-[10px] uppercase tracking-wider text-zinc-500">
               <tr>
                 <th className="pb-2">Modelo</th>
                 <th className="pb-2">Turnos</th>
@@ -175,15 +175,15 @@ export function PlanView({ companyId }: { companyId: number }) {
             </thead>
             <tbody>
               {ia.por_modelo.map((m) => (
-                <tr key={m.modelo} className="border-t border-white/5">
-                  <td className="py-2 font-mono text-[11px] text-zinc-300">{m.modelo}</td>
-                  <td className="py-2 text-zinc-400">{m.turnos}</td>
+                <tr key={m.modelo} className="border-t border-zinc-200">
+                  <td className="py-2 font-mono text-[11px] text-zinc-700">{m.modelo}</td>
+                  <td className="py-2 text-zinc-600">{m.turnos}</td>
                   <td className="py-2 text-right text-[11px] text-zinc-500">
                     {(m.tokens_entrada + m.tokens_salida).toLocaleString("es-PY")}
                   </td>
-                  <td className="py-2 text-right text-zinc-300">
+                  <td className="py-2 text-right text-zinc-700">
                     {m.gratuito ? (
-                      <span className="text-[11px] text-zinc-600">sin cargo</span>
+                      <span className="text-[11px] text-zinc-500">sin cargo</span>
                     ) : (
                       formatGs(m.costo_gs)
                     )}
@@ -198,7 +198,7 @@ export function PlanView({ companyId }: { companyId: number }) {
       <div className={`${card} p-5`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-xl">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
               <KeyRound size={14} className="text-zinc-500" />
               Con qué clave se te atiende
             </h3>
@@ -217,7 +217,7 @@ export function PlanView({ companyId }: { companyId: number }) {
               )}
             </p>
             {aviso && (
-              <p className="mt-2 flex items-start gap-1.5 text-[11px] text-emerald-300">
+              <p className="mt-2 flex items-start gap-1.5 text-[11px] text-emerald-700">
                 <Check size={12} className="mt-0.5 shrink-0" /> {aviso}
               </p>
             )}
@@ -230,7 +230,7 @@ export function PlanView({ companyId }: { companyId: number }) {
                   setAviso(r.aviso || "Pedido registrado.");
                 } catch (e) { setError(motivoDe(e)); }
               }}
-              className="shrink-0 rounded-xl border border-white/10 px-3 py-2 text-xs font-semibold text-zinc-300 hover:border-cyan-500/40 hover:text-cyan-300"
+              className="shrink-0 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 hover:border-violet-400 hover:text-violet-700"
             >
               Quiero usar mi propia clave
             </button>
@@ -240,7 +240,7 @@ export function PlanView({ companyId }: { companyId: number }) {
 
       {catalogo.length > 0 && (
         <div className={`${card} p-5`}>
-          <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-white">
+          <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-zinc-900">
             <TrendingUp size={14} className="text-zinc-500" /> Los planes
           </h3>
           <p className="mb-4 text-xs text-zinc-500">
@@ -255,19 +255,19 @@ export function PlanView({ companyId }: { companyId: number }) {
                   key={p.clave}
                   className={`rounded-xl border p-4 ${
                     actual
-                      ? "border-cyan-500/40 bg-cyan-500/[0.06]"
-                      : "border-white/10 bg-white/[0.02]"
+                      ? "border-violet-400 bg-violet-600/[0.06]"
+                      : "border-zinc-200 bg-zinc-50"
                   }`}
                 >
                   <div className="flex items-baseline justify-between">
-                    <h4 className="text-sm font-bold text-white">{p.nombre}</h4>
+                    <h4 className="text-sm font-bold text-zinc-900">{p.nombre}</h4>
                     {actual && (
-                      <span className="rounded-lg bg-cyan-500/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-300">
+                      <span className="rounded-lg bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-600">
                         el tuyo
                       </span>
                     )}
                   </div>
-                  <p className="mt-1 text-base font-extrabold text-white">
+                  <p className="mt-1 text-base font-extrabold text-zinc-900">
                     {p.precio_gs > 0 ? formatGs(p.precio_gs) : "Sin costo"}
                     {p.precio_gs > 0 && (
                       <span className="text-[11px] font-medium text-zinc-500"> /mes</span>
@@ -276,13 +276,13 @@ export function PlanView({ companyId }: { companyId: number }) {
                   <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
                     {p.descripcion}
                   </p>
-                  <ul className="mt-3 space-y-1 text-[11px] text-zinc-400">
+                  <ul className="mt-3 space-y-1 text-[11px] text-zinc-600">
                     <li>{p.mensajes_por_mes.toLocaleString("es-PY")} mensajes/mes</li>
                     <li>{p.informes_por_mes.toLocaleString("es-PY")} informes/mes</li>
                     <li>{p.identidades_cfo} números del CFO</li>
                     <li>{p.conectores} conectores de datos</li>
                     {p.clave_propia && (
-                      <li className="text-amber-400">Con tu propia clave de OpenAI</li>
+                      <li className="text-amber-700">Con tu propia clave de OpenAI</li>
                     )}
                   </ul>
                 </div>

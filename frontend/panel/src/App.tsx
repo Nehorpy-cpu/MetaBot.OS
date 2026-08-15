@@ -4,6 +4,7 @@ import {
   Gauge, Lock, MessageSquare, Pill, Plus, Receipt, Sliders, Video, Wallet, Zap,
 } from "lucide-react";
 import { api, auth, setBlockedHandler, setUnauthorizedHandler, type Company, type Me } from "./api";
+import { COLOR_MODULO } from "./ui";
 import { btnPrimary } from "./ui";
 import { NewCompanyModal } from "./views/NewCompanyModal";
 import { DashboardView } from "./views/DashboardView";
@@ -62,7 +63,7 @@ export default function App() {
   }, [authed]);
 
   if (authed === null) {
-    return <div className="min-h-screen bg-[#040609] flex items-center justify-center text-zinc-500 text-sm">Cargando…</div>;
+    return <div className="min-h-screen bg-[#f6f4ff] flex items-center justify-center text-zinc-500 text-sm">Cargando…</div>;
   }
   if (!authed) return <LoginScreen onAuthed={() => setAuthed(true)} />;
 
@@ -76,12 +77,30 @@ export default function App() {
     return <PortalView companyId={activeId} onSalir={() => setAuthed(false)} />;
   }
 
-  const navBtn = (id: typeof view, label: string, Icon: typeof LayoutDashboard) => (
-    <button onClick={() => setView(id)}
-      className={`w-full flex items-center px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${view === id ? "text-white bg-white/5 border border-white/10" : "text-zinc-400 hover:bg-white/[0.02] hover:text-zinc-200"}`}>
-      <Icon size={16} className={`mr-3 ${view === id ? "text-cyan-400" : "text-zinc-500"}`} /> {label}
-    </button>
-  );
+  /**
+   * Un ítem del menú. Cada módulo tiene su color, y ese color se repite en su
+   * pantalla: deja de ser decoración y pasa a ser una pista de dónde estás
+   * parado. El ícono va en una pastilla del color, no suelto, para que el
+   * menú se lea de un vistazo y no como una lista de texto gris.
+   */
+  const navBtn = (id: typeof view, label: string, Icon: typeof LayoutDashboard) => {
+    const c = COLOR_MODULO[id] ?? COLOR_MODULO.dashboard;
+    const activo = view === id;
+    return (
+      <button onClick={() => setView(id)}
+        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] font-semibold transition-all ${
+          activo
+            ? "bg-violet-50 text-violet-900 shadow-sm"
+            : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+        }`}>
+        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${c.pastilla} ${c.texto} transition-transform ${activo ? "scale-105" : ""}`}>
+          <Icon size={15} />
+        </span>
+        <span className="truncate text-left">{label}</span>
+        {activo && <span className={`ml-auto h-5 w-1 shrink-0 rounded-full ${c.barra}`} />}
+      </button>
+    );
+  };
 
   /**
    * Un módulo del panel: el botón normal si está contratado, y si no un
@@ -100,32 +119,35 @@ export default function App() {
       <button
         onClick={() => { setBloqueResaltado(bloque); setView("blocks"); }}
         title="Esta función es de otro bloque. Tocá para ver qué incluye."
-        className="w-full flex items-center px-3 py-2.5 rounded-xl text-xs font-semibold text-zinc-600 hover:text-zinc-400 hover:bg-white/[0.02] transition-all">
-        <Icon size={16} className="mr-3 text-zinc-700" /> {label}
-        <Lock size={11} className="ml-auto text-zinc-700" />
+        className="group w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] font-semibold text-zinc-400 hover:bg-amber-50 hover:text-amber-700 transition-all">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-zinc-100 text-zinc-400 group-hover:bg-amber-100 group-hover:text-amber-600">
+          <Icon size={15} />
+        </span>
+        <span className="truncate text-left">{label}</span>
+        <Lock size={11} className="ml-auto shrink-0 text-zinc-300 group-hover:text-amber-500" />
       </button>
     );
   };
 
   return (
-    <div className="min-h-screen bg-[#040609] font-sans text-zinc-300 flex">
-      <aside className="w-72 bg-[#06080d] border-r border-white/5 flex-col z-20 hidden md:flex shrink-0">
-        <div className="p-6 border-b border-white/5">
+    <div className="min-h-screen bg-[#f6f4ff] font-sans text-zinc-700 flex">
+      <aside className="w-72 bg-white border-r border-zinc-200 flex-col z-20 hidden md:flex shrink-0">
+        <div className="p-6 border-b border-zinc-200">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-500 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-violet-600 to-pink-500 flex items-center justify-center">
               <Zap size={18} className="text-white fill-current" />
             </div>
             <div>
-              <span className="font-extrabold text-base tracking-tight text-white">MetaBot<span className="text-cyan-400">.OS</span></span>
+              <span className="font-extrabold text-base tracking-tight text-zinc-900">MetaBot<span className="text-violet-600">.OS</span></span>
               <p className="text-[9px] text-zinc-500 uppercase tracking-widest font-mono">Py • Enterprise & Medical</p>
             </div>
           </div>
           <div className="space-y-2">
             <div className="relative">
               <select value={activeId ?? ""} onChange={(e) => setActiveId(Number(e.target.value))}
-                className="w-full bg-white/[0.03] border border-white/10 rounded-xl py-2.5 px-3 text-xs text-zinc-200 font-semibold focus:outline-none focus:border-cyan-500 appearance-none cursor-pointer">
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-2.5 px-3 text-xs text-zinc-800 font-semibold focus:outline-none focus:border-violet-500 appearance-none cursor-pointer">
                 {companies.map((c) => (
-                  <option key={c.id} value={c.id} className="bg-[#06080d]">
+                  <option key={c.id} value={c.id} className="bg-white">
                     {c.name} ({c.vertical === "medical" ? "Médico" : c.industry || c.vertical})
                   </option>
                 ))}
@@ -133,7 +155,7 @@ export default function App() {
               <ChevronDown size={14} className="absolute right-3 top-3.5 text-zinc-500 pointer-events-none" />
             </div>
             <button onClick={() => setShowNewCompany(true)}
-              className="w-full py-2 bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 border border-cyan-500/30 hover:border-cyan-500 text-cyan-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
+              className="w-full py-2 bg-gradient-to-r from-violet-500/10 to-pink-500/10 border border-violet-300 hover:border-violet-500 text-violet-600 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
               <Plus size={14} /> Agregar empresa
             </button>
           </div>
@@ -152,27 +174,27 @@ export default function App() {
           {navBtn("intelligence", "Inteligencia (Informes)", Activity)}
           {navBtn("studio", "Estudio Visual", Video)}
           {navBtn("agents", "Enjambre de Agentes", Bot)}
-          <div className="pt-3 mt-2 border-t border-white/5">
+          <div className="pt-3 mt-2 border-t border-zinc-200">
             {navBtn("blocks", "Bloques del sistema", Boxes)}
           </div>
         </nav>
-        <div className="p-4 border-t border-white/5">
+        <div className="p-4 border-t border-zinc-200">
           <button onClick={() => { auth.logout().finally(() => setAuthed(false)); }}
-            className="w-full text-xs text-zinc-500 hover:text-zinc-300 py-2">Cerrar sesión</button>
+            className="w-full text-xs text-zinc-500 hover:text-zinc-800 py-2">Cerrar sesión</button>
         </div>
       </aside>
 
       <main className="flex-1 h-screen overflow-y-auto">
         <div className="p-8 md:p-12 max-w-6xl mx-auto w-full pb-24">
           {loadError && (
-            <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-4 flex items-center gap-2">
+            <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-600 text-sm rounded-xl p-4 flex items-center gap-2">
               <Building2 size={16} /> {loadError}
             </div>
           )}
           {!active && !loadError && (
             <div className="text-center py-24 space-y-4">
-              <Building2 size={48} className="mx-auto text-zinc-600" />
-              <h2 className="text-xl font-bold text-white">Sin empresas todavía</h2>
+              <Building2 size={48} className="mx-auto text-zinc-500" />
+              <h2 className="text-xl font-bold text-zinc-900">Sin empresas todavía</h2>
               <button onClick={() => setShowNewCompany(true)} className={`${btnPrimary} mx-auto`}>
                 <Plus size={15} /> Crear la primera empresa
               </button>

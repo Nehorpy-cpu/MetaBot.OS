@@ -104,8 +104,8 @@ export function ArancelesModal({ companyId, insurer, onClose }: {
   return (
     <Modal title={`Aranceles · ${insurer.name} ${insurer.plan}`.trim()} onClose={onClose}>
       <div className="space-y-4">
-        <p className="text-xs text-zinc-400 leading-relaxed">
-          Cuánto paga <strong className="text-zinc-200">{insurer.name}</strong> por cada
+        <p className="text-xs text-zinc-600 leading-relaxed">
+          Cuánto paga <strong className="text-zinc-800">{insurer.name}</strong> por cada
           práctica, según su nomenclador. Lo que cargues acá se usa tal cual: el bot le
           dice al paciente cuánto le sale, y la planilla del profesional lo toma para
           liquidar. Vacío = se usa el {insurer.coverage_pct}% general del convenio.
@@ -122,10 +122,10 @@ export function ArancelesModal({ companyId, insurer, onClose }: {
           </span>
         </div>
 
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-red-600 text-xs">{error}</p>}
         {cargando && <p className="text-sm text-zinc-500 py-6 text-center">Cargando…</p>}
         {!cargando && filas.length === 0 && (
-          <p className="text-xs text-amber-300 flex items-start gap-2">
+          <p className="text-xs text-amber-700 flex items-start gap-2">
             <AlertTriangle size={13} className="shrink-0 mt-0.5" />
             Esta empresa no tiene prácticas cargadas todavía. Cargalas en Servicios &amp;
             Estudios y después volvé acá a ponerles el arancel.
@@ -135,11 +135,11 @@ export function ArancelesModal({ companyId, insurer, onClose }: {
         <div className="space-y-1.5 max-h-[50vh] overflow-y-auto pr-1">
           {visibles.map((f) => (
             <div key={f.service_id}
-              className="flex flex-wrap items-center gap-2 bg-white/[0.02] border border-white/5
+              className="flex flex-wrap items-center gap-2 bg-zinc-50 border border-zinc-200
                          rounded-lg px-3 py-2">
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-zinc-200 truncate">{f.servicio}</p>
-                <p className="text-[10px] text-zinc-600">
+                <p className="text-sm text-zinc-800 truncate">{f.servicio}</p>
+                <p className="text-[10px] text-zinc-500">
                   lista ₲ {gs(f.precio_lista_gs)}
                   {f.arancel_gs > 0 && f.precio_lista_gs > f.arancel_gs && (
                     <> · al paciente ₲ {gs(f.precio_lista_gs - f.arancel_gs)}</>
@@ -161,13 +161,13 @@ export function ArancelesModal({ companyId, insurer, onClose }: {
               />
               <span className="w-5 shrink-0 text-center">
                 {guardando === f.service_id && <Loader2 size={13} className="animate-spin text-zinc-500" />}
-                {guardado === f.service_id && <Check size={14} className="text-emerald-400" />}
+                {guardado === f.service_id && <Check size={14} className="text-emerald-700" />}
               </span>
             </div>
           ))}
         </div>
 
-        <p className="text-[10px] text-zinc-600">
+        <p className="text-[10px] text-zinc-500">
           Se guarda al salir de cada casilla. &quot;No cubre&quot; significa que el paciente lo
           abona particular: esa atención va a la planilla de particulares, no a la de
           {" "}{insurer.name}.

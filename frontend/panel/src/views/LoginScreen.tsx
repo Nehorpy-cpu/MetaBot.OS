@@ -24,22 +24,22 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#040609] flex items-center justify-center p-4 font-sans">
+    <div className="min-h-screen bg-[#f6f4ff] flex items-center justify-center p-4 font-sans">
       <form onSubmit={submit} className={`${card} p-8 w-full max-w-sm space-y-5`}>
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-500 flex items-center justify-center">
-            <Zap size={18} className="text-white fill-current" />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-violet-600 to-pink-500 flex items-center justify-center">
+            <Zap size={18} className="text-zinc-900 fill-current" />
           </div>
-          <span className="font-extrabold text-lg text-white">MetaBot<span className="text-cyan-400">.OS</span></span>
+          <span className="font-extrabold text-lg text-zinc-900">MetaBot<span className="text-violet-600">.OS</span></span>
         </div>
-        <p className="text-sm text-zinc-400">Ingresá con tu correo y contraseña.</p>
+        <p className="text-sm text-zinc-600">Ingresá con tu correo y contraseña.</p>
         <div className="space-y-3">
           <input type="email" autoComplete="username" className={input} placeholder="tu@correo.com"
             value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           <input type="password" autoComplete="current-password" className={input} placeholder="Contraseña"
             value={password} onChange={(e) => setPassword(e.target.value)} required />
         </div>
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-red-600 text-xs">{error}</p>}
         <button type="submit" disabled={checking || !email.trim() || !password}
           className={`${btnPrimary} w-full justify-center`}>
           {checking ? "Verificando…" : "Entrar"}

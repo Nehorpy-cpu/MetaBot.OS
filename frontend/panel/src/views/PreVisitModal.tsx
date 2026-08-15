@@ -24,27 +24,27 @@ function manana() {
 
 function Ficha({ f }: { f: FichaPaciente }) {
   return (
-    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1.5">
+    <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 space-y-1.5">
       <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="font-mono text-cyan-400 text-sm font-bold">{f.hora}</span>
-        <span className="text-sm text-zinc-100 font-medium">{f.paciente}</span>
+        <span className="font-mono text-violet-600 text-sm font-bold">{f.hora}</span>
+        <span className="text-sm text-zinc-900 font-medium">{f.paciente}</span>
         {f.primera_vez && (
-          <span className="text-[10px] bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+          <span className="text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-500/30 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
             <Sparkles size={10} /> Primera vez
           </span>
         )}
         {f.sin_confirmar && (
-          <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/25 px-2 py-0.5 rounded-full">
+          <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-500/25 px-2 py-0.5 rounded-full">
             sin confirmar
           </span>
         )}
       </div>
 
       {(f.servicio || f.motivo) && (
-        <p className="text-xs text-zinc-400">
+        <p className="text-xs text-zinc-600">
           {[f.servicio, f.motivo].filter(Boolean).join(" · ")}
           {f.duracion_min !== 30 && (
-            <span className="text-zinc-600"> · {f.duracion_min} min</span>
+            <span className="text-zinc-500"> · {f.duracion_min} min</span>
           )}
         </p>
       )}
@@ -57,7 +57,7 @@ function Ficha({ f }: { f: FichaPaciente }) {
         </p>
       )}
       {f.faltas_previas > 0 && (
-        <p className="text-xs text-amber-400 flex items-center gap-1">
+        <p className="text-xs text-amber-700 flex items-center gap-1">
           <AlertTriangle size={11} /> Faltó {f.faltas_previas}{" "}
           {f.faltas_previas === 1 ? "vez" : "veces"} sin avisar
         </p>
@@ -73,22 +73,22 @@ function Ficha({ f }: { f: FichaPaciente }) {
 
       {f.ultima_receta && (
         <div className="bg-black/25 rounded-lg px-2.5 py-2 mt-1">
-          <p className="text-[11px] text-zinc-400 flex items-center gap-1.5">
-            <Pill size={11} className="text-emerald-400" />
+          <p className="text-[11px] text-zinc-600 flex items-center gap-1.5">
+            <Pill size={11} className="text-emerald-700" />
             Receta del {f.ultima_receta.fecha}
             {f.ultima_receta.por && <span className="text-zinc-500">· {f.ultima_receta.por}</span>}
           </p>
           {f.ultima_receta.diagnostico && (
-            <p className="text-xs text-zinc-300 mt-1">Dx: {f.ultima_receta.diagnostico}</p>
+            <p className="text-xs text-zinc-700 mt-1">Dx: {f.ultima_receta.diagnostico}</p>
           )}
           {f.ultima_receta.medicacion.map((m, i) => (
-            <p key={i} className="text-[11px] text-zinc-400 ml-2">• {m}</p>
+            <p key={i} className="text-[11px] text-zinc-600 ml-2">• {m}</p>
           ))}
         </div>
       )}
 
       {f.preparacion_requerida && (
-        <p className="text-[11px] text-amber-300 flex items-start gap-1.5">
+        <p className="text-[11px] text-amber-700 flex items-start gap-1.5">
           <AlertTriangle size={11} className="shrink-0 mt-0.5" /> {f.preparacion_requerida}
         </p>
       )}
@@ -151,8 +151,8 @@ export function PreVisitModal({ companyId, doctors, onClose }: {
   return (
     <Modal title="Resumen para el profesional" onClose={onClose}>
       <div className="space-y-4">
-        <p className="text-xs text-zinc-400 leading-relaxed">
-          Lo que el profesional necesita saber <strong className="text-zinc-200">antes</strong> de
+        <p className="text-xs text-zinc-600 leading-relaxed">
+          Lo que el profesional necesita saber <strong className="text-zinc-800">antes</strong> de
           que el paciente entre: si ya vino, qué se le recetó la vez pasada y qué se le va a hacer
           hoy. Se manda solo a las 20:00 de la noche anterior; acá podés verlo o adelantarlo.
         </p>
@@ -161,7 +161,7 @@ export function PreVisitModal({ companyId, doctors, onClose }: {
           <select className={input} value={doctorId}
             onChange={(e) => setDoctorId(Number(e.target.value))}>
             {doctors.map((d) => (
-              <option key={d.id} value={d.id} className="bg-[#090b10]">{d.name}</option>
+              <option key={d.id} value={d.id} className="bg-white">{d.name}</option>
             ))}
           </select>
           <input type="date" className={input} value={fecha}
@@ -169,22 +169,22 @@ export function PreVisitModal({ companyId, doctors, onClose }: {
         </div>
 
         {cargando && <p className="text-sm text-zinc-500 py-6 text-center">Cargando…</p>}
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-red-600 text-xs">{error}</p>}
 
         {datos && !cargando && (
           <>
-            <div className="flex flex-wrap gap-3 text-xs text-zinc-400">
-              <span><strong className="text-white">{datos.total}</strong> paciente{datos.total !== 1 ? "s" : ""}</span>
+            <div className="flex flex-wrap gap-3 text-xs text-zinc-600">
+              <span><strong className="text-zinc-900">{datos.total}</strong> paciente{datos.total !== 1 ? "s" : ""}</span>
               {datos.primera_vez > 0 && (
-                <span><strong className="text-indigo-300">{datos.primera_vez}</strong> por primera vez</span>
+                <span><strong className="text-indigo-700">{datos.primera_vez}</strong> por primera vez</span>
               )}
               {datos.sin_confirmar > 0 && (
-                <span><strong className="text-amber-400">{datos.sin_confirmar}</strong> sin confirmar</span>
+                <span><strong className="text-amber-700">{datos.sin_confirmar}</strong> sin confirmar</span>
               )}
             </div>
 
             {datos.total === 0 ? (
-              <p className="text-xs text-zinc-600 text-center py-6">
+              <p className="text-xs text-zinc-500 text-center py-6">
                 {datos.doctor} no tiene pacientes el {datos.dia_de_la_semana}.
               </p>
             ) : (
@@ -193,22 +193,22 @@ export function PreVisitModal({ companyId, doctors, onClose }: {
               </div>
             )}
 
-            {envio && <p className="text-xs text-cyan-300">{envio}</p>}
+            {envio && <p className="text-xs text-violet-600">{envio}</p>}
             {sinTelefono && datos.total > 0 && (
-              <p className="text-[11px] text-amber-400 flex items-start gap-1.5">
+              <p className="text-[11px] text-amber-700 flex items-start gap-1.5">
                 <AlertTriangle size={12} className="shrink-0 mt-0.5" />
                 {datos.doctor} no tiene teléfono cargado. Son datos clínicos: sin un número
                 verificado no se manda a ningún lado.
               </p>
             )}
 
-            <div className="flex justify-between items-center pt-3 border-t border-white/5">
+            <div className="flex justify-between items-center pt-3 border-t border-zinc-200">
               <button onClick={copiar} disabled={!datos.total}
-                className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5 disabled:opacity-40">
+                className="text-xs text-zinc-600 hover:text-zinc-900 flex items-center gap-1.5 disabled:opacity-40">
                 {copiado ? <><Check size={13} /> ¡Copiado!</> : <><Copy size={13} /> Copiar texto</>}
               </button>
               <div className="flex gap-3">
-                <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white">
+                <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-600 hover:text-zinc-900">
                   Cerrar
                 </button>
                 <button onClick={enviar} disabled={!datos.total || !!sinTelefono} className={btnPrimary}>

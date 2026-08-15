@@ -1,1 +1,84 @@
 @import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Tema claro. Los tokens viven acá y no repartidos por las vistas: cambiar
+   el color de marca tiene que ser una línea, no una cacería por 22 archivos.
+
+   Los colores por módulo también son tokens. Cada sección del panel tiene el
+   suyo y se repite en el menú, en el ícono y en la tarjeta: el color deja de
+   ser decoración y pasa a ser una pista de dónde estás parado.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --fondo: #f6f4ff;
+  --marca: #7c3aed;
+  --marca-2: #ec4899;
+
+  --mod-dashboard: #7c3aed;
+  --mod-agenda: #10b981;
+  --mod-clinical: #ec4899;
+  --mod-portal: #8b5cf6;
+  --mod-cfo: #f59e0b;
+  --mod-plan: #f97316;
+  --mod-services: #14b8a6;
+  --mod-chat: #3b82f6;
+  --mod-conex: #84cc16;
+  --mod-intel: #06b6d4;
+  --mod-studio: #d946ef;
+  --mod-agents: #ef4444;
+  --mod-blocks: #a855f7;
+}
+
+body {
+  background: var(--fondo);
+  /* Trama sutil: el fondo plano y blanco hace que las tarjetas blancas
+     desaparezcan. Con esta textura, cada tarjeta se despega sola. */
+  background-image:
+    radial-gradient(circle at 25% 15%, rgba(124, 58, 237, .06) 0, transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(236, 72, 153, .05) 0, transparent 45%);
+  background-attachment: fixed;
+}
+
+/* El post-it: esquina doblada abajo a la izquierda, como un papel despegado.
+   Va en CSS y no en Tailwind porque es una forma, no una utilidad. */
+.postit {
+  border-radius: 1rem 1rem 1rem 0;
+  position: relative;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.postit::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: -1px;
+  width: 1.5rem; height: 1.5rem;
+  background: rgba(0, 0, 0, .12);
+  clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
+.postit:hover {
+  transform: translateY(-3px) rotate(-.5deg);
+  box-shadow: 0 12px 28px rgba(60, 40, 120, .18);
+}
+
+/* Al arrastrar una nota. La levanta y la inclina: sin ese gesto, arrastrar
+   se siente como que la interfaz se trabó. */
+.postit.arrastrando {
+  transform: rotate(3deg) scale(1.04);
+  box-shadow: 0 20px 40px rgba(60, 40, 120, .28);
+  opacity: .92;
+  z-index: 20;
+}
+.postit.destino {
+  outline: 2.5px dashed var(--marca);
+  outline-offset: 3px;
+}
+
+/* Entrada escalonada de las tarjetas. Es corto a propósito: una animación
+   larga es simpática la primera vez y molesta la número cincuenta. */
+@keyframes aparecer {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.aparece { animation: aparecer .22s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aparece, .postit, .postit:hover { animation: none; transition: none; transform: none; }
+}

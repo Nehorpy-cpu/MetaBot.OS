@@ -37,10 +37,10 @@ function ultimoDiaDelMesPasado() {
 }
 
 const COLOR: Record<EstadoPlanilla, string> = {
-  borrador: "text-zinc-400 border-white/10",
-  firmada: "text-cyan-300 border-cyan-500/30",
-  entregada: "text-indigo-300 border-indigo-500/30",
-  cobrada: "text-emerald-300 border-emerald-500/30",
+  borrador: "text-zinc-600 border-zinc-200",
+  firmada: "text-violet-600 border-violet-300",
+  entregada: "text-indigo-700 border-indigo-500/30",
+  cobrada: "text-emerald-700 border-emerald-300",
 };
 
 function Estado({ e }: { e: EstadoPlanilla }) {
@@ -139,7 +139,7 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
   if (!p) {
     return (
       <div className="space-y-4">
-        <button onClick={onVolver} className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5">
+        <button onClick={onVolver} className="text-xs text-zinc-600 hover:text-zinc-900 flex items-center gap-1.5">
           <ArrowLeft size={14} /> Volver
         </button>
         <p className="text-sm text-zinc-500">{error || "Cargando…"}</p>
@@ -149,13 +149,13 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
 
   return (
     <div className="space-y-5">
-      <button onClick={onVolver} className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5">
+      <button onClick={onVolver} className="text-xs text-zinc-600 hover:text-zinc-900 flex items-center gap-1.5">
         <ArrowLeft size={14} /> Volver a mis planillas
       </button>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-3">
+          <h1 className="text-2xl font-extrabold text-zinc-900 tracking-tight flex items-center gap-3">
             {p.aseguradora} <Estado e={p.estado} />
           </h1>
           <p className="text-sm text-zinc-500">
@@ -163,19 +163,19 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
           </p>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-extrabold text-emerald-300">{gs(p.total_honorario_gs)}</p>
+          <p className="text-2xl font-extrabold text-emerald-700">{gs(p.total_honorario_gs)}</p>
           <p className="text-[11px] text-zinc-500">
             tu {p.honorario_pct}% de {gs(p.total_facturado_gs)} facturados
           </p>
         </div>
       </div>
 
-      {error && <p className="text-red-400 text-xs">{error}</p>}
+      {error && <p className="text-red-600 text-xs">{error}</p>}
 
-      <div className="border border-white/5 rounded-xl overflow-hidden">
+      <div className="border border-zinc-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-white/[0.03] text-zinc-400">
+            <thead className="bg-zinc-50 text-zinc-600">
               <tr>
                 <th className="text-left font-semibold px-3 py-2">Fecha</th>
                 <th className="text-left font-semibold px-3 py-2">Paciente</th>
@@ -187,20 +187,20 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
             </thead>
             <tbody>
               {p.items?.map((it, i) => (
-                <tr key={i} className="border-t border-white/5">
+                <tr key={i} className="border-t border-zinc-200">
                   <td className="px-3 py-2 font-mono text-zinc-500">{dia(it.fecha)}</td>
-                  <td className="px-3 py-2 text-zinc-200">{it.paciente}</td>
-                  <td className="px-3 py-2 text-zinc-400">
-                    {it.servicio || <span className="text-amber-400">sin prestación cargada</span>}
+                  <td className="px-3 py-2 text-zinc-800">{it.paciente}</td>
+                  <td className="px-3 py-2 text-zinc-600">
+                    {it.servicio || <span className="text-amber-700">sin prestación cargada</span>}
                     {it.ajustado_a_mano && (
-                      <span className="block text-[10px] text-amber-400">
+                      <span className="block text-[10px] text-amber-700">
                         ajustado a mano · calculado {gs(it.facturado_calculado_gs ?? 0)}
                         {it.ajuste_motivo && ` · ${it.ajuste_motivo}`}
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right text-zinc-300 font-mono">{gs(it.facturado_gs)}</td>
-                  <td className="px-3 py-2 text-right text-emerald-300 font-mono">{gs(it.honorario_gs)}</td>
+                  <td className="px-3 py-2 text-right text-zinc-700 font-mono">{gs(it.facturado_gs)}</td>
+                  <td className="px-3 py-2 text-right text-emerald-700 font-mono">{gs(it.honorario_gs)}</td>
                   <td className="px-2 py-2">
                     {p.estado === "borrador" && it.id && (
                       <button
@@ -210,7 +210,7 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
                           setMotivo(it.ajuste_motivo ?? "");
                         }}
                         title="Corregir el monto de esta atención"
-                        className="text-zinc-600 hover:text-cyan-300">
+                        className="text-zinc-500 hover:text-violet-700">
                         <Pencil size={12} />
                       </button>
                     )}
@@ -223,14 +223,14 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
       </div>
 
       {editando !== null && (
-        <div className="bg-cyan-500/[0.04] border border-cyan-500/30 rounded-xl p-4 space-y-3">
+        <div className="bg-violet-600/[0.04] border border-violet-300 rounded-xl p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
-            <p className="text-xs text-zinc-300">
+            <p className="text-xs text-zinc-700">
               Corregir lo que se factura por esta atención. Se guarda lo que el sistema
               había calculado y sale impreso en la planilla: un monto cambiado sin rastro
               es indistinguible de un error de cálculo.
             </p>
-            <button onClick={() => setEditando(null)} className="text-zinc-500 hover:text-white shrink-0">
+            <button onClick={() => setEditando(null)} className="text-zinc-500 hover:text-zinc-900 shrink-0">
               <X size={14} />
             </button>
           </div>
@@ -251,19 +251,19 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-200">
         <div className="flex gap-4">
           <button onClick={imprimir} disabled={!p.texto}
-            className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5 disabled:opacity-40">
+            className="text-xs text-zinc-600 hover:text-zinc-900 flex items-center gap-1.5 disabled:opacity-40">
             <Printer size={13} /> Imprimir para firmar
           </button>
           <button onClick={copiar} disabled={!p.texto}
-            className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5 disabled:opacity-40">
+            className="text-xs text-zinc-600 hover:text-zinc-900 flex items-center gap-1.5 disabled:opacity-40">
             {copiado ? <><Check size={13} /> ¡Copiado!</> : <><Copy size={13} /> Copiar</>}
           </button>
           {p.estado === "borrador" && (
             <button onClick={borrar} disabled={ocupado}
-              className="text-xs text-zinc-500 hover:text-red-300 flex items-center gap-1.5 disabled:opacity-40">
+              className="text-xs text-zinc-500 hover:text-red-600 flex items-center gap-1.5 disabled:opacity-40">
               <Trash2 size={13} /> Descartar borrador
             </button>
           )}
@@ -286,7 +286,7 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
             </p>
           )}
           {p.estado === "cobrada" && (
-            <p className="text-xs text-emerald-300 flex items-center gap-1.5">
+            <p className="text-xs text-emerald-700 flex items-center gap-1.5">
               <Wallet size={13} /> Cobrada el {p.cobrada_at ? dia(p.cobrada_at) : ""}
             </p>
           )}
@@ -351,8 +351,8 @@ export function HonorariosView({ companyId }: { companyId: number }) {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-white tracking-tight">Mis honorarios</h1>
-        <p className="text-sm text-zinc-400 mt-1">
+        <h1 className="text-2xl font-extrabold text-zinc-900 tracking-tight">Mis honorarios</h1>
+        <p className="text-sm text-zinc-600 mt-1">
           Tus atenciones del período, separadas por aseguradora: una planilla para cada una,
           lista para firmar y entregar.
         </p>
@@ -371,24 +371,24 @@ export function HonorariosView({ companyId }: { companyId: number }) {
         </label>
       </div>
 
-      {error && <p className="text-red-400 text-xs">{error}</p>}
+      {error && <p className="text-red-600 text-xs">{error}</p>}
 
       {prev && (
         <>
           {prev.atenciones === 0 ? (
-            <p className="text-sm text-zinc-600 py-6">
+            <p className="text-sm text-zinc-500 py-6">
               No hay atenciones sin liquidar en ese período.
               {prev.ya_liquidadas > 0 && ` (${prev.ya_liquidadas} ya están en una planilla.)`}
             </p>
           ) : (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-4 bg-white/[0.02] border border-white/5 rounded-xl p-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 bg-zinc-50 border border-zinc-200 rounded-xl p-4">
                 <div>
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-zinc-600">
                     {prev.atenciones} atenciones en {prev.grupos.length}{" "}
                     {prev.grupos.length === 1 ? "planilla" : "planillas"}
                   </p>
-                  <p className="text-2xl font-extrabold text-emerald-300 mt-0.5">
+                  <p className="text-2xl font-extrabold text-emerald-700 mt-0.5">
                     {gs(prev.total_honorario_gs)}
                   </p>
                   <p className="text-[11px] text-zinc-500">
@@ -404,7 +404,7 @@ export function HonorariosView({ companyId }: { companyId: number }) {
               {(prev.sin_marcar_como_atendido > 0 || prev.sin_arancel > 0) && (
                 <div className="bg-amber-500/[0.04] border border-amber-500/20 rounded-xl p-4 space-y-1.5">
                   {prev.sin_marcar_como_atendido > 0 && (
-                    <p className="text-xs text-amber-300 flex items-start gap-2">
+                    <p className="text-xs text-amber-700 flex items-start gap-2">
                       <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                       Hay <strong>{prev.sin_marcar_como_atendido}</strong> turno(s) del período
                       sin marcar como atendidos. No entran en la planilla: si el paciente vino,
@@ -412,7 +412,7 @@ export function HonorariosView({ companyId }: { companyId: number }) {
                     </p>
                   )}
                   {prev.sin_arancel > 0 && (
-                    <p className="text-xs text-amber-300 flex items-start gap-2">
+                    <p className="text-xs text-amber-700 flex items-start gap-2">
                       <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                       <strong>{prev.sin_arancel}</strong> atención(es) sin prestación cargada:
                       van en cero porque no hay precio del que sacar el honorario.
@@ -423,22 +423,22 @@ export function HonorariosView({ companyId }: { companyId: number }) {
 
               <div className="space-y-4">
                 {prev.grupos.map((g) => (
-                  <div key={g.aseguradora} className="border border-white/5 rounded-xl overflow-hidden">
-                    <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-white/[0.03]">
-                      <span className="text-sm font-bold text-white">{g.aseguradora}</span>
-                      <span className="text-xs text-zinc-400">
-                        {g.items.length} · <strong className="text-emerald-300">{gs(g.total_honorario_gs)}</strong>
+                  <div key={g.aseguradora} className="border border-zinc-200 rounded-xl overflow-hidden">
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-zinc-50">
+                      <span className="text-sm font-bold text-zinc-900">{g.aseguradora}</span>
+                      <span className="text-xs text-zinc-600">
+                        {g.items.length} · <strong className="text-emerald-700">{gs(g.total_honorario_gs)}</strong>
                       </span>
                     </div>
-                    <div className="divide-y divide-white/5">
+                    <div className="divide-y divide-zinc-200">
                       {g.items.map((it, i) => (
                         <div key={i} className="flex items-center justify-between gap-3 px-4 py-2 text-xs">
                           <span className="font-mono text-zinc-500 w-14 shrink-0">{dia(it.fecha)}</span>
-                          <span className="text-zinc-200 flex-1 truncate">{it.paciente}</span>
+                          <span className="text-zinc-800 flex-1 truncate">{it.paciente}</span>
                           <span className="text-zinc-500 flex-1 truncate hidden sm:block">
-                            {it.servicio || <span className="text-amber-400">sin prestación</span>}
+                            {it.servicio || <span className="text-amber-700">sin prestación</span>}
                           </span>
-                          <span className="font-mono text-emerald-300 shrink-0">{gs(it.honorario_gs)}</span>
+                          <span className="font-mono text-emerald-700 shrink-0">{gs(it.honorario_gs)}</span>
                         </div>
                       ))}
                     </div>
@@ -450,25 +450,25 @@ export function HonorariosView({ companyId }: { companyId: number }) {
         </>
       )}
 
-      <section className="pt-6 border-t border-white/5 space-y-2">
-        <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
+      <section className="pt-6 border-t border-zinc-200 space-y-2">
+        <h2 className="text-xs font-bold text-zinc-600 uppercase tracking-widest">
           Mis planillas ({planillas.length})
         </h2>
         {planillas.length === 0 && (
-          <p className="text-xs text-zinc-600">Todavía no armaste ninguna.</p>
+          <p className="text-xs text-zinc-500">Todavía no armaste ninguna.</p>
         )}
         {planillas.map((p) => (
           <button key={p.id} onClick={() => setAbierta(p.id)}
-            className="w-full text-left bg-white/[0.02] hover:bg-white/[0.05] border border-white/5
+            className="w-full text-left bg-zinc-50 hover:bg-zinc-100 border border-zinc-200
                        rounded-xl px-4 py-3 flex items-center justify-between gap-3 transition-colors">
             <span className="flex items-center gap-2.5 min-w-0">
               <Estado e={p.estado} />
-              <span className="text-sm text-zinc-200 truncate">{p.aseguradora}</span>
+              <span className="text-sm text-zinc-800 truncate">{p.aseguradora}</span>
               <span className="text-[11px] text-zinc-500 hidden sm:inline">
                 {dia(p.desde)}–{dia(p.hasta)}
               </span>
             </span>
-            <span className="font-mono text-sm text-emerald-300 shrink-0">
+            <span className="font-mono text-sm text-emerald-700 shrink-0">
               {gs(p.total_honorario_gs)}
             </span>
           </button>
