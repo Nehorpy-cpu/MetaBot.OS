@@ -699,3 +699,56 @@ def test_sin_franjas_el_texto_libre_va_marcado_como_sin_confirmar():
     ficha = next(d for d in r["doctors"] if d["id"] == doc)
     assert ficha["schedule"] == "Lun a Vie 08:00-14:00"
     assert "no lo des como seguro" in ficha["schedule_sin_confirmar"]
+
+
+def test_el_prompt_no_le_dicta_al_modelo_el_horario_escrito_a_mano():
+    """La lista de doctores del system prompt es lo que el modelo lee ANTES de
+    llamar a ninguna herramienta.
+
+    Mientras dijo el texto libre, el bot contestaba con ese horario sin llegar
+    a consultar la agenda: arreglar solo `list_doctors` no alcanzó, la
+    respuesta equivocada salía igual.
+    """
+    from app.chat import _build_system_prompt
+    from app.models import Agent
+
+    cid, doc, _ = _armar("Clínica Prompt Horario",
+                         [(LUN, "07:00", "12:00"), (VIE, "07:00", "12:00")])
+    db = SessionLocal()
+    try:
+        agente = (
+            db.query(Agent)
+            .filter(Agent.company_id == cid, Agent.slug == "cx")
+            .first()
+        )
+        prompt = _build_system_prompt(db, db.get(Company, cid), agente)
+    finally:
+        db.close()
+
+    assert "Doctores del centro:" in prompt
+    assert "07:00 a 12:00" in prompt
+    assert "08:00-14:00" not in prompt, "le dictó el texto libre al modelo"
+
+
+def test_check_agenda_devuelve_el_horario_de_las_franjas():
+    """La herramienta que el modelo consulta para decidir tampoco puede
+    devolver el texto que contradice a las franjas."""
+    from app.chat import _execute_tool
+    from app.models import Conversation
+
+    cid, doc, _ = _armar("Clínica Check Agenda Horario",
+                         [(LUN, "07:00", "12:00"), (VIE, "07:00", "12:00")])
+    viernes = _proximo(VIE, 9)
+    db = SessionLocal()
+    try:
+        conv = Conversation(company_id=cid, contact_phone="595981000125", channel="test")
+        db.add(conv)
+        db.commit()
+        r = _execute_tool(
+            "check_agenda", {"doctor_id": doc, "date": viernes.date().isoformat()},
+            db, db.get(Company, cid), conv,
+        )
+    finally:
+        db.close()
+    assert "07:00 a 12:00" in r["work_schedule"]
+    assert "08:00-14:00" not in r["work_schedule"]

@@ -929,7 +929,13 @@ def _execute_tool(
         )
         salida = {
             "doctor": doctor.name,
-            "work_schedule": doctor.schedule or "no especificado",
+            # Desde las franjas, no desde el texto libre: los dos se
+            # cargan por separado y nadie los cruza, así que el texto puede
+            # decir la tarde donde las franjas dicen la mañana.
+            "work_schedule": (
+                agenda.horario_publicable(db, company.id, doctor.id)
+                or doctor.schedule or "no especificado"
+            ),
             "busy_slots": [a.scheduled_at.strftime("%H:%M") for a in busy],
         }
         if doctor.agenda_mode == "estructurado":
@@ -1167,11 +1173,28 @@ def _build_system_prompt(
     if "book_appointment" in {t["function"]["name"] for t in _tools_for(company)}:
         doctors = db.query(Doctor).filter(Doctor.company_id == company.id).all()
         if doctors:
-            listing = "; ".join(
-                f"{d.name} (id {d.id}, {d.specialty or 'general'}, horario {d.schedule or 's/d'})"
-                for d in doctors
+            # El horario sale de las FRANJAS. Esta lista es lo que el modelo
+            # lee antes de llamar a ninguna herramienta, así que es la que más
+            # pesa: mientras dijo el texto libre, el bot rechazaba turnos en
+            # horarios que el profesional sí atiende y ofrecía otros en los
+            # que no, sin llegar a consultar la agenda.
+            fichas = []
+            for d in doctors:
+                real = agenda.horario_publicable(db, company.id, d.id)
+                if real:
+                    horario = real
+                elif d.schedule:
+                    horario = f"{d.schedule} (SIN VERIFICAR: confirmá antes de prometerlo)"
+                else:
+                    horario = "sin horario cargado"
+                fichas.append(
+                    f"{d.name} (id {d.id}, {d.specialty or 'general'}, horario {horario})"
+                )
+            parts.append(
+                "Doctores del centro: " + "; ".join(fichas) + ". "
+                "Este horario es el que atiende cada uno; para saber qué "
+                "HUECOS le quedan libres un día concreto, usá check_agenda."
             )
-            parts.append(f"Doctores del centro: {listing}.")
         else:
             parts.append("Aún no hay doctores cargados: no ofrezcas turnos, escalá a humano si piden cita.")
     terms = db.query(GlossaryTerm).filter(GlossaryTerm.company_id == company.id).all()
