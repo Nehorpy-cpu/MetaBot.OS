@@ -398,6 +398,13 @@ _RUTAS_POR_MODULO: tuple[tuple[str, str], ...] = (
     (r"^/medication(/|$)", "medication"),
     # Bloque 5 — CFO de Finanzas
     (r"^/cfo(/|$)", "cfo"),
+    # Plan, consumo y clave de OpenAI. Van al NÚCLEO y no a un bloque: toda
+    # empresa tiene un plan, consume y necesita saber con qué clave se la está
+    # atendiendo, haya comprado lo que haya comprado. Gatearlas por un bloque
+    # dejaría a un cliente sin poder ver su propio consumo.
+    (r"^/consumo$", "dashboard"),
+    (r"^/plan$", "dashboard"),
+    (r"^/clave-openai(/|$)", "dashboard"),
     # Bloque 2 — Agenda
     (r"^/reminders(/|$)", "reminders"),
     (r"^/doctors(/|$)", "agenda"),

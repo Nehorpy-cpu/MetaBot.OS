@@ -119,6 +119,20 @@ class Company(Base):
     # Business Packs activos, separados por coma: "booking,healthcare" o
     # "commerce". Definen herramientas del bot, reglas y módulos del panel.
     packs: Mapped[str] = mapped_column(String(200), default="")
+    # QUÉ compró está en `packs`; CUÁNTO puede usar, acá. Un sanatorio grande
+    # y una veterinaria chica pueden tener los mismos bloques y consumos que
+    # se diferencian en un orden de magnitud: meter el volumen adentro del
+    # bloque obligaría a vender "agenda chica" y "agenda grande", que son el
+    # mismo software.
+    plan: Mapped[str] = mapped_column(String(30), default="prueba")
+    # La clave de OpenAI de ESTA empresa, cifrada. Mientras esté vacía, el
+    # consumo lo paga la plataforma con la clave global — que es lo que
+    # queremos para las pruebas y para los planes chicos, y lo que NO queremos
+    # para un cliente de volumen alto.
+    openai_key_cifrada: Mapped[str] = mapped_column(Text, default="")
+    # Cuándo el cliente pidió tener su propia clave. El alta la hace el admin
+    # de la plataforma: una clave de un tercero no se carga sola.
+    openai_key_solicitada_at: Mapped[datetime | None] = mapped_column(nullable=True)
     address: Mapped[str] = mapped_column(String(300), default="")  # para recordatorios de citas
     # Teléfono de contacto del negocio. Sin esto cargado el modelo INVENTA uno
     # —observado en producción: le dio a un paciente "021 214-400", que no
@@ -1161,6 +1175,12 @@ class AgentRun(Base):
     answer: Mapped[str] = mapped_column(Text, default="")
     tools_used: Mapped[str] = mapped_column(String(300), default="")  # coma-separado
     latency_ms: Mapped[int] = mapped_column(default=0)
+    # Los tokens que cobró el proveedor. Sin esto, "cuánto sale atender a un
+    # cliente" es una opinión, y no se puede poner un precio ni un tope sobre
+    # algo que no se mide. Cero significa que el proveedor no los informó, no
+    # que la llamada fue gratis.
+    tokens_entrada: Mapped[int] = mapped_column(default=0)
+    tokens_salida: Mapped[int] = mapped_column(default=0)
     tool_rounds: Mapped[int] = mapped_column(default=0)
     escalated: Mapped[bool] = mapped_column(default=False)
     booked: Mapped[bool] = mapped_column(default=False)   # cita concretada

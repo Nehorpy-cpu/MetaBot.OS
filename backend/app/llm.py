@@ -133,6 +133,7 @@ async def chat_raw(
     # en frío; mejor esperar que caer en fallback innecesario.
     timeout: float = 120.0,
     json_mode: bool = False,
+    openai_key: str = "",
 ) -> dict:
     """Devuelve el mensaje completo del asistente (puede incluir tool_calls).
 
@@ -141,6 +142,22 @@ async def chat_raw(
     hubo fallback, hay que registrar quién contestó de verdad.
     """
     providers = available_providers()
+    # La clave de ESTA empresa, si la cargó. Reemplaza a la de la plataforma
+    # solo para esta llamada: el consumo se lo factura OpenAI a ella y no a
+    # nosotros. Se copia el diccionario porque `LLM_PROVIDERS` es global y
+    # pisarlo dejaría a la empresa siguiente usando la clave de esta.
+    if openai_key:
+        providers = [
+            {**p, "api_key": openai_key} if p["name"] == "openai" else p
+            for p in providers
+        ]
+        if not any(p["name"] == "openai" for p in providers):
+            from .config import OPENAI_BASE_URL, OPENAI_TEXT_MODEL
+
+            providers = providers + [{
+                "name": "openai", "base_url": OPENAI_BASE_URL,
+                "api_key": openai_key, "default_model": OPENAI_TEXT_MODEL,
+            }]
     if not providers:
         raise LLMError(
             "Ningún proveedor LLM configurado. Definí NVIDIA_API_KEY, "
@@ -220,7 +237,8 @@ async def chat_raw(
                         json=payload,
                     )
                 resp.raise_for_status()
-                mensaje = resp.json()["choices"][0]["message"]
+                datos = resp.json()
+                mensaje = datos["choices"][0]["message"]
                 # Un modelo de razonamiento puede gastar todo `max_tokens`
                 # pensando y devolver contenido VACÍO sin tool_calls. Al
                 # llamador eso le llega como "no supo qué contestar" y el
@@ -236,6 +254,14 @@ async def chat_raw(
                 # las decisiones de latencia se tomaban sobre datos falsos.
                 mensaje["_modelo_usado"] = modelo
                 mensaje["_proveedor_usado"] = p["name"]
+                # Los tokens que cobró el proveedor. Se venían tirando, y sin
+                # esto "cuánto sale atender un cliente" es una opinión: no se
+                # puede poner un precio ni un tope sobre algo que no se mide.
+                # Todos los proveedores OpenAI-compatibles devuelven `usage`;
+                # el que no lo mande queda en cero y se nota.
+                uso = datos.get("usage") or {}
+                mensaje["_tokens_entrada"] = int(uso.get("prompt_tokens") or 0)
+                mensaje["_tokens_salida"] = int(uso.get("completion_tokens") or 0)
                 if errors:
                     logger.warning(
                         "LLM: respondió %s/%s tras fallar %s",

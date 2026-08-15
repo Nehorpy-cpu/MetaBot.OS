@@ -19,7 +19,7 @@ import json
 
 from .. import (
     cfo, cfo_conectores, cfo_csv, cfo_fuentes_externas, cfo_memoria,
-    cfo_metricas, cfo_motor, cfo_reportes, cfo_secretos,
+    cfo_metricas, cfo_motor, cfo_reportes, cfo_secretos, consumo,
 )
 from ..auth import Identity, audit, get_identity
 from ..db import get_db
@@ -489,6 +489,15 @@ def crear_informe(
     # (`/r/xxx`), el dueño lo pegaría en un WhatsApp y no iría a ningún lado.
     # Y sobre http el token viaja en claro. Es un error de despliegue, y tiene
     # que sonar acá, no en el teléfono del cliente.
+    # El tope de informes del plan. Cada informe es un cálculo y un enlace
+    # que hay que servir: no es gratis emitirlos.
+    if not consumo.alcanza_informes(db, company):
+        raise HTTPException(
+            402,
+            {"motivo": consumo.aviso_de_tope(company, "informes"),
+             "codigo": "tope_del_plan"},
+        )
+
     if not CFO_REPORT_BASE_URL.startswith("https://"):
         raise HTTPException(
             503,

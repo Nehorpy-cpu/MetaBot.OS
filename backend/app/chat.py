@@ -1800,6 +1800,20 @@ async def handle_incoming(
             db, company, conversation, pendiente, pin_recibido, channel,
         )
 
+    # El tope del PLAN. Va junto al de por hora y por el mismo motivo: no se
+    # paga un turno que no corresponde. La diferencia es a quién protege — el
+    # de por hora protege de un bucle, este de vender más de lo contratado.
+    from . import consumo as _consumo
+
+    if not _consumo.alcanza_mensajes(db, company):
+        aviso = _consumo.aviso_de_tope(company, "mensajes")
+        logger.warning("empresa %s: agotó los mensajes del plan", company.id)
+        db.add(Message(company_id=company.id, conversation_id=conversation.id,
+                       direction="out", body=aviso))
+        db.commit()
+        return {"reply": aviso, "status": "tope_del_plan",
+                "media": [], "duplicate": False}
+
     # El tope va DESPUÉS de guardar el mensaje y ANTES de cualquier modelo:
     # queda registro de que escribió, y no se gasta un turno pago en
     # contestarle a un bucle.
@@ -1924,6 +1938,24 @@ async def handle_incoming(
     )
     cadena = cadena_para(tarea, agent.model)
     modelo_usado = ""
+    # Los tokens del turno COMPLETO. Un turno con tres rondas de herramientas
+    # son tres llamadas al proveedor, y las tres se cobran: contar solo la
+    # última haría que el costo medido fuera una fracción del real.
+    tokens_entrada = tokens_salida = 0
+    # Si la empresa cargó su propia clave de OpenAI, se usa la suya: el
+    # consumo se lo factura OpenAI a ella. Mientras esté vacía, paga la
+    # plataforma — que es lo correcto para las pruebas y los planes chicos.
+    from . import cfo_secretos as _secretos
+
+    clave_propia = ""
+    if company.openai_key_cifrada:
+        try:
+            clave_propia = _secretos.descifrar(company.openai_key_cifrada)
+        except _secretos.SinLlave as exc:
+            # Se sigue con la de la plataforma antes que dejar mudo al bot,
+            # pero queda escrito: alguien tiene que ir a recargarla.
+            logger.error("empresa %s: no se pudo descifrar su clave: %s",
+                         company.id, exc)
     actions: list[dict] = []
     media: list[dict] = []  # fotos reales de catálogo a enviar al cliente
     # Bloques que salen TAL CUAL de la base (recetas). No pasan por el modelo
@@ -1934,10 +1966,16 @@ async def handle_incoming(
     booking_blocked = False  # tras un choque de agenda, no se agenda más en este turno
     for _ in range(MAX_TOOL_ROUNDS):
         assistant = await chat_raw(
-            messages, tools=tools, models=cadena, temperature=agent.temperature
+            messages, tools=tools, models=cadena, temperature=agent.temperature,
+            openai_key=clave_propia,
         )
         modelo_usado = assistant.pop("_modelo_usado", modelo_usado)
         assistant.pop("_proveedor_usado", None)
+        # Se hace `pop` y no `get` porque este mensaje se vuelve a mandar al
+        # proveedor en la ronda siguiente: un campo nuestro colado ahí es un
+        # 400 esperando.
+        tokens_entrada += int(assistant.pop("_tokens_entrada", 0) or 0)
+        tokens_salida += int(assistant.pop("_tokens_salida", 0) or 0)
         tool_calls = assistant.get("tool_calls")
         if not tool_calls:
             reply_text = (assistant.get("content") or "").strip()
@@ -1996,7 +2034,11 @@ async def handle_incoming(
                 ),
             }
         )
-        final = await chat_raw(messages, models=cadena, temperature=agent.temperature)
+        final = await chat_raw(messages, models=cadena,
+                               temperature=agent.temperature,
+                               openai_key=clave_propia)
+        tokens_entrada += int(final.get("_tokens_entrada") or 0)
+        tokens_salida += int(final.get("_tokens_salida") or 0)
         modelo_usado = final.get("_modelo_usado", modelo_usado)
         reply_text = (final.get("content") or "").strip()
 
@@ -2108,6 +2150,8 @@ async def handle_incoming(
         answer=reply_text[:2000],
         tools_used=",".join(tools_used)[:300],
         latency_ms=int((time.monotonic() - started) * 1000),
+        tokens_entrada=tokens_entrada,
+        tokens_salida=tokens_salida,
         tool_rounds=len(actions),
         escalated="escalate_to_human" in tools_used or bool(revision.get("escalate")),
         booked=any(a["tool"] == "book_appointment" and a["result"].get("ok") for a in actions),
