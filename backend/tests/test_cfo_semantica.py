@@ -311,3 +311,28 @@ def test_las_metricas_que_se_calculan_estan_en_el_catalogo():
     """Un calculador sin definición sería un número sin contrato."""
     for clave in cfo_motor._CALCULADORES:
         assert clave in CATALOGO, f"{clave} calcula pero no está definida"
+
+
+def test_cero_sin_registros_se_distingue_de_cero_con_registros():
+    """No es lo mismo "no vendiste nada" que "no cargaste nada".
+
+    Visto en producción: con cero atenciones el bot escribió
+    "₲ [valor pendiente]" —un marcador con forma de monto— en vez de decir
+    que no había nada registrado. Prefirió disimular antes que contestar
+    cero, y un marcador parece un dato.
+    """
+    c = _empresa("Empresa Sin Movimientos")
+    cid = c["id"]
+    _aprobar(cid, "ventas_netas")
+    r = _calcular(cid, "ventas_netas").json()
+    assert r["calculable"] is True
+    assert r["valor"] == 0
+    assert any("no se cargó nada" in a for a in r["advertencias"])
+
+    # Con una atención de precio 0 el cero SÍ es un dato, y no lleva ese aviso.
+    doc = _doctor(cid)
+    gratis = _servicio(cid, "Control sin cargo", 0)
+    _atencion(cid, doc, 5, gratis)
+    r2 = _calcular(cid, "ventas_netas").json()
+    assert r2["valor"] == 0
+    assert not any("no se cargó nada" in a for a in r2["advertencias"])

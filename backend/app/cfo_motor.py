@@ -212,6 +212,19 @@ def _ventas(db: Session, company: Company, m, estado, desde: date,
             "cero: no hay precio del que sacar el monto."
         )
 
+    # Cero SIN registros y cero CON registros no son lo mismo, y el modelo
+    # necesita poder decir cuál es. Visto en producción: con cero atenciones
+    # el bot escribió "₲ [valor pendiente]" —un marcador con forma de monto—
+    # en vez de decir que no había nada registrado. Prefirió disimular antes
+    # que contestar cero.
+    if not citas:
+        advertencias.insert(
+            0,
+            "No hay ninguna atención registrada como realizada en ese "
+            "período. El cero no es una caída de ventas: es que no se cargó "
+            "nada.",
+        )
+
     completitud = 1.0
     if citas:
         # Proporción de atenciones que sí aportaron un monto. Un 0,7 acá

@@ -178,7 +178,14 @@ FINANCE = Pack(
         "tachado. Y jamás lo inventes.\n"
         "- Si la herramienta te dice que falta conectar una fuente, decíselo "
         "tal cual: qué falta y que por eso ese número todavía no se puede "
-        "calcular. No lo reemplaces por otro parecido."
+        "calcular. No lo reemplaces por otro parecido.\n"
+        # Visto en producción: con cero atenciones cargadas el bot escribió
+        # "₲ [valor pendiente]". Un marcador con forma de monto es peor que
+        # decir cero, porque parece un dato.
+        "- JAMÁS escribas un marcador en lugar de un monto: nada de "
+        "'[valor pendiente]', 'XXX', '(a confirmar)' ni un número inventado. "
+        "Si la herramienta te dio un monto, decí ESE monto aunque sea cero. "
+        "Si no te dio ninguno, decí que no lo tenés y por qué."
     ),
 )
 
