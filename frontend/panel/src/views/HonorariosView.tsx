@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  AlertTriangle, ArrowLeft, Check, Copy, FileSignature, Loader2, Printer,
-  Send, ShieldCheck, Trash2, Wallet,
+  AlertTriangle, ArrowLeft, Check, Copy, FileSignature, Loader2, Pencil, Printer,
+  Send, ShieldCheck, Trash2, Wallet, X,
 } from "lucide-react";
 import {
   api, esErrorApi, type EstadoPlanilla, type PreviewHonorarios, type Planilla,
@@ -57,6 +57,11 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
   const [error, setError] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [copiado, setCopiado] = useState(false);
+  // Qué renglón se está corrigiendo a mano. El camino normal es cargar el
+  // arancel del convenio, que se aplica solo; esto es la excepción.
+  const [editando, setEditando] = useState<number | null>(null);
+  const [monto, setMonto] = useState(0);
+  const [motivo, setMotivo] = useState("");
 
   const cargar = () => {
     api.verHonorarios(companyId, id).then(setP)
@@ -87,6 +92,21 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
     } catch (e) {
       const err = esErrorApi(e) ? e.detail?.motivo : null;
       setError(err ?? (e instanceof Error ? e.message : "No se pudo borrar"));
+      setOcupado(false);
+    }
+  };
+
+  const ajustar = async () => {
+    if (editando === null) return;
+    setOcupado(true); setError("");
+    try {
+      setP(await api.ajustarRenglon(companyId, id, editando, monto, motivo));
+      setEditando(null); setMotivo("");
+      onCambio();
+    } catch (e) {
+      const err = esErrorApi(e) ? e.detail?.motivo : null;
+      setError(err ?? (e instanceof Error ? e.message : "No se pudo ajustar"));
+    } finally {
       setOcupado(false);
     }
   };
@@ -162,6 +182,7 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
                 <th className="text-left font-semibold px-3 py-2">Prestación</th>
                 <th className="text-right font-semibold px-3 py-2">Facturado</th>
                 <th className="text-right font-semibold px-3 py-2">Tu honorario</th>
+                <th className="w-8"></th>
               </tr>
             </thead>
             <tbody>
@@ -171,15 +192,64 @@ function Detalle({ companyId, id, onVolver, onCambio }: {
                   <td className="px-3 py-2 text-zinc-200">{it.paciente}</td>
                   <td className="px-3 py-2 text-zinc-400">
                     {it.servicio || <span className="text-amber-400">sin prestación cargada</span>}
+                    {it.ajustado_a_mano && (
+                      <span className="block text-[10px] text-amber-400">
+                        ajustado a mano · calculado {gs(it.facturado_calculado_gs ?? 0)}
+                        {it.ajuste_motivo && ` · ${it.ajuste_motivo}`}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right text-zinc-300 font-mono">{gs(it.facturado_gs)}</td>
                   <td className="px-3 py-2 text-right text-emerald-300 font-mono">{gs(it.honorario_gs)}</td>
+                  <td className="px-2 py-2">
+                    {p.estado === "borrador" && it.id && (
+                      <button
+                        onClick={() => {
+                          setEditando(it.id!);
+                          setMonto(it.facturado_gs);
+                          setMotivo(it.ajuste_motivo ?? "");
+                        }}
+                        title="Corregir el monto de esta atención"
+                        className="text-zinc-600 hover:text-cyan-300">
+                        <Pencil size={12} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      {editando !== null && (
+        <div className="bg-cyan-500/[0.04] border border-cyan-500/30 rounded-xl p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-xs text-zinc-300">
+              Corregir lo que se factura por esta atención. Se guarda lo que el sistema
+              había calculado y sale impreso en la planilla: un monto cambiado sin rastro
+              es indistinguible de un error de cálculo.
+            </p>
+            <button onClick={() => setEditando(null)} className="text-zinc-500 hover:text-white shrink-0">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input className={`${input} w-40 text-right tabular-nums`} type="number" min={0}
+              value={monto} onChange={(e) => setMonto(Number(e.target.value))} />
+            <input className={`${input} flex-1 min-w-[12rem]`} placeholder="Motivo (queda en la planilla)"
+              value={motivo} onChange={(e) => setMotivo(e.target.value)} maxLength={200} />
+            <button onClick={ajustar} disabled={ocupado} className={btnPrimary}>
+              {ocupado ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Guardar
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-500">
+            Si esto pasa seguido con la misma práctica, cargá el arancel del convenio en
+            Recetas y Convenios: se aplica solo a todas las liquidaciones siguientes.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
         <div className="flex gap-4">

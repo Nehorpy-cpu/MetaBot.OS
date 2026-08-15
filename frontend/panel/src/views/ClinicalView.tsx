@@ -1,11 +1,12 @@
 import React from "react";
 import { useCallback, useEffect, useState } from "react";
-import { Pill, ShieldCheck, Plus, X, AlertTriangle } from "lucide-react";
+import { Coins, Pill, ShieldCheck, Plus, X, AlertTriangle } from "lucide-react";
 import {
   clinicalApi, api,
   type Company, type Doctor, type Insurer, type Prescription, type PrescriptionItemIn,
 } from "../api";
 import { card, input, btnPrimary } from "../ui";
+import { ArancelesModal } from "./ArancelesModal";
 
 const ITEM_VACIO: PrescriptionItemIn = {
   medication: "", dose: "", route: "vía oral", frequency: "",
@@ -283,6 +284,8 @@ function Convenios({ company, insurers, onChanged, onError }: {
   onChanged: () => void; onError: (e: string) => void;
 }) {
   const [form, setForm] = useState({ name: "", plan: "", coverage_pct: 0, copay_gs: 0 });
+  // Qué convenio se está mirando práctica por práctica.
+  const [aranceles, setAranceles] = useState<Insurer | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -298,6 +301,10 @@ function Convenios({ company, insurers, onChanged, onError }: {
 
   return (
     <div className={`${card} p-6 space-y-4`}>
+      {aranceles && (
+        <ArancelesModal companyId={company.id} insurer={aranceles}
+          onClose={() => { setAranceles(null); onChanged(); }} />
+      )}
       <div>
         <h3 className="font-bold text-white flex items-center gap-2">
           <ShieldCheck size={18} /> Convenios con seguros
@@ -305,22 +312,29 @@ function Convenios({ company, insurers, onChanged, onError }: {
         <p className="text-xs text-zinc-400 mt-1">
           Los que <b>esta</b> empresa tiene firmados. El bot los usa para responder
           cuánto le sale un estudio al paciente con su seguro; el cálculo lo hace el
-          servidor, no el modelo.
+          servidor, no el modelo. Tocá un convenio para cargar el <b>arancel</b> que
+          paga por cada práctica según su nomenclador.
         </p>
       </div>
 
       {insurers.length > 0 && (
         <div className="space-y-2">
           {insurers.map((i) => (
-            <div key={i.id} className="flex items-center justify-between text-sm bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2">
+            <button key={i.id} onClick={() => setAranceles(i)}
+              className="w-full text-left flex items-center justify-between gap-3 text-sm
+                         bg-white/[0.02] hover:bg-white/[0.05] border border-white/5
+                         rounded-lg px-3 py-2 transition-colors">
               <span className="text-zinc-200">
                 {i.name} <span className="text-zinc-500">{i.plan}</span>
               </span>
-              <span className="text-xs text-zinc-400 tabular-nums">
+              <span className="text-xs text-zinc-400 tabular-nums flex items-center gap-2">
                 cubre {i.coverage_pct}%
                 {i.copay_gs > 0 && ` · copago ₲ ${i.copay_gs.toLocaleString("es-PY")}`}
+                <span className="text-cyan-400 flex items-center gap-1">
+                  <Coins size={12} /> aranceles
+                </span>
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}

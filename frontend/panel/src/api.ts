@@ -286,6 +286,18 @@ export interface FichaCompleta {
   recetas: RecetaDelPortal[];
 }
 
+/** Lo que un convenio cubre para UNA práctica. */
+export interface CoberturaDePractica {
+  service_id: number;
+  servicio: string;
+  precio_lista_gs: number;
+  coverage_pct: number;
+  copay_gs: number;
+  excluded: boolean;
+  /** Monto fijo del nomenclador. 0 = no configurado, se usa el porcentaje. */
+  arancel_gs: number;
+}
+
 export interface ItemHonorario {
   fecha: string;
   paciente: string;
@@ -295,6 +307,12 @@ export interface ItemHonorario {
   facturado_gs: number;
   honorario_gs: number;
   origen_arancel: string;
+  /** Solo en los renglones ya guardados: identifica el renglón a ajustar. */
+  id?: number;
+  /** Alguien corrigió este monto a mano antes de firmar. */
+  ajustado_a_mano?: boolean;
+  facturado_calculado_gs?: number;
+  ajuste_motivo?: string;
   /** Solo en el preview: lo que pone el paciente de su bolsillo. */
   paga_el_paciente_gs?: number;
   /** Sin servicio cargado no hay precio, y sin precio no hay honorario. */
@@ -342,6 +360,8 @@ export interface Planilla {
   entregada_at: string | null;
   cobrada_at: string | null;
   notas: string;
+  /** Cuántos renglones se corrigieron a mano. */
+  ajustados?: number;
   items?: ItemHonorario[];
   /** La hoja lista para imprimir y firmar de puño. */
   texto?: string;
@@ -657,6 +677,11 @@ export const api = {
     request<Planilla>(`/companies/${companyId}/portal/honorarios/${id}/${paso}`, {
       method: "POST", body: JSON.stringify({}),
     }),
+  /** Corrige el monto de un renglón del borrador. */
+  ajustarRenglon: (companyId: number, batchId: number, itemId: number, facturado_gs: number, motivo: string) =>
+    request<Planilla>(`/companies/${companyId}/portal/honorarios/${batchId}/items/${itemId}`, {
+      method: "PATCH", body: JSON.stringify({ facturado_gs, motivo }),
+    }),
   honorariosAPagar: (companyId: number) =>
     request<Planilla[]>(`/companies/${companyId}/portal/honorarios-a-pagar`),
   portalAccesos: (companyId: number) =>
@@ -791,6 +816,17 @@ export const waApi = {
 
 export const clinicalApi = {
   listInsurers: (companyId: number) => request<Insurer[]>(`/companies/${companyId}/insurers`),
+  /** Qué tiene cargado un convenio, práctica por práctica. */
+  coberturas: (companyId: number, insurerId: number) =>
+    request<CoberturaDePractica[]>(`/companies/${companyId}/insurers/${insurerId}/coverage`),
+  /** Carga o corrige el arancel de una práctica en ese convenio. */
+  setCobertura: (
+    companyId: number, insurerId: number,
+    data: { service_id: number; coverage_pct: number; copay_gs: number; excluded: boolean; arancel_gs: number },
+  ) =>
+    request<{ ok: boolean }>(`/companies/${companyId}/insurers/${insurerId}/coverage`, {
+      method: "PUT", body: JSON.stringify(data),
+    }),
   createInsurer: (companyId: number, data: { name: string; plan: string; coverage_pct: number; copay_gs: number }) =>
     request<{ id: number }>(`/companies/${companyId}/insurers`, { method: "POST", body: JSON.stringify(data) }),
   listPrescriptions: (companyId: number) =>
