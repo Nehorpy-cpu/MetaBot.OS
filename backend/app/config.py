@@ -2,14 +2,27 @@
 import os
 from pathlib import Path
 
-# Carga .env si existe (sin dependencia externa)
-_env_file = Path(__file__).resolve().parents[2] / ".env"
-if _env_file.exists():
-    for _line in _env_file.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _, _v = _line.partition("=")
-            os.environ.setdefault(_k.strip(), _v.strip())
+_RAIZ = Path(__file__).resolve().parents[2]
+
+
+def _cargar(archivo: Path) -> None:
+    """Lee un .env sin dependencias. `utf-8-sig` a propósito: un archivo
+    creado en Windows suele traer BOM, y ese carácter invisible pegado al
+    principio del primer valor rompe una credencial sin que se note."""
+    if not archivo.exists():
+        return
+    for linea in archivo.read_text(encoding="utf-8-sig").splitlines():
+        linea = linea.strip()
+        if linea and not linea.startswith("#") and "=" in linea:
+            clave, _, valor = linea.partition("=")
+            os.environ.setdefault(clave.strip(), valor.strip())
+
+
+# El .env principal, y después el archivo aparte donde vive la clave de
+# OpenAI en la máquina de desarrollo. Los dos están en .gitignore y en
+# .dockerignore: no se versionan ni entran a la imagen.
+_cargar(_RAIZ / ".env")
+_cargar(_RAIZ / "GPTAPI.env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./metabot.db")
 TIMEZONE = os.environ.get("TIMEZONE", "America/Asuncion")
@@ -58,3 +71,56 @@ LLM_PROVIDERS = [
         "default_model": "gemini-2.5-flash",
     },
 ]
+
+
+# ─── CFO de Finanzas ─────────────────────────────────────────────────────
+#
+# OpenAI entra como un proveedor MÁS, solo para el CFO. No reemplaza el
+# router de arriba: los otros bots del sistema no cambian porque el CFO gane
+# un proveedor.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+# Los identificadores viven ACÁ y no desperdigados por el código: cambiar de
+# modelo tiene que ser una línea de configuración, no una cacería.
+OPENAI_CFO_ROUTER_MODEL = os.environ.get("OPENAI_CFO_ROUTER_MODEL", "gpt-5.6-luna")
+OPENAI_CFO_DEFAULT_MODEL = os.environ.get("OPENAI_CFO_DEFAULT_MODEL", "gpt-5.6-terra")
+OPENAI_CFO_DEEP_MODEL = os.environ.get("OPENAI_CFO_DEEP_MODEL", "gpt-5.6-sol")
+OPENAI_TRANSCRIPTION_MODEL = os.environ.get(
+    "OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
+)
+OPENAI_TRANSCRIPTION_HIGH_ACCURACY_MODEL = os.environ.get(
+    "OPENAI_TRANSCRIPTION_HIGH_ACCURACY_MODEL", "gpt-4o-transcribe"
+)
+OPENAI_TTS_MODEL = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+
+# Que OpenAI no guarde las respuestas del CFO de su lado. La memoria canónica
+# del sistema vive en PostgreSQL.
+OPENAI_STORE_RESPONSES = os.environ.get("OPENAI_STORE_RESPONSES", "false").lower() == "true"
+
+# Qué hace el CFO con la IA. `deterministico` es el ÚNICO valor que no
+# depende de ninguna credencial: calcula y responde con plantillas, sin
+# narrativa generada. Es también el que queda si no hay proveedor.
+CFO_POLITICA_IA = os.environ.get("CFO_POLITICA_IA", "router_existente")
+
+CFO_ENABLED = os.environ.get("CFO_ENABLED", "true").lower() == "true"
+CFO_REQUIRE_PIN_FOR_MEDIUM_RISK = os.environ.get(
+    "CFO_REQUIRE_PIN_FOR_MEDIUM_RISK", "true"
+).lower() == "true"
+
+# La automejora nace apagada para escribir, y el código no tiene el camino
+# para encender estas tres: instalar, fusionar y desplegar solos es
+# exactamente lo que no puede pasar.
+CFO_IMPROVEMENT_SCOUT_ENABLED = os.environ.get(
+    "CFO_IMPROVEMENT_SCOUT_ENABLED", "false"
+).lower() == "true"
+CFO_ALLOW_AUTOMATIC_INSTALL = False
+CFO_ALLOW_AUTOMATIC_MERGE = False
+CFO_ALLOW_AUTOMATIC_DEPLOY = False
+CFO_ALLOW_AUTOMATIC_METRIC_CHANGE = False
+
+
+def openai_configurado() -> bool:
+    """Si hay una clave cargada. NO dice si es válida: eso solo se sabe
+    llamando, y lo comprueba `scripts/probar_openai.py`."""
+    return bool(OPENAI_API_KEY)

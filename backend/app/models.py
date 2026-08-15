@@ -660,6 +660,38 @@ class FinanceIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class FinanceMetricState(Base):
+    """En qué estado está una métrica PARA ESTA EMPRESA.
+
+    La fórmula vive en código (`cfo_metricas.CATALOGO`), porque cambiar qué
+    significa "venta" tiene que verse en el diff de un commit. Esta tabla
+    guarda lo que sí es de cada empresa: qué versión está vigente, quién la
+    aprobó y desde cuándo rige.
+
+    Sin una fila en `activa`, el CFO NO usa esa métrica. Deny by default: una
+    métrica que nadie aprobó no puede contestarle un número al dueño.
+    """
+
+    __tablename__ = "finance_metric_states"
+    __table_args__ = (
+        UniqueConstraint("company_id", "clave", name="uq_metric_state_clave"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    clave: Mapped[str] = mapped_column(String(60), index=True)
+    # La versión del catálogo que se aprobó. Si el código publica una versión
+    # nueva, ESTA sigue siendo la vigente hasta que alguien apruebe la otra:
+    # una definición no cambia sola por un deploy.
+    version: Mapped[int] = mapped_column(default=1)
+    estado: Mapped[str] = mapped_column(String(12), default="borrador", index=True)
+    aprobada_por: Mapped[int | None] = mapped_column(nullable=True)
+    aprobada_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    vigente_desde: Mapped[date | None] = mapped_column(nullable=True)
+    notas: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class FeeBatch(Base):
     """Planilla de honorarios: lo que una aseguradora le debe a un profesional.
 

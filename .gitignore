@@ -2,6 +2,11 @@
 .env
 .env.*
 *.env
+# `*.env` no cubre un respaldo tipo `GPTAPI.env.bak`: manda la extension
+# final. Se descubrio al normalizar GPTAPI.env, cuando el .bak con la
+# clave adentro quedo fuera de las reglas.
+*.env.*
+GPTAPI.env
 !.env.example
 *.pem
 *.key

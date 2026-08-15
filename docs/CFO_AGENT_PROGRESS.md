@@ -97,9 +97,79 @@ truncado.
 
 ---
 
-## Fase 2 — Capa semántica y motor de métricas ⏳
+## Fase 2 — Capa semántica y motor determinístico ✅
 
-Definiciones versionadas (`ventas_netas`, `cobrado`, `margen_bruto`…) con
-fórmula, fuentes, vigencia y aprobación; motor de cálculo determinístico en
-guaraníes enteros reutilizando `app/aranceles.py`. Recién cuando una métrica
-esté definida y probada se habilita su herramienta.
+**536 tests verdes** (20 nuevos), typecheck limpio, migración `a7c3e91d24f8`
+ensayada contra copia de producción.
+
+### El problema que resuelve
+
+"Ventas" no significa lo mismo para el dueño, para el contador y para la
+aseguradora. Si el bot contesta 486 millones y el contador dice 431, la
+discusión no es sobre el software: es sobre qué se contó.
+
+Por eso una métrica no es una función suelta. Es una definición con fórmula
+escrita en castellano —para que la lea quien firma—, versión, fuentes,
+vigencia y aprobación de una persona.
+
+### Qué quedó
+
+**`app/cfo_metricas.py`** — el catálogo. Diez definiciones con su fórmula,
+qué excluyen y sus notas contables. Las fórmulas viven en código, igual que
+los permisos y la clasificación de riesgo: cambiar qué significa "venta"
+tiene que verse en el diff de un commit.
+
+**`finance_metric_states`** — lo que sí es de cada empresa: qué versión
+aprobó, quién y desde cuándo rige. **Deny by default**: sin fila en `activa`,
+el CFO no usa esa métrica aunque tenga los datos. Hay test.
+
+**`app/cfo_motor.py`** — el único lugar donde sale un número. Verifica en
+orden: la métrica existe, la empresa la aprobó, la vigencia cubre el período,
+y las fuentes están conectadas. Cualquiera que falte devuelve **no calculable
+con el motivo**, nunca un cero — porque alguien decide con ese cero.
+
+Cada resultado viaja con su procedencia: fuentes, corte de actualización,
+completitud (0 a 1) y advertencias.
+
+### El hallazgo de esta fase
+
+**El sistema no tiene de dónde leer casi nada.** No existe tabla de facturas,
+de cobranzas, de gastos, de caja ni de metas. Lo único con forma de ingreso
+son las atenciones con su servicio y su precio.
+
+Eso no se disimula: el catálogo dice métrica por métrica qué fuente le falta,
+`utilidad_neta` **no se puede aprobar** (409 con la lista de faltantes), y las
+dos que sí se calculan avisan que salen de atenciones y **no son facturación
+contable**. `ventas_netas` además declara que hoy coincide con el bruto,
+porque no hay fuente de descuentos ni devoluciones: un neto que en realidad es
+bruto, presentado como neto, es una mentira prolija.
+
+La conclusión de producto: **el CFO necesita los conectores (Fase 6) para ser
+útil de verdad.** Lo que se construyó hasta acá es la garantía de que, cuando
+lleguen, ningún número salga sin definición, sin aprobación y sin decir de
+dónde vino.
+
+### La credencial de OpenAI
+
+`GPTAPI.env` existe, está bien protegido —ignorado, no trackeado, nunca en el
+historial, fuera de la imagen— y **lo que contiene no es una clave de OpenAI
+válida**: `401 invalid_api_key` contra la API real, y el valor no tiene el
+prefijo que usan sus claves. No se probó ningún modelo porque sin
+autenticación no hay nada que probar.
+
+Se agregó `scripts/probar_openai.py`, que prueba los seis identificadores de a
+uno con una frase neutra y sin datos de negocio. Con una clave válida se
+ejecuta y reporta cuál está habilitado para ESE proyecto — que no es lo mismo
+que existir en el catálogo de OpenAI.
+
+De paso apareció un agujero: el respaldo `GPTAPI.env.bak` **no quedaba
+cubierto** por `*.env`, porque manda la extensión final. Se borró y se
+agregaron `*.env.*` y `GPTAPI.env` a `.gitignore` y `.dockerignore`.
+
+---
+
+## Fase 3 — Herramientas financieras sobre el motor ⏳
+
+Envolver las métricas activas como herramientas del bot, con esquema estricto
+y el permiso verificado ANTES de consultar. Sin conectores, el catálogo de
+herramientas de una empresa va a ser corto y honesto.

@@ -30,7 +30,7 @@ Se verificó archivo por archivo.
 | `WhatsAppSessionManager.ts`, `WhatsAppProcessLock.ts`, `WhatsAppDisconnectClassifier.ts`, `src/lib/whatsapp.ts` | ninguno existe | **`bridge/src/server.js`**: un solo archivo Node con Baileys, lock, heartbeat y TTL |
 | `WhatsAppInboxView.tsx`, `WhatsAppConnectionStatus.tsx` | no existen | `views/ChatView.tsx`, `views/ConnectionsView.tsx` |
 | Redis + BullMQ | no hay Redis | **cola durable en PostgreSQL** (`app/jobs.py`): lease, dedup_key, backoff exponencial, reintentos que sobreviven reinicios |
-| OpenAI Responses API, `gpt-5.6-luna/terra/sol` | no hay `OPENAI_API_KEY` | router propio multi-proveedor OpenAI-compatible (`app/llm.py`): Groq, NVIDIA, OpenRouter, Gemini |
+| OpenAI Responses API, `gpt-5.6-luna/terra/sol` | ver §4.1 | router propio multi-proveedor OpenAI-compatible (`app/llm.py`): Groq, NVIDIA, OpenRouter, Gemini |
 
 Lo único que coincide: **React 18 + Vite** en el panel, y **Baileys** para
 WhatsApp.
@@ -98,13 +98,48 @@ Otras piezas que el prompt pide y existen:
 
 ## 4. Riesgos encontrados
 
-1. **No hay `OPENAI_API_KEY`.** Transcripción (§6) y TTS (§6.3) dependen de
-   ella. Se implementa la interfaz, las variables y los mocks; queda
-   documentado el bloqueo. El análisis financiero **no** depende de OpenAI:
-   el router actual sirve.
-2. **Los modelos `gpt-5.6-luna/terra/sol` no se pueden verificar** desde acá.
-   Van como variables de entorno configurables, sin hardcodear, y el router
-   ya sabe fallar al siguiente candidato sin sustituir en silencio.
+### 4.1 La credencial de OpenAI — CORREGIDO, con evidencia
+
+`GPTAPI.env` **existe** en la raíz del repositorio de trabajo. Verificado sin
+mostrar su contenido:
+
+| Comprobación | Resultado |
+|---|---|
+| Archivo presente | sí |
+| Formato original | un token suelto, **sin** `NOMBRE=` |
+| Normalizado a dotenv | sí, ahora expone `OPENAI_API_KEY` |
+| ¿Ignorado por git? | sí, `.gitignore:4` (`*.env`) |
+| ¿Trackeado? | **no** |
+| ¿En el historial? | **no**, ningún commit lo tocó |
+| ¿En `.dockerignore`? | sí, no entra a la imagen |
+
+**El secreto nunca estuvo versionado: no hace falta rotarlo por exposición.**
+
+Al normalizarlo apareció un agujero real: el respaldo `GPTAPI.env.bak` **no
+quedaba cubierto** por `*.env` —manda la extensión final—, así que un archivo
+con la clave adentro quedaba fuera de las reglas. Se borró el respaldo y se
+agregaron `*.env.*` y `GPTAPI.env` a `.gitignore` y a `.dockerignore`.
+
+**La clave NO funciona.** Ejecutado `scripts/probar_openai.py` contra la API
+real, con una frase neutra y sin un solo dato de ninguna empresa:
+
+```
+OpenAI authentication: FALLA (401 invalid_api_key)
+```
+
+Y el valor **no tiene el prefijo `sk-`** que usan las claves de OpenAI, ni
+coincide con el formato de ningún otro proveedor conocido (Anthropic, Google,
+Groq, OpenRouter, NVIDIA, Hugging Face, GitHub, Stripe, Meta) ni es un JWT.
+
+Conclusión honesta: **el archivo existe y lo que contiene no es una clave de
+OpenAI válida.** No se probó ningún modelo, porque sin autenticación no hay
+nada que probar. Falta una clave real para avanzar con transcripción y TTS.
+
+2. **Los identificadores `gpt-5.6-luna/terra/sol` existen como configuración.**
+   Queda pendiente verificar si el proyecto asociado a una clave válida tiene
+   acceso efectivo a cada uno: figurar en el catálogo de OpenAI y estar
+   habilitado para una cuenta son dos cosas distintas. El script los prueba de
+   a uno con una llamada mínima; hoy no se pudo ejecutar esa parte.
 3. **El plan gratuito de Groq no aguanta una conversación**: 429 al cuarto
    mensaje, y un turno tardó 110 s cayendo por la cadena de respaldo. Un CFO
    que tarda dos minutos no se usa. Es una decisión comercial pendiente.
@@ -122,8 +157,8 @@ Otras piezas que el prompt pide y existen:
 | Fase | Contenido | Estado |
 |---|---|---|
 | 0 | Auditoría y línea base | **hecha** (este documento) |
-| 1 | Bloque `finance`, identidad autorizada por WhatsApp, clasificación de riesgo, PIN, migración | **en curso** |
-| 2 | Capa semántica: definiciones de métricas versionadas + motor de cálculo determinístico | |
+| 1 | Bloque `finance`, identidad autorizada por WhatsApp, clasificación de riesgo, PIN, migración | **hecha** |
+| 2 | Capa semántica: definiciones de métricas versionadas + motor de cálculo determinístico | **hecha** |
 | 3 | Herramientas financieras (catálogo §9) sobre datos propios del sistema | |
 | 4 | Flujo por WhatsApp: identidad → riesgo → PIN → encolado → respuesta | |
 | 5 | Reporte HTML privado: snapshot, token opaco, sesión corta, revocación | |

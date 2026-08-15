@@ -25,7 +25,18 @@ services:
   backend:
     build: .
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+      # La clave de OpenAI del CFO vive aparte. `required: false` porque el
+      # archivo está en .gitignore: existe en la máquina de desarrollo y NO
+      # llega al servidor por git. Sin esto, un `docker compose up` en el VPS
+      # falla por un archivo que nunca va a estar ahí.
+      #
+      # En producción la variable va en el .env del servidor. Solo el backend
+      # la recibe: ni el bridge, ni la base, ni el panel — al frontend no
+      # puede llegar nunca, terminaría en el bundle del navegador.
+      - path: ./GPTAPI.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://metabot:${POSTGRES_PASSWORD}@db:5432/metabot
       BRIDGE_URL: http://bridge:3001
