@@ -405,14 +405,16 @@ def test_no_se_crea_un_conector_de_la_fuente_interna():
     assert r.status_code == 422
 
 
-def test_rest_y_postgres_todavia_no_estan_y_lo_dicen():
-    """Devolver 501 con el motivo es mejor que aceptar y no sincronizar
-    nunca."""
-    cid = _empresa("Conector No Implementado")
+def test_un_conector_rest_sin_configurar_no_se_guarda():
+    """REST y PostgreSQL ya existen, pero necesitan configuración. Aceptar uno
+    vacío sería guardar un conector que no puede sincronizar nunca y que el
+    dueño va a mirar preguntandose por que no trae datos."""
+    cid = _empresa("Conector Sin Config")
     r = client.post(f"/api/companies/{cid}/cfo/conectores",
                     json={"fuente": "ventas", "tipo": "rest", "nombre": "API"})
-    assert r.status_code == 501
-    assert r.json()["detail"]["codigo"] == "tipo_no_implementado"
+    assert r.status_code == 422
+    assert r.json()["detail"]["codigo"] == "config_invalida"
+    assert "URL" in r.json()["detail"]["motivo"]
 
 
 def test_dos_conectores_no_comparten_nombre_en_la_misma_empresa():

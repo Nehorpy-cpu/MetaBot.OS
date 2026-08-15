@@ -1313,6 +1313,10 @@ class FinanceConnector(Base):
     nombre: Mapped[str] = mapped_column(String(120))
     # Configuración SIN credenciales: URL, tabla, mapeo de columnas.
     config: Mapped[str] = mapped_column(Text, default="{}")
+    # La credencial del sistema del cliente, cifrada con Fernet. La llave vive
+    # en el entorno del servidor: cifrar con una llave guardada al lado de lo
+    # cifrado es guardar en claro con pasos de más.
+    secreto_cifrado: Mapped[str] = mapped_column(Text, default="")
     activo: Mapped[bool] = mapped_column(default=True)
     ultima_sync_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
     ultima_sync_ok: Mapped[bool] = mapped_column(default=False)

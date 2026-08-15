@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session
 
 from datetime import date, datetime, timezone
 
+import json
+
 from .. import (
-    cfo, cfo_conectores, cfo_csv, cfo_memoria, cfo_metricas, cfo_motor,
-    cfo_reportes,
+    cfo, cfo_conectores, cfo_csv, cfo_fuentes_externas, cfo_memoria,
+    cfo_metricas, cfo_motor, cfo_reportes, cfo_secretos,
 )
 from ..auth import Identity, audit, get_identity
 from ..db import get_db
@@ -599,6 +601,11 @@ class ConectorIn(BaseModel):
     fuente: str = Field(min_length=2, max_length=30)
     tipo: str = Field(default="csv", max_length=20)
     nombre: str = Field(min_length=1, max_length=120)
+    # Para rest/postgres. El csv no lleva nada de esto.
+    config: dict = Field(default_factory=dict)
+    # El token o la contraseña del sistema del cliente. Entra una vez, se
+    # cifra y NO vuelve a salir por la API.
+    credencial: str = Field(default="", max_length=2000)
 
 
 class ConectorUpdate(BaseModel):
@@ -622,7 +629,8 @@ def listar_conectores(
     _puede_administrar(db, company_id, identity)
     _company(db, company_id)
     return [
-        cfo_conectores.estado(db, c)
+        {**cfo_conectores.estado(db, c),
+         "config": cfo_fuentes_externas.resumen_config(c)}
         for c in cfo_conectores.conectores(db, company_id, solo_activos=False)
     ]
 
@@ -655,19 +663,33 @@ def crear_conector(
     if payload.tipo not in cfo_conectores.TIPOS:
         raise HTTPException(422, {"motivo": "Tipo de conector desconocido.",
                                   "codigo": "tipo_desconocido"})
+
+    config_json = "{}"
+    cifrada = ""
     if payload.tipo != "csv":
-        raise HTTPException(
-            501,
-            {
-                "motivo": "Por ahora solo hay conector de planilla (csv). "
-                          "REST y PostgreSQL llegan en la etapa siguiente.",
-                "codigo": "tipo_no_implementado",
-            },
-        )
+        # La configuración se valida ANTES de guardar nada. Un conector con
+        # una URL que apunta a una red interna no se guarda "para arreglarlo
+        # después": no se guarda.
+        validador = cfo_fuentes_externas.VALIDADORES[payload.tipo]
+        try:
+            config_json = json.dumps(validador(payload.config))
+        except cfo_fuentes_externas.FuenteInvalida as exc:
+            raise HTTPException(422, {"motivo": str(exc),
+                                      "codigo": "config_invalida"})
+        if payload.credencial:
+            try:
+                cifrada = cfo_secretos.cifrar(payload.credencial)
+            except cfo_secretos.SinLlave as exc:
+                # Error de despliegue, no del usuario. Ruidoso al crear y no
+                # silencioso al sincronizar: un servidor a medias no puede
+                # terminar guardando credenciales en claro "por ahora".
+                raise HTTPException(503, {"motivo": str(exc),
+                                          "codigo": "sin_llave_de_cifrado"})
 
     fila = FinanceConnector(
         company_id=company_id, fuente=payload.fuente, tipo=payload.tipo,
-        nombre=payload.nombre.strip(),
+        nombre=payload.nombre.strip(), config=config_json,
+        secreto_cifrado=cifrada,
     )
     db.add(fila)
     try:
@@ -882,3 +904,37 @@ def borrar_toda_la_memoria(
     audit(db, "cfo.memoria.baja_total", user_id=identity.user_id,
           company_id=company_id, detail={"borradas": cuantas})
     return {"borradas": cuantas}
+
+
+@router.post("/conectores/{conector_id}/sincronizar")
+async def sincronizar_conector(
+    company_id: int,
+    conector_id: int,
+    identity: Identity = Depends(get_identity),
+    db: Session = Depends(get_db),
+):
+    """Sale a buscar los datos ahora. Para REST y PostgreSQL.
+
+    El resultado queda anotado en el conector aunque falle: un conector que
+    falla en silencio es peor que uno roto, porque el dueño sigue creyendo que
+    sus números están al día.
+    """
+    _puede_administrar(db, company_id, identity)
+    fila = _conector(db, company_id, conector_id)
+    if fila.tipo == "csv":
+        raise HTTPException(422, {"motivo": "Un conector de planilla se carga "
+                                            "subiendo el archivo.",
+                                  "codigo": "tipo_incorrecto"})
+    try:
+        resumen = await cfo_fuentes_externas.sincronizar(db, fila)
+    except (cfo_fuentes_externas.FalloDeSincronizacion,
+            cfo_fuentes_externas.FuenteInvalida,
+            cfo_secretos.SinLlave) as exc:
+        cfo_conectores.anotar_sync(db, fila, 0, error=str(exc))
+        raise HTTPException(422, {"motivo": str(exc),
+                                  "codigo": "sincronizacion_fallida"})
+
+    cfo_conectores.anotar_sync(db, fila, resumen["nuevas"])
+    audit(db, "cfo.conector.sync", user_id=identity.user_id, company_id=company_id,
+          detail={"conector": conector_id, **resumen})
+    return {**resumen, "conector": cfo_conectores.estado(db, fila)}

@@ -55,3 +55,28 @@ def safe_client(**kwargs) -> httpx.AsyncClient:
     event_hooks = kwargs.pop("event_hooks", {})
     event_hooks.setdefault("request", []).append(_guard_request)
     return httpx.AsyncClient(event_hooks=event_hooks, **kwargs)
+
+
+def assert_public_host(host: str, puerto: int = 0) -> None:
+    """Como `assert_public_url` pero para un host suelto (un DSN, por ejemplo).
+
+    Existe por el peor escenario de los conectores: un cliente carga un DSN de
+    PostgreSQL apuntando a `db:5432`, `localhost` o `10.0.0.x` —o sea, a
+    NUESTRA base— y el sistema se conecta con nuestras credenciales de red y le
+    devuelve los datos de todos los demás clientes.
+
+    Que el host sea válido no alcanza: tiene que resolver a una IP pública.
+    """
+    if not host:
+        raise BlockedURLError("Falta el host")
+    try:
+        infos = socket.getaddrinfo(host, puerto or None)
+    except socket.gaierror as exc:
+        raise BlockedURLError(f"No se pudo resolver {host}: {exc}")
+    for info in infos:
+        ip = info[4][0]
+        if _ip_is_blocked(ip):
+            raise BlockedURLError(
+                f"{host} resuelve a una IP no permitida ({ip}). Un conector no "
+                "puede apuntar a una red interna."
+            )

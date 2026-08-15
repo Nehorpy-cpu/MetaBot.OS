@@ -15,6 +15,11 @@ os.environ["WHATSAPP_VERIFY_TOKEN"] = "verify-de-prueba"
 # contra la misma configuración que el servidor real, no contra una ausencia
 # que ninguna prueba notaría.
 os.environ.setdefault("CFO_REPORT_BASE_URL", "https://informes.test")
+# Llave de cifrado de credenciales de conectores. Es una llave de prueba, sin
+# valor: la de produccion vive en el .env del servidor y no toca este repo.
+os.environ.setdefault(
+    "CFO_SECRETS_KEY", "32WWrs5tOZEVwar3m9V1vxaUFPcPOUBYtK-Ew3of4Ak="
+)
 
 import pytest  # noqa: E402
 
