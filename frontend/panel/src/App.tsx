@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Activity, Bot, Boxes, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
-  Lock, MessageSquare, Pill, Plus, Receipt, Sliders, Video, Zap,
+  Lock, MessageSquare, Pill, Plus, Receipt, Sliders, Video, Wallet, Zap,
 } from "lucide-react";
 import { api, auth, setBlockedHandler, setUnauthorizedHandler, type Company, type Me } from "./api";
 import { btnPrimary } from "./ui";
@@ -18,13 +18,14 @@ import { ClinicalView } from "./views/ClinicalView";
 import { BlocksView } from "./views/BlocksView";
 import { PortalView } from "./views/PortalView";
 import { HonorariosAPagarView } from "./views/HonorariosAPagarView";
+import { CfoView } from "./views/CfoView";
 import { LoginScreen } from "./views/LoginScreen";
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null); // null = verificando
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical" | "blocks" | "honorarios">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical" | "blocks" | "honorarios" | "cfo">("dashboard");
   // Qué bloque mostrar destacado al entrar a la vista de bloques (el que el
   // usuario acaba de intentar usar sin tenerlo contratado).
   const [bloqueResaltado, setBloqueResaltado] = useState("");
@@ -142,6 +143,7 @@ export default function App() {
           {navModulo("medical", "Agenda de Doctores", Calendar, "agenda", "booking")}
           {navModulo("clinical", "Recetas y Convenios", Pill, "prescriptions", "healthcare")}
           {navModulo("honorarios", "Honorarios a pagar", Receipt, "portal", "practitioner")}
+          {navModulo("cfo", "CFO de Finanzas", Wallet, "cfo", "finance")}
           {navBtn("services", "Servicios & Estudios", Sliders)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
@@ -186,6 +188,9 @@ export default function App() {
               botón, la vista seguiría montándose cuando el bloque se apaga con
               esa pantalla abierta, y dispararía llamadas que dan 402. */}
           {active && view === "clinical" && active.modules?.includes("prescriptions") && <ClinicalView company={active} />}
+          {active && view === "cfo" && active.modules?.includes("cfo") && (
+            <CfoView companyId={active.id} />
+          )}
           {active && view === "honorarios" && active.modules?.includes("portal") && (
             <HonorariosAPagarView companyId={active.id} />
           )}

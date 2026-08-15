@@ -1021,3 +1021,175 @@ export const STATUS_ES: Record<string, string> = {
 };
 
 export const formatGs = (n: number) => `₲ ${n.toLocaleString("es-PY")}`;
+
+// ─── CFO de Finanzas ─────────────────────────────────────────────────────
+
+export interface CfoIdentidad {
+  id: number;
+  phone: string;
+  nombre: string;
+  sensibilidad_max: "baja" | "media" | "alta";
+  /** Si TIENE PIN, no cuál es: el valor nunca sale del servidor. */
+  tiene_pin: boolean;
+  pin_bloqueado: boolean;
+  activo: boolean;
+  ultimo_uso_at: string | null;
+}
+
+export interface CfoMetrica {
+  clave: string;
+  nombre: string;
+  formula: string;
+  version: number;
+  estado: string;
+  fuentes: string[];
+  /** Qué fuentes le faltan para poder calcularse. Vacío = se puede. */
+  faltan: string[];
+  excluye?: string;
+  notas_contables?: string;
+  aprobada_por?: string | null;
+  vigente_desde?: string | null;
+}
+
+export interface CfoConector {
+  id: number;
+  fuente: string;
+  tipo: string;
+  nombre: string;
+  activo: boolean;
+  ultima_sync: string | null;
+  ultima_sync_ok: boolean;
+  ultimo_error: string;
+  filas_ultima_sync: number;
+  filas_totales: number;
+  /** Conectado NO es disponible: cuenta cuando trajo filas alguna vez. */
+  habilita_la_fuente: boolean;
+}
+
+export interface CfoFuente {
+  fuente: string;
+  disponible: boolean;
+  corte: string | null;
+  interna: boolean;
+}
+
+export interface CfoInforme {
+  id: number;
+  titulo: string;
+  desde: string;
+  hasta: string;
+  creado: string;
+  enlaces_vigentes: number;
+  aperturas: number;
+  ultima_apertura: string | null;
+}
+
+export interface CfoInformeCreado {
+  id: number;
+  titulo: string;
+  /** Se muestra UNA sola vez. Después queda el hash y hay que emitir otro. */
+  enlace: string;
+  vence_en_horas: number;
+  un_solo_uso: boolean;
+  aviso: string;
+}
+
+export interface CfoMemoria {
+  id: number;
+  tipo: string;
+  clave: string;
+  valor: string;
+  phone: string;
+  fuente: string;
+  vence: string | null;
+  actualizada: string | null;
+}
+
+export const cfoApi = {
+  identidades: (c: number) => request<CfoIdentidad[]>(`/companies/${c}/cfo/identidades`),
+  crearIdentidad: (c: number, data: { phone: string; nombre: string; sensibilidad_max: string }) =>
+    request<CfoIdentidad>(`/companies/${c}/cfo/identidades`, {
+      method: "POST", body: JSON.stringify(data),
+    }),
+  editarIdentidad: (c: number, id: number, data: Partial<CfoIdentidad>) =>
+    request<CfoIdentidad>(`/companies/${c}/cfo/identidades/${id}`, {
+      method: "PATCH", body: JSON.stringify(data),
+    }),
+  ponerPin: (c: number, id: number, pin: string) =>
+    request<{ ok: boolean }>(`/companies/${c}/cfo/identidades/${id}/pin`, {
+      method: "PUT", body: JSON.stringify({ pin }),
+    }),
+  quitarIdentidad: (c: number, id: number) =>
+    request<void>(`/companies/${c}/cfo/identidades/${id}`, { method: "DELETE" }),
+
+  metricas: (c: number) => request<CfoMetrica[]>(`/companies/${c}/cfo/metricas`),
+  aprobar: (c: number, clave: string, version: number) =>
+    request<CfoMetrica>(`/companies/${c}/cfo/metricas/${clave}/aprobar`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  deprecar: (c: number, clave: string) =>
+    request<CfoMetrica>(`/companies/${c}/cfo/metricas/${clave}/deprecar`, { method: "POST" }),
+
+  conectores: (c: number) => request<CfoConector[]>(`/companies/${c}/cfo/conectores`),
+  crearConector: (c: number, data: { fuente: string; tipo: string; nombre: string }) =>
+    request<CfoConector>(`/companies/${c}/cfo/conectores`, {
+      method: "POST", body: JSON.stringify(data),
+    }),
+  editarConector: (c: number, id: number, data: { activo?: boolean }) =>
+    request<CfoConector>(`/companies/${c}/cfo/conectores/${id}`, {
+      method: "PATCH", body: JSON.stringify(data),
+    }),
+  borrarConector: (c: number, id: number) =>
+    request<void>(`/companies/${c}/cfo/conectores/${id}`, { method: "DELETE" }),
+  /** La planilla va como multipart, así que no pasa por `request`. */
+  cargarPlanilla: async (c: number, id: number, archivo: File) => {
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    const resp = await fetch(`/api/companies/${c}/cfo/conectores/${id}/cargar`, {
+      method: "POST", credentials: "same-origin", body: fd,
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new ApiError(resp.status, body.detail);
+    return body as { nuevas: number; actualizadas: number; leidas: number };
+  },
+  fuentes: (c: number) => request<CfoFuente[]>(`/companies/${c}/cfo/fuentes`),
+
+  informes: (c: number) => request<CfoInforme[]>(`/companies/${c}/cfo/informes`),
+  crearInforme: (c: number, data: {
+    metricas: string[]; desde: string; hasta: string; titulo: string;
+    un_solo_uso: boolean; horas_de_vigencia: number;
+  }) =>
+    request<CfoInformeCreado>(`/companies/${c}/cfo/informes`, {
+      method: "POST", body: JSON.stringify(data),
+    }),
+  revocarInforme: (c: number, id: number) =>
+    request<{ revocados: number }>(`/companies/${c}/cfo/informes/${id}/revocar`, {
+      method: "POST",
+    }),
+
+  memoria: (c: number) => request<CfoMemoria[]>(`/companies/${c}/cfo/memoria`),
+  borrarMemoria: (c: number, id: number) =>
+    request<void>(`/companies/${c}/cfo/memoria/${id}`, { method: "DELETE" }),
+  borrarTodaLaMemoria: (c: number) =>
+    request<{ borradas: number }>(`/companies/${c}/cfo/memoria`, { method: "DELETE" }),
+};
+
+/** Nombres de fuente en castellano, para no mostrar `caja_y_bancos`. */
+export const FUENTES_ES: Record<string, string> = {
+  ventas: "Ventas / facturación",
+  cobranzas: "Cobranzas",
+  compras: "Compras",
+  gastos: "Gastos",
+  inventario: "Inventario",
+  caja_y_bancos: "Caja y bancos",
+  impuestos: "Impuestos",
+  metas: "Metas",
+  nomina: "Nómina",
+  interna: "Del propio sistema",
+};
+
+export const RIESGO_ES: Record<string, string> = {
+  baja: "Básico",
+  media: "Sensible",
+  alta: "Crítico",
+};
