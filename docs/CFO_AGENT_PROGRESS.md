@@ -308,3 +308,85 @@ Fase 6 parte 2: conectores REST y PostgreSQL, que sí necesitan credenciales
 —y por lo tanto cifrado en reposo y el guardia SSRF sobre el host, incluido el
 DSN de PostgreSQL: un DSN apuntando a nuestra propia base leería los datos de
 todos los clientes.
+
+---
+
+## La clave de OpenAI y la lista blanca de modelos ✅
+
+15-ago-2026. La clave llegó, es válida (200 contra `/v1/models`) y habilita
+**124 modelos**: entre ellos `sora-2`, `gpt-image-2`, los `-pro`, y
+`gpt-5.6-sol` / `gpt-5.6-luna` / `gpt-5.6-terra`.
+
+Los tres últimos eran los que la configuración traía **por defecto**, porque
+venían de la especificación original del módulo. Son grandes y caros, y el CFO
+no los necesita: narra un número que ya calculó el servidor.
+
+Quedan **tres autorizados** y ninguno más:
+
+| Uso | Modelo |
+|---|---|
+| Texto | `gpt-4o-mini` |
+| Voz → texto | `gpt-4o-mini-transcribe` |
+| Texto → voz | `gpt-4o-mini-tts` |
+
+La lista vive **en código**, como la clasificación de riesgo y los
+`CFO_ALLOW_*`: habilitar un modelo cambia lo que el sistema puede gastar, así
+que tiene que verse en el diff de un commit. El entorno puede elegir *dentro*
+de la lista; si pide algo de afuera se ignora y se avisa. El cerrojo está en
+`chat_raw`, que es por donde pasa **toda** llamada a un modelo.
+
+OpenAI entra al router como un proveedor más y va **último**, porque es el
+único que cobra. Solo lo pide primero la cadena de la tarea `finanzas`, por la
+razón medida el día anterior: los modelos gratuitos no llamaban a
+`consultar_finanzas`, y sin esa llamada no corre la verificación de permiso.
+La conversación común sigue siendo gratis, y hay una prueba que lo exige.
+
+**Resultado en producción:** ante "cuánto vendí este mes", `gpt-4o-mini` llama
+a la herramienta **siempre** (antes, 0 de 3 veces) y contesta con el número, el
+período, la fecha de los datos y la advertencia, en voseo.
+
+### Un efecto que había que atajar
+
+Varias pruebas llaman a `handle_incoming`, que llama de verdad a un modelo. Con
+un proveedor pago en la cadena, **correr la suite le cobraría al usuario** — y
+la suite se corre decenas de veces por día. Un fixture de `conftest.py` saca a
+OpenAI de los proveedores disponibles en toda la suite.
+
+---
+
+## Fase 7 — Audio ✅
+
+Desplegado y probado en producción. 666 pruebas verdes, 21 nuevas.
+
+Existe por cómo se usa WhatsApp acá: mucha gente manda audios y no escribe.
+Hasta ahora las notas de voz se **descartaban en silencio**.
+
+**El audio no abre una vía paralela.** Se transcribe, se vuelve texto y entra
+por `handle_incoming` con las mismas herramientas, los mismos permisos y los
+mismos guardias. Una segunda vía sería una segunda oportunidad de saltearse un
+control.
+
+- Los topes son de plata: transcribir se cobra por minuto. El de duración va
+  en el bridge, **antes** de bajar el archivo — sin eso, un audio de dos horas
+  se descarga entero para que el backend después lo rechace.
+- Se contesta hablando, pero **el texto va siempre**: un monto que se escucha
+  una vez no se puede volver a mirar.
+- `para_hablar()` saca enlaces, viñetas y saltos, y convierte `₲ 8.550.000` en
+  "8 millones 550 mil de guaraníes". Leído tal cual, un sintetizador dice
+  "guaraní ocho cinco cinco cero", y un enlace dictado carácter por carácter
+  son treinta segundos de ruido que nadie va a poder anotar.
+- Si no se entiende el audio, se contesta igual pidiendo que lo repitan. El
+  silencio del bot se lee como que el negocio no atiende.
+
+**Verificado en producción**, no solo en pruebas: se generó una nota de voz
+real (56 KB OGG), se mandó al webhook como lo haría un teléfono, el bot
+contestó `"¿A cuál doctora te referís...?"` y devolvió 50 KB de audio que,
+transcripto de vuelta, dice exactamente eso.
+
+### Lo que queda sin hacer, y por qué
+
+El webhook de **Meta Cloud API** sigue salteando los mensajes que no son
+texto. Se puede escribir en diez minutos, pero no hay credenciales de Meta
+para ejecutarlo, y código en un camino que no se puede probar es una promesa,
+no una función. Queda anotado para cuando estén el token permanente y el
+`PHONE_NUMBER_ID`.
