@@ -1,9 +1,19 @@
 import os
 
-# Antes de que cualquier prueba importe `app.config`, que lee esto una sola vez
-# al arrancar. En producción sale del entorno; acá se fija para que las pruebas
-# corran contra la misma configuración que el servidor real, no contra una
-# ausencia que ninguna prueba notaría.
+# `conftest.py` es lo PRIMERO que importa pytest, antes que cualquier archivo
+# de pruebas. Por eso el entorno se arma acá y no en un módulo de pruebas:
+# `app.config` lee estas variables una sola vez, al importarse, y el primer
+# `from app import ...` de cualquier archivo la congela. Con la configuración
+# repartida, agregar un import arriba de todo en un test nuevo rompía la suite
+# entera con 401 — pasó dos veces el 15-ago-2026, y las dos por lo mismo.
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["ADMIN_TOKEN"] = "test-token-secreto"
+os.environ["SCHEDULER_ENABLED"] = "0"
+os.environ["WHATSAPP_APP_SECRET"] = "secreto-de-prueba"
+os.environ["WHATSAPP_VERIFY_TOKEN"] = "verify-de-prueba"
+# En producción sale del entorno; acá se fija para que las pruebas corran
+# contra la misma configuración que el servidor real, no contra una ausencia
+# que ninguna prueba notaría.
 os.environ.setdefault("CFO_REPORT_BASE_URL", "https://informes.test")
 
 import pytest  # noqa: E402

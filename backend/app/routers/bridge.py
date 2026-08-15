@@ -7,17 +7,31 @@ Dos partes:
 2. Proxy de gestión /companies/{id}/wa/*: el panel consulta estado, inicia
    sesión (obtiene el QR) o cierra sesión, sin hablar directo con el bridge.
 """
+import base64
+import binascii
+import logging
+
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import channels, sessions
+from .. import audio, channels, sessions
 from .. import chat as chat_engine
 from ..config import BRIDGE_SECRET, BRIDGE_URL
 from ..db import get_db
 from ..llm import LLMError
 from ..models import Company
+
+logger = logging.getLogger("metabot.bridge")
+
+# Lo que se contesta cuando la nota de voz no se pudo entender. Del otro lado
+# hay alguien esperando: el silencio del bot se lee como que el negocio no
+# atiende.
+NO_SE_ENTENDIO = (
+    "Perdón, no llegué a entender bien el audio. ¿Me lo repetís o me lo "
+    "escribís?"
+)
 
 router = APIRouter(tags=["bridge"])
 
@@ -31,7 +45,15 @@ class BridgeMessage(BaseModel):
     company_id: int
     from_: str = Field(alias="from", min_length=3, max_length=50)
     name: str = ""
-    text: str = Field(min_length=1, max_length=4000)
+    # Vacio cuando lo que llego fue una nota de voz: el texto sale de
+    # transcribirla, y recien despues arranca el camino de siempre.
+    text: str = Field(default="", max_length=4000)
+    # Nota de voz en base64. Va aca y no como multipart porque el bridge ya
+    # manda JSON y una segunda forma de entrada es una segunda superficie que
+    # mantener. El limite real lo pone `audio.MAXIMO_BYTES`; este de aca es el
+    # tope del transporte, con el ~33% que agrega base64.
+    audio_base64: str = Field(default="", max_length=12_000_000)
+    audio_mime: str = Field(default="", max_length=100)
     # id del mensaje en WhatsApp: permite deduplicar reentregas
     external_id: str = Field(default="", max_length=120)
 
@@ -57,21 +79,64 @@ async def bridge_incoming(
         raise HTTPException(404, "Empresa no encontrada")
     if company.wa_mode != "qr":
         raise HTTPException(409, "La empresa no tiene el canal QR activo")
+
+    # Una nota de voz se vuelve texto y entra por el MISMO camino, con las
+    # mismas herramientas, los mismos permisos y los mismos guardias. Abrirle
+    # una via paralela seria abrirle una segunda oportunidad de saltearse un
+    # control.
+    texto = payload.text
+    era_audio = False
+    if payload.audio_base64:
+        try:
+            datos = base64.b64decode(payload.audio_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(422, "El audio no llegó en base64 válido")
+        try:
+            texto = await audio.transcribir(datos, "nota.ogg")
+        except audio.AudioError as exc:
+            logger.warning("empresa %s: no se pudo transcribir: %s",
+                           company.id, exc)
+            # Se contesta, no se calla. Del otro lado hay alguien esperando, y
+            # el silencio del bot se lee como que el negocio no atiende.
+            return {"reply": NO_SE_ENTENDIO, "status": "audio_ilegible",
+                    "media": [], "duplicate": False}
+        era_audio = True
+        if not texto.strip():
+            return {"reply": NO_SE_ENTENDIO, "status": "audio_vacio",
+                    "media": [], "duplicate": False}
+
+    if not texto.strip():
+        raise HTTPException(422, "El mensaje llegó sin texto ni audio")
+
     try:
         outcome = await chat_engine.handle_incoming(
-            db, company, payload.from_, payload.text,
+            db, company, payload.from_, texto,
             contact_name=payload.name, channel="whatsapp",
             external_id=payload.external_id,
         )
     except LLMError as exc:
         # El bridge no reintenta: registrar y no responder nada al cliente
         raise HTTPException(503, f"LLM no disponible: {exc}")
-    return {
+    respuesta = {
         "reply": outcome.get("reply"),
         "status": outcome.get("status"),
         "media": outcome.get("media", []),
         "duplicate": outcome.get("duplicate", False),
     }
+
+    # Se contesta en el mismo medio en el que preguntaron. Quien manda un
+    # audio suele estar manejando o con las manos ocupadas: devolverle un
+    # parrafo para leer no le sirve. Va TAMBIEN el texto, porque un monto que
+    # se escucha una vez no se puede volver a mirar.
+    if era_audio and respuesta["reply"] and not respuesta["duplicate"]:
+        try:
+            hablado = await audio.hablar(audio.para_hablar(respuesta["reply"]))
+            respuesta["audio_base64"] = base64.b64encode(hablado).decode()
+            respuesta["audio_mime"] = "audio/ogg; codecs=opus"
+        except audio.AudioError as exc:
+            # Sin voz, pero con la respuesta escrita: mejor eso que nada.
+            logger.warning("empresa %s: no se pudo hablar: %s", company.id, exc)
+    return respuesta
 
 
 @router.post("/webhooks/bridge/lease")

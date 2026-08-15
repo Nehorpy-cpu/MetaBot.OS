@@ -20,6 +20,7 @@ import pino from "pino";
 import QRCode from "qrcode";
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
 } from "baileys";
@@ -30,6 +31,14 @@ const BRIDGE_SECRET = process.env.BRIDGE_SECRET || "";
 const SESSIONS_DIR = path.resolve("sessions");
 
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
+
+// Topes de la nota de voz. Transcribir se cobra por minuto: sin esto, alguien
+// manda un audio de dos horas y la cuenta la paga el dueño del negocio.
+const MAX_AUDIO_SEGUNDOS = 300;
+const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+const AUDIO_MUY_LARGO =
+  "Ese audio es muy largo para que lo pueda escuchar. ¿Me lo resumís en uno " +
+  "más corto o me lo escribís?";
 // Identidad de este proceso: la usa el lease para impedir que dos workers
 // abran la MISMA sesión de WhatsApp (eso corrompe las credenciales).
 const WORKER_ID = `${process.pid}-${Date.now().toString(36)}`;
@@ -160,7 +169,37 @@ async function handleIncoming(companyId, session, msg) {
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
     "";
-  if (!text.trim()) return;
+
+  // Nota de voz. Mucha gente acá manda audios y no escribe: un bot que solo
+  // entiende texto deja afuera a una parte de sus clientes. Se baja, se manda
+  // al backend y allá se transcribe; acá NO se decide nada sobre el
+  // contenido.
+  const nota = msg.message?.audioMessage;
+  let audioBase64 = "";
+  let audioMime = "";
+  if (!text.trim() && nota) {
+    // El tope va antes de bajar el archivo: sin esto, un audio de dos horas
+    // se descarga entero para que el backend después lo rechace.
+    if ((nota.seconds || 0) > MAX_AUDIO_SEGUNDOS) {
+      logger.info({ companyId, seconds: nota.seconds }, "nota de voz demasiado larga");
+      await session.sock.sendMessage(jid, { text: AUDIO_MUY_LARGO });
+      return;
+    }
+    try {
+      const buf = await downloadMediaMessage(msg, "buffer", {});
+      if (buf.length > MAX_AUDIO_BYTES) {
+        logger.info({ companyId, bytes: buf.length }, "nota de voz demasiado pesada");
+        await session.sock.sendMessage(jid, { text: AUDIO_MUY_LARGO });
+        return;
+      }
+      audioBase64 = buf.toString("base64");
+      audioMime = nota.mimetype || "audio/ogg";
+    } catch (err) {
+      logger.error({ err: String(err) }, "no se pudo bajar la nota de voz");
+      return;
+    }
+  }
+  if (!text.trim() && !audioBase64) return;
 
   const from = "+" + jid.split("@")[0];
   const name = msg.pushName || "";
@@ -174,6 +213,7 @@ async function handleIncoming(companyId, session, msg) {
     },
     body: JSON.stringify({
       company_id: Number(companyId), from, name, text,
+      audio_base64: audioBase64, audio_mime: audioMime,
       // id del mensaje en WhatsApp: el backend deduplica reentregas
       external_id: msg.key?.id || "",
     }),
@@ -209,6 +249,21 @@ async function handleIncoming(companyId, session, msg) {
     }
   }
   if (data.reply) await session.sock.sendMessage(jid, { text: data.reply });
+
+  // Si preguntaron por audio, se contesta también por audio. Va DESPUÉS del
+  // texto y no en lugar de él: un monto que se escucha una vez no se puede
+  // volver a mirar, y el enlace del informe no se puede dictar.
+  if (data.audio_base64) {
+    try {
+      await session.sock.sendMessage(jid, {
+        audio: Buffer.from(data.audio_base64, "base64"),
+        mimetype: "audio/ogg; codecs=opus",
+        ptt: true,
+      });
+    } catch (err) {
+      logger.error({ err: String(err) }, "no se pudo enviar la respuesta hablada");
+    }
+  }
 }
 
 // ---- API HTTP del bridge (la consume el backend) ----

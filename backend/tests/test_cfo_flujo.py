@@ -60,7 +60,11 @@ def _armar(nombre: str, pin="4721", sensibilidad="alta", precio=250_000):
 def _escribir(cid: int, texto: str, telefono=TELEFONO):
     db = SessionLocal()
     try:
-        return asyncio.get_event_loop().run_until_complete(
+        # `asyncio.run` y no `get_event_loop()`: el segundo devuelve el bucle
+        # que haya quedado dando vueltas, y si otro archivo de pruebas corrio
+        # antes una prueba async, ese bucle ya esta cerrado. Falla por el orden
+        # alfabetico de los archivos, que es la peor forma de fallar.
+        return asyncio.run(
             handle_incoming(db, db.get(Company, cid), telefono, texto,
                             channel="whatsapp")
         )
