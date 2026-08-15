@@ -33,20 +33,50 @@ Pedí uno nuevo por WhatsApp.</p>
 </div></body></html>"""
 
 
-@router.get("/r/{token}", response_class=HTMLResponse)
-def ver_informe(token: str, db: Session = Depends(get_db)):
-    """Abre un informe con su llave.
-
-    Todos los rechazos devuelven la MISMA página y el mismo 404: una llave
+def _rechazo() -> HTMLResponse:
+    """Todos los rechazos devuelven la MISMA página y el mismo 404: una llave
     inventada, una vencida y una revocada son indistinguibles desde afuera.
     Decir "este enlace venció" le confirma a quien está probando tokens que
     acertó uno, que es justo lo que no hay que contarle.
     """
+    return HTMLResponse(
+        _NO_EXISTE, status_code=404, headers=cfo_reportes.ENCABEZADOS
+    )
+
+
+@router.get("/r/{token}", response_class=HTMLResponse)
+def portada(token: str, db: Session = Depends(get_db)):
+    """La portada. No muestra ni un número, y no gasta la llave.
+
+    Cuando el enlace viaja por WhatsApp, WhatsApp lo busca para armar la
+    miniatura. Ese robot hace un GET, así que un GET no puede ser lo que
+    entrega el informe: gastaría un enlace de un solo uso antes de que el
+    dueño lo abra, contaría una apertura que no ocurrió, y —lo peor— le
+    mandaría los números de la empresa a los servidores de quien
+    previsualiza.
+
+    La llave se valida igual, para no mostrar una portada de algo que no
+    existe, pero no se marca como usada.
+    """
+    informe, _ = cfo_reportes.validar(db, token)
+    if informe is None:
+        return _rechazo()
+    return HTMLResponse(
+        cfo_reportes.renderizar_portada(token),
+        headers=cfo_reportes.ENCABEZADOS_PORTADA,
+    )
+
+
+@router.post("/r/{token}", response_class=HTMLResponse)
+def ver_informe(token: str, db: Session = Depends(get_db)):
+    """Los números. Esto sí gasta la llave y cuenta la apertura.
+
+    Detrás de un envío de formulario, que es una acción de una persona: los
+    robots de vista previa no lo hacen.
+    """
     informe, _ = cfo_reportes.abrir(db, token)
     if informe is None:
-        return HTMLResponse(
-            _NO_EXISTE, status_code=404, headers=cfo_reportes.ENCABEZADOS
-        )
+        return _rechazo()
     return HTMLResponse(
         cfo_reportes.renderizar(informe), headers=cfo_reportes.ENCABEZADOS
     )

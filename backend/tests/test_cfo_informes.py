@@ -63,7 +63,7 @@ def _token_de(enlace: str) -> str:
 def test_el_enlace_abre_el_informe_con_el_numero():
     cid = _empresa("Informe Camino Feliz")
     creado = _crear(cid)
-    r = client.get(f"/r/{_token_de(creado['enlace'])}")
+    r = client.post(f"/r/{_token_de(creado['enlace'])}")
     assert r.status_code == 200
     assert "Informe Camino Feliz" in r.text
     assert "180.000" in r.text
@@ -75,7 +75,7 @@ def test_el_informe_dice_su_procedencia_y_sus_advertencias():
     que llega después del número llega tarde."""
     cid = _empresa("Informe Procedencia")
     creado = _crear(cid)
-    html = client.get(f"/r/{_token_de(creado['enlace'])}").text
+    html = client.post(f"/r/{_token_de(creado['enlace'])}").text
     assert "Fuente:" in html
     assert "Completitud:" in html
     assert "Definición v1" in html
@@ -86,7 +86,7 @@ def test_el_informe_no_carga_nada_de_afuera():
     """Un reporte financiero no tiene por qué pedirle nada a otro dominio:
     cada petición le cuenta a un tercero que alguien lo abrió."""
     cid = _empresa("Informe Sin Terceros")
-    html = client.get(f"/r/{_token_de(_crear(cid)['enlace'])}").text
+    html = client.post(f"/r/{_token_de(_crear(cid)['enlace'])}").text
     assert "<script" not in html.lower()
     assert "http://" not in html and "https://" not in html
     assert "//fonts." not in html and "cdn" not in html.lower()
@@ -94,7 +94,7 @@ def test_el_informe_no_carga_nada_de_afuera():
 
 def test_los_encabezados_impiden_cache_indexado_e_iframe():
     cid = _empresa("Informe Encabezados")
-    r = client.get(f"/r/{_token_de(_crear(cid)['enlace'])}")
+    r = client.post(f"/r/{_token_de(_crear(cid)['enlace'])}")
     assert "no-store" in r.headers["cache-control"]
     assert "noindex" in r.headers["x-robots-tag"]
     assert r.headers["referrer-policy"] == "no-referrer"
@@ -110,10 +110,15 @@ def test_los_encabezados_impiden_cache_indexado_e_iframe():
 
 
 def test_un_token_inventado_no_abre_nada():
+    """Ni por la portada ni por el envío. Lo que se exige es que no entregue
+    NADA: el código exacto no importa —una ruta de traversal normaliza a otra
+    cosa y el montaje estático contesta 405—, importa que no sea 200 ni
+    devuelva un informe."""
     _empresa("Informe Token Inventado")
     for intento in ("x", "a" * 43, "../../etc/passwd", "1", "%2e%2e"):
-        r = client.get(f"/r/{intento}")
-        assert r.status_code == 404, f"'{intento}' devolvió {r.status_code}"
+        for r in (client.get(f"/r/{intento}"), client.post(f"/r/{intento}")):
+            assert r.status_code != 200, f"'{intento}' abrió algo"
+            assert "monto" not in r.text and "Ventas netas" not in r.text
 
 
 def test_el_token_no_se_guarda_en_claro():
@@ -155,7 +160,7 @@ def test_un_enlace_vencido_no_abre():
         db.commit()
     finally:
         db.close()
-    assert client.get(f"/r/{token}").status_code == 404
+    assert client.post(f"/r/{token}").status_code == 404
 
 
 def test_un_enlace_revocado_no_abre():
@@ -163,19 +168,19 @@ def test_un_enlace_revocado_no_abre():
     cid = _empresa("Informe Revocado")
     creado = _crear(cid)
     token = _token_de(creado["enlace"])
-    assert client.get(f"/r/{token}").status_code == 200
+    assert client.post(f"/r/{token}").status_code == 200
 
     r = client.post(f"/api/companies/{cid}/cfo/informes/{creado['id']}/revocar")
     assert r.status_code == 200 and r.json()["revocados"] == 1
-    assert client.get(f"/r/{token}").status_code == 404
+    assert client.post(f"/r/{token}").status_code == 404
 
 
 def test_el_enlace_de_un_solo_uso_sirve_una_vez():
     """Reenviarlo por un grupo de WhatsApp deja de ser una filtración."""
     cid = _empresa("Informe Un Solo Uso")
     token = _token_de(_crear(cid, un_solo_uso=True)["enlace"])
-    assert client.get(f"/r/{token}").status_code == 200
-    assert client.get(f"/r/{token}").status_code == 404
+    assert client.post(f"/r/{token}").status_code == 200
+    assert client.post(f"/r/{token}").status_code == 404
 
 
 def test_todos_los_rechazos_se_ven_iguales():
@@ -192,8 +197,8 @@ def test_todos_los_rechazos_se_ven_iguales():
     finally:
         db.close()
 
-    inventado = client.get("/r/" + "z" * 43)
-    caduco = client.get(f"/r/{vencido}")
+    inventado = client.post("/r/" + "z" * 43)
+    caduco = client.post(f"/r/{vencido}")
     assert inventado.status_code == caduco.status_code == 404
     assert inventado.text == caduco.text, "las respuestas se distinguen entre sí"
 
@@ -205,7 +210,7 @@ def test_el_html_escapa_lo_que_cargo_alguien():
     cid = c["id"]
     client.post(f"/api/companies/{cid}/cfo/metricas/ventas_netas/aprobar",
                 json={"version": 1})
-    html = client.get(f"/r/{_token_de(_crear(cid)['enlace'])}").text
+    html = client.post(f"/r/{_token_de(_crear(cid)['enlace'])}").text
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 
@@ -220,7 +225,7 @@ def test_no_se_revoca_el_informe_de_otra_empresa():
     r = client.post(f"/api/companies/{b}/cfo/informes/{creado['id']}/revocar")
     assert r.status_code == 404
     # Y sigue abriendo, o sea que no lo revocó igual.
-    assert client.get(f"/r/{_token_de(creado['enlace'])}").status_code == 200
+    assert client.post(f"/r/{_token_de(creado['enlace'])}").status_code == 200
 
 
 def test_el_listado_no_muestra_informes_ajenos():
@@ -267,7 +272,7 @@ def test_el_informe_no_se_mueve_cuando_cambian_los_datos():
     tienen que ver el mismo número."""
     cid = _empresa("Informe Congelado")
     token = _token_de(_crear(cid)["enlace"])
-    assert "180.000" in client.get(f"/r/{token}").text
+    assert "180.000" in client.post(f"/r/{token}").text
 
     db = SessionLocal()
     try:
@@ -276,14 +281,14 @@ def test_el_informe_no_se_mueve_cuando_cambian_los_datos():
     finally:
         db.close()
 
-    assert "180.000" in client.get(f"/r/{token}").text, "el informe se recalculó solo"
+    assert "180.000" in client.post(f"/r/{token}").text, "el informe se recalculó solo"
 
 
 def test_una_metrica_no_calculable_se_muestra_como_tal():
     """Y no como cero ni en blanco."""
     cid = _empresa("Informe No Calculable")
     creado = _crear(cid, metricas=["ventas_netas", "flujo_de_caja"])
-    html = client.get(f"/r/{_token_de(creado['enlace'])}").text
+    html = client.post(f"/r/{_token_de(creado['enlace'])}").text
     assert "No se pudo calcular" in html
     assert "caja_y_bancos" in html
 
@@ -294,8 +299,8 @@ def test_las_aperturas_quedan_registradas():
     cid = _empresa("Informe Aperturas")
     creado = _crear(cid)
     token = _token_de(creado["enlace"])
-    client.get(f"/r/{token}")
-    client.get(f"/r/{token}")
+    client.post(f"/r/{token}")
+    client.post(f"/r/{token}")
     fila = client.get(f"/api/companies/{cid}/cfo/informes").json()[0]
     assert fila["aperturas"] == 2
     assert fila["ultima_apertura"]
@@ -342,3 +347,75 @@ def test_con_la_base_mal_puesta_no_queda_un_informe_a_medias(monkeypatch):
             FinanceReport.company_id == cid).count() == antes
     finally:
         db.close()
+
+
+# ─── El robot de la vista previa ─────────────────────────────────────────
+#
+# Cuando el enlace viaja por WhatsApp, WhatsApp lo busca para armar la
+# miniatura. Ese robot es el primero que abre todo enlace que mandemos, y
+# hasta que se separó el GET del POST rompía tres cosas a la vez.
+
+
+def test_la_portada_no_muestra_ni_un_numero():
+    """Es lo único que recibe el robot, y le manda una copia a los servidores
+    de quien previsualiza. Ahí no puede haber nada de la empresa."""
+    cid = _empresa("Informe Portada Muda")
+    token = _token_de(_crear(cid)["enlace"])
+    r = client.get(f"/r/{token}")
+    assert r.status_code == 200
+    assert "180.000" not in r.text
+    assert "Informe Portada Muda" not in r.text, "la portada nombra a la empresa"
+    assert "Ventas netas" not in r.text
+    assert "2026-07" not in r.text
+    assert "Informe privado" in r.text
+
+
+def test_la_vista_previa_no_gasta_un_enlace_de_un_solo_uso():
+    """El dueño encontraba muerto su enlace antes de abrirlo."""
+    cid = _empresa("Informe Previa No Gasta")
+    token = _token_de(_crear(cid, un_solo_uso=True)["enlace"])
+    for _ in range(3):
+        assert client.get(f"/r/{token}").status_code == 200
+    # Y recién ahora, el dueño:
+    assert client.post(f"/r/{token}").status_code == 200
+    assert client.post(f"/r/{token}").status_code == 404
+
+
+def test_la_vista_previa_no_cuenta_como_apertura():
+    """Si un robot suma, "¿lo abrieron?" deja de servir para decidir si hay
+    que revocar."""
+    cid = _empresa("Informe Previa No Cuenta")
+    token = _token_de(_crear(cid)["enlace"])
+    client.get(f"/r/{token}")
+    client.get(f"/r/{token}")
+    assert client.get(f"/api/companies/{cid}/cfo/informes").json()[0]["aperturas"] == 0
+    client.post(f"/r/{token}")
+    assert client.get(f"/api/companies/{cid}/cfo/informes").json()[0]["aperturas"] == 1
+
+
+def test_la_portada_de_un_enlace_que_no_sirve_es_el_mismo_404():
+    """La portada valida sin gastar, pero no puede volverse un oráculo más
+    barato de probar que el informe."""
+    cid = _empresa("Informe Portada Rechazo")
+    creado = _crear(cid)
+    token = _token_de(creado["enlace"])
+    client.post(f"/api/companies/{cid}/cfo/informes/{creado['id']}/revocar")
+
+    revocada = client.get(f"/r/{token}")
+    inventada = client.get("/r/" + "q" * 43)
+    assert revocada.status_code == inventada.status_code == 404
+    assert revocada.text == inventada.text
+
+
+def test_la_portada_solo_puede_enviarse_a_este_mismo_sitio():
+    """El formulario es lo único que puede salir de la portada, y no puede ir
+    a parar a otro dominio."""
+    cid = _empresa("Informe Portada CSP")
+    r = client.get(f"/r/{_token_de(_crear(cid)['enlace'])}")
+    csp = r.headers["content-security-policy"]
+    assert "form-action 'self'" in csp
+    assert "script-src" not in csp
+    assert "<script" not in r.text.lower()
+    # El informe en sí sigue sin formularios.
+    informe = client.post(f"/r/{_token_de(_crear(cid)['enlace'])}")
+    assert "form-action 'none'" in informe.headers["content-security-policy"]
