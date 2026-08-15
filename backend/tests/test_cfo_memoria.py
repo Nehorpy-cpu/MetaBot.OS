@@ -22,7 +22,18 @@ FINANZAS = ["finance"]
 
 
 def _empresa(nombre: str) -> int:
-    return _create_company(name=nombre, packs=FINANZAS)["id"]
+    # Plan con lugar de sobra: nada de este archivo prueba cuotas. Los cupos
+    # se prueban en `test_planes.py`.
+    from app.models import Company as _C
+
+    cid = _create_company(name=nombre, packs=FINANZAS)["id"]
+    db = SessionLocal()
+    try:
+        db.get(_C, cid).plan = "profesional"
+        db.commit()
+    finally:
+        db.close()
+    return cid
 
 
 # ─── Para qué existe ─────────────────────────────────────────────────────

@@ -125,6 +125,13 @@ def crear_identidad(
     if len(digitos) < 6:
         raise HTTPException(422, "Ese teléfono no tiene dígitos suficientes")
 
+    company = _company(db, company_id)
+    if not consumo.alcanza_identidades(db, company):
+        raise HTTPException(
+            402, {"motivo": consumo.aviso_de_cupo(company, "identidades"),
+                  "codigo": "cupo_del_plan"},
+        )
+
     if payload.user_id is not None:
         # Un usuario del panel de OTRA empresa no se puede vincular acá: sería
         # atarle a este número una identidad que no le corresponde.
@@ -672,6 +679,13 @@ def crear_conector(
     if payload.tipo not in cfo_conectores.TIPOS:
         raise HTTPException(422, {"motivo": "Tipo de conector desconocido.",
                                   "codigo": "tipo_desconocido"})
+
+    company = _company(db, company_id)
+    if not consumo.alcanza_conectores(db, company):
+        raise HTTPException(
+            402, {"motivo": consumo.aviso_de_cupo(company, "conectores"),
+                  "codigo": "cupo_del_plan"},
+        )
 
     config_json = "{}"
     cifrada = ""

@@ -18,7 +18,20 @@ FINANZAS = ["finance"]
 
 
 def _empresa(nombre: str, packs=FINANZAS):
-    return _create_company(name=nombre, packs=packs)
+    # Plan con lugar de sobra: nada de este archivo prueba cuotas, y con el
+    # plan de prueba (1 identidad, 1 conector) fallarían por un motivo que no
+    # es el que están mirando. Los cupos se prueban en `test_planes.py`.
+    from app.db import SessionLocal as _S
+    from app.models import Company as _C
+
+    c = _create_company(name=nombre, packs=packs)
+    db = _S()
+    try:
+        db.get(_C, c["id"]).plan = "profesional"
+        db.commit()
+    finally:
+        db.close()
+    return c
 
 
 def _identidad(cid: int, phone: str, sensibilidad="baja", nombre="Dueño"):

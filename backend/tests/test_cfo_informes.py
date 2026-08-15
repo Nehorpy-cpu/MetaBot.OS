@@ -17,8 +17,16 @@ PERIODO = {"desde": "2026-07-01", "hasta": "2026-07-31"}
 
 
 def _empresa(nombre: str, con_datos=True):
+    # Plan con lugar de sobra: este archivo emite muchos informes y ninguno de
+    # sus casos prueba cuotas. Los topes se prueban en `test_planes.py`.
     c = _create_company(name=nombre, packs=FINANZAS)
     cid = c["id"]
+    db = SessionLocal()
+    try:
+        db.get(Company, cid).plan = "profesional"
+        db.commit()
+    finally:
+        db.close()
     client.post(f"/api/companies/{cid}/cfo/metricas/ventas_netas/aprobar",
                 json={"version": 1})
     if con_datos:

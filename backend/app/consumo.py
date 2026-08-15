@@ -143,6 +143,52 @@ def alcanza_informes(db: Session, company: Company) -> bool:
     return informes_del_mes(db, company.id) < plan.informes_por_mes
 
 
+def alcanza_identidades(db: Session, company: Company) -> bool:
+    """Cuántos números del CFO puede tener. Se cuentan los ACTIVOS: dar de
+    baja a uno tiene que liberar el lugar, si no el cliente queda atrapado
+    por gente que ya no trabaja ahí."""
+    from .models import FinanceIdentity
+
+    plan = planes.plan_de(company)
+    cuantas = (
+        db.query(func.count())
+        .select_from(FinanceIdentity)
+        .filter(
+            FinanceIdentity.company_id == company.id,
+            FinanceIdentity.activo.is_(True),
+        )
+        .scalar()
+    ) or 0
+    return cuantas < plan.identidades_cfo
+
+
+def alcanza_conectores(db: Session, company: Company) -> bool:
+    from .models import FinanceConnector
+
+    plan = planes.plan_de(company)
+    cuantos = (
+        db.query(func.count())
+        .select_from(FinanceConnector)
+        .filter(FinanceConnector.company_id == company.id)
+        .scalar()
+    ) or 0
+    return cuantos < plan.conectores
+
+
+def aviso_de_cupo(company: Company, que: str) -> str:
+    """Este SÍ le habla a quien administra, que es quien puede cambiar el
+    plan. Es la conversación opuesta a la del tope de mensajes: ahí del otro
+    lado hay un cliente que no tiene la culpa; acá, alguien que compró un plan
+    y quiere más."""
+    plan = planes.plan_de(company)
+    cuanto = (plan.identidades_cfo if que == "identidades" else plan.conectores)
+    cosa = "números autorizados" if que == "identidades" else "conectores"
+    return (
+        f"El plan {plan.nombre} incluye {cuanto} {cosa}. Para agregar más hay "
+        "que pasar a un plan mayor."
+    )
+
+
 def aviso_de_tope(company: Company, que: str) -> str:
     """Lo que se le dice a la persona del otro lado.
 

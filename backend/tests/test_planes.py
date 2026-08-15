@@ -342,3 +342,93 @@ def test_el_costo_de_ia_de_un_plan_agotado_no_se_come_el_precio():
         assert costo < plan.precio_gs * 0.35, (
             f"{plan.clave}: la IA se lleva {costo} de {plan.precio_gs}"
         )
+
+
+# ─── Los cupos que el plan declara, aplicados ────────────────────────────
+#
+# Un plan que promete "2 números autorizados" y deja cargar diez es una
+# casilla vendible de una función que no existe.
+
+
+def _empresa_finanzas(nombre: str, plan="prueba") -> int:
+    cid = _create_company(name=nombre, packs=["finance"])["id"]
+    db = SessionLocal()
+    try:
+        db.get(Company, cid).plan = plan
+        db.commit()
+    finally:
+        db.close()
+    return cid
+
+
+def test_no_se_autorizan_mas_numeros_de_los_que_incluye_el_plan():
+    cid = _empresa_finanzas("Cupo Identidades")  # Prueba: 1
+    assert client.post(f"/api/companies/{cid}/cfo/identidades",
+                       json={"phone": "595981000001"}).status_code == 201
+    r = client.post(f"/api/companies/{cid}/cfo/identidades",
+                    json={"phone": "595981000002"})
+    assert r.status_code == 402
+    assert r.json()["detail"]["codigo"] == "cupo_del_plan"
+    assert "Prueba" in r.json()["detail"]["motivo"]
+
+
+def test_dar_de_baja_un_numero_libera_el_lugar():
+    """Si no, el cliente queda atrapado por gente que ya no trabaja ahí."""
+    cid = _empresa_finanzas("Cupo Liberado")
+    uno = client.post(f"/api/companies/{cid}/cfo/identidades",
+                      json={"phone": "595981000001"}).json()
+    client.patch(f"/api/companies/{cid}/cfo/identidades/{uno['id']}",
+                 json={"activo": False})
+    assert client.post(f"/api/companies/{cid}/cfo/identidades",
+                       json={"phone": "595981000002"}).status_code == 201
+
+
+def test_no_se_crean_mas_conectores_de_los_que_incluye_el_plan():
+    cid = _empresa_finanzas("Cupo Conectores")  # Prueba: 1
+    assert client.post(f"/api/companies/{cid}/cfo/conectores",
+                       json={"fuente": "ventas", "tipo": "csv",
+                             "nombre": "Uno"}).status_code == 201
+    r = client.post(f"/api/companies/{cid}/cfo/conectores",
+                    json={"fuente": "gastos", "tipo": "csv", "nombre": "Dos"})
+    assert r.status_code == 402
+    assert r.json()["detail"]["codigo"] == "cupo_del_plan"
+
+
+def test_con_un_plan_mayor_entran_mas():
+    cid = _empresa_finanzas("Cupo Plan Mayor", plan="profesional")  # 6
+    for i in range(6):
+        assert client.post(f"/api/companies/{cid}/cfo/identidades",
+                           json={"phone": f"59598100{i:04d}"}).status_code == 201
+    assert client.post(f"/api/companies/{cid}/cfo/identidades",
+                       json={"phone": "595981009999"}).status_code == 402
+
+
+def test_el_aviso_de_cupo_SI_le_habla_de_planes():
+    """Es la conversación opuesta a la del tope de mensajes: ahí del otro lado
+    hay un cliente que no tiene la culpa; acá, alguien que compró un plan y
+    quiere más. A ese hay que decirle exactamente qué comprar."""
+    db = SessionLocal()
+    try:
+        company = db.get(Company, _empresa("Aviso Cupo", plan="basico"))
+        aviso = consumo.aviso_de_cupo(company, "identidades")
+    finally:
+        db.close()
+    assert "Básico" in aviso
+    assert "2" in aviso
+    assert "plan mayor" in aviso
+
+
+def test_todo_lo_que_el_plan_promete_se_aplica():
+    """Si mañana se agrega un campo al plan y nadie lo aplica, esta prueba no
+    lo va a atrapar sola — pero deja escrito cuáles SÍ están aplicados, para
+    que agregar uno sin aplicarlo se note al leer."""
+    aplicados = {"mensajes_por_mes", "informes_por_mes", "identidades_cfo",
+                 "conectores"}
+    declarados = {
+        c for c in planes.BASICO.__dataclass_fields__
+        if c not in ("clave", "nombre", "descripcion", "precio_gs",
+                     "clave_propia")
+    }
+    assert declarados == aplicados, (
+        f"El plan declara {declarados - aplicados} y nadie lo aplica"
+    )
