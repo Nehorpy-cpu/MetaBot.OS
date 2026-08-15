@@ -618,6 +618,48 @@ class ServiceCoverage(Base):
     excluded: Mapped[bool] = mapped_column(default=False)
 
 
+class FinanceIdentity(Base):
+    """Quién puede preguntarle plata al CFO por WhatsApp, y hasta dónde.
+
+    El número NO alcanza como identidad. Un WhatsApp se clona, se hereda con
+    un chip reciclado y se pierde en un taxi; del otro lado se contestan
+    saldos bancarios. Así que el número es solo la primera llave: para lo
+    sensible hace falta el PIN, que se guarda hasheado como cualquier
+    contraseña.
+
+    Es POR EMPRESA: el mismo número puede ser dueño de tres negocios y ver
+    distinto en cada uno. La fila que manda es la de la empresa que se está
+    consultando, nunca "la del número".
+    """
+
+    __tablename__ = "finance_identities"
+    __table_args__ = (
+        UniqueConstraint("company_id", "phone", name="uq_finance_identity_phone"),
+        UniqueConstraint("company_id", "id", name="uq_finance_identity_company_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    # Solo dígitos, sin +, espacios ni guiones: es lo que se compara contra lo
+    # que manda el bridge, y dos formatos del mismo número son dos identidades
+    # distintas para una restricción de unicidad.
+    phone: Mapped[str] = mapped_column(String(30), index=True)
+    nombre: Mapped[str] = mapped_column(String(200), default="")
+    # Usuario del panel, si además entra por la web. Opcional: hay dueños que
+    # solo usan WhatsApp.
+    user_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # Hasta qué nivel puede preguntar: "baja" | "media" | "alta".
+    sensibilidad_max: Mapped[str] = mapped_column(String(6), default="baja")
+    # scrypt, como las contraseñas. Vacío = todavía no configuró PIN, y ahí
+    # NO puede consultar nada de riesgo medio o alto.
+    pin_hash: Mapped[str] = mapped_column(String(255), default="")
+    pin_intentos: Mapped[int] = mapped_column(default=0)
+    pin_bloqueado_hasta: Mapped[datetime | None] = mapped_column(nullable=True)
+    activo: Mapped[bool] = mapped_column(default=True)
+    ultimo_uso_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class FeeBatch(Base):
     """Planilla de honorarios: lo que una aseguradora le debe a un profesional.
 

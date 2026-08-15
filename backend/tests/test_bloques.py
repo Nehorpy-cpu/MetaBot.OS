@@ -96,6 +96,7 @@ def test_cada_modulo_declarado_tiene_algo_detras():
         "medication": "medication.py + job_handlers MEDICATION",
         "previsita": "previsita.py + PreVisitModal",
         "portal": "routers/portal.py (bloque 4)",
+        "cfo": "app/cfo.py + routers/cfo.py (bloque 5)",
     }
     declarados = {m for p in PACKS.values() for m in p.modules}
     sin_evidencia = declarados - set(evidencia)

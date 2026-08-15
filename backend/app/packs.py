@@ -136,8 +136,46 @@ PRACTITIONER = Pack(
 )
 
 
+FINANCE = Pack(
+    key="finance",
+    name="CFO de Finanzas",
+    description=(
+        "El dueño pregunta por WhatsApp cuánto vendió, cuánto cobró y por qué "
+        "no coinciden. Responde con datos calculados, no estimados."
+    ),
+    # Solo `cfo` por ahora. `cfo_conectores` y `cfo_metricas` llegan CON sus
+    # fases: un módulo declarado que no gatea ninguna ruta es una casilla
+    # vendible de una función que no existe, y hay un test que lo frena.
+    modules=("cfo",),
+    tools=("consultar_finanzas",),
+    # NO requiere `booking` ni `healthcare`: una empresa puede contratar SOLO
+    # el CFO. Eso es el modo "Finance Only" del pedido, y sale gratis del
+    # mecanismo de bloques que ya existe —el gate del servidor por path le
+    # cierra todo lo demás sin escribir una línea nueva—.
+    requires=(),
+    rules=(
+        "REGLAS DEL CFO (obligatorias):\n"
+        "- Sos un analista financiero de ESTA empresa, no un asistente "
+        "general. Si te preguntan cualquier otra cosa —el clima, una receta, "
+        "una opinión— contestá: 'Estoy configurado para analizar las "
+        "finanzas, ventas y datos operativos de esta empresa. Puedo ayudarte "
+        "con esos datos.'\n"
+        "- Los números salen SIEMPRE de las herramientas. No estimes, no "
+        "redondees de memoria, no completes un dato que falta. Si la "
+        "herramienta no lo trae, decí qué falta conectar.\n"
+        "- Nunca llames 'utilidad' o 'ganancia' a un margen bruto, a una "
+        "venta ni a una cobranza. Son cosas distintas y confundirlas hace que "
+        "alguien tome una decisión con plata que no tiene.\n"
+        "- Decí SIEMPRE el período y desde cuándo están actualizados los "
+        "datos. Un número sin fecha no sirve para decidir.\n"
+        "- Si los datos están incompletos o desactualizados, avisalo ANTES "
+        "del número, no después."
+    ),
+)
+
+
 PACKS: dict[str, Pack] = {
-    p.key: p for p in (CORE, BOOKING, HEALTHCARE, PRACTITIONER)
+    p.key: p for p in (CORE, BOOKING, HEALTHCARE, PRACTITIONER, FINANCE)
 }
 
 # Qué packs propone el Arquitecto de Negocio según el rubro detectado.
@@ -325,6 +363,8 @@ _RUTAS_POR_MODULO: tuple[tuple[str, str], ...] = (
     (r"^/prescriptions(/|$)", "prescriptions"),
     (r"^/insurers(/|$)", "insurance"),
     (r"^/medication(/|$)", "medication"),
+    # Bloque 5 — CFO de Finanzas
+    (r"^/cfo(/|$)", "cfo"),
     # Bloque 2 — Agenda
     (r"^/reminders(/|$)", "reminders"),
     (r"^/doctors(/|$)", "agenda"),
