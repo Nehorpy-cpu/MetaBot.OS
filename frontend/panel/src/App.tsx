@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Activity, Bot, Boxes, Building2, Calendar, ChevronDown, LayoutDashboard, Link2,
-  Lock, MessageSquare, Pill, Plus, Receipt, Sliders, Video, Wallet, Zap,
+  Gauge, Lock, MessageSquare, Pill, Plus, Receipt, Sliders, Video, Wallet, Zap,
 } from "lucide-react";
 import { api, auth, setBlockedHandler, setUnauthorizedHandler, type Company, type Me } from "./api";
 import { btnPrimary } from "./ui";
@@ -19,13 +19,14 @@ import { BlocksView } from "./views/BlocksView";
 import { PortalView } from "./views/PortalView";
 import { HonorariosAPagarView } from "./views/HonorariosAPagarView";
 import { CfoView } from "./views/CfoView";
+import { PlanView } from "./views/PlanView";
 import { LoginScreen } from "./views/LoginScreen";
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null); // null = verificando
   const [companies, setCompanies] = useState<Company[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical" | "blocks" | "honorarios" | "cfo">("dashboard");
+  const [view, setView] = useState<"dashboard" | "agents" | "medical" | "chat" | "connections" | "intelligence" | "studio" | "services" | "clinical" | "blocks" | "honorarios" | "cfo" | "plan">("dashboard");
   // Qué bloque mostrar destacado al entrar a la vista de bloques (el que el
   // usuario acaba de intentar usar sin tenerlo contratado).
   const [bloqueResaltado, setBloqueResaltado] = useState("");
@@ -144,6 +145,7 @@ export default function App() {
           {navModulo("clinical", "Recetas y Convenios", Pill, "prescriptions", "healthcare")}
           {navModulo("honorarios", "Honorarios a pagar", Receipt, "portal", "practitioner")}
           {navModulo("cfo", "CFO de Finanzas", Wallet, "cfo", "finance")}
+          {navBtn("plan", "Tu plan y consumo", Gauge)}
           {navBtn("services", "Servicios & Estudios", Sliders)}
           {navBtn("chat", "CX Bot (Simulador)", MessageSquare)}
           {navBtn("connections", "Conexiones (WhatsApp)", Link2)}
@@ -191,6 +193,7 @@ export default function App() {
           {active && view === "cfo" && active.modules?.includes("cfo") && (
             <CfoView companyId={active.id} />
           )}
+          {active && view === "plan" && <PlanView companyId={active.id} />}
           {active && view === "honorarios" && active.modules?.includes("portal") && (
             <HonorariosAPagarView companyId={active.id} />
           )}

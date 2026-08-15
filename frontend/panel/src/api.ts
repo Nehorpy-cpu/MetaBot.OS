@@ -1193,3 +1193,50 @@ export const RIESGO_ES: Record<string, string> = {
   media: "Sensible",
   alta: "Crítico",
 };
+
+// ─── Planes y consumo ────────────────────────────────────────────────────
+
+export interface PlanCatalogo {
+  clave: string;
+  nombre: string;
+  descripcion: string;
+  mensajes_por_mes: number;
+  informes_por_mes: number;
+  identidades_cfo: number;
+  conectores: number;
+  precio_gs: number;
+  /** A partir de este volumen conviene que el cliente ponga su propia clave. */
+  clave_propia: boolean;
+}
+
+export interface ConsumoPorModelo {
+  modelo: string;
+  turnos: number;
+  tokens_entrada: number;
+  tokens_salida: number;
+  costo_gs: number;
+  /** No es que operarlo sea gratis: es que no se factura por token. */
+  gratuito: boolean;
+}
+
+export interface Consumo {
+  plan: { clave: string; nombre: string; precio_gs: number; clave_propia: boolean };
+  desde: string;
+  mensajes: { usados: number; tope: number; restantes: number };
+  informes: { usados: number; tope: number; restantes: number };
+  consumo_de_ia: { por_modelo: ConsumoPorModelo[]; tokens: number; costo_gs: number };
+  /** "plataforma" = lo paga MetaBot. "propia" = lo paga el cliente. */
+  clave_en_uso: "plataforma" | "propia";
+}
+
+export const planesApi = {
+  catalogo: () => request<PlanCatalogo[]>("/planes"),
+  consumo: (c: number) => request<Consumo>(`/companies/${c}/consumo`),
+  cambiarPlan: (c: number, plan: string) =>
+    request<Consumo>(`/companies/${c}/plan`, {
+      method: "PUT", body: JSON.stringify({ plan }),
+    }),
+  solicitarClave: (c: number) =>
+    request<{ ya_tiene: boolean; aviso?: string }>(
+      `/companies/${c}/clave-openai/solicitar`, { method: "POST" }),
+};
