@@ -476,3 +476,57 @@ endpoints que consume responden 200 con datos en producción.
 
 **Lo que NO se verificó:** el aspecto visual. Entrar al panel pide escribir una
 contraseña en un formulario, y eso no lo hago. Queda para una mirada humana.
+
+---
+
+## Fase 9 — Mejora gobernada ✅
+
+Desplegado el 15-ago-2026. 696 pruebas verdes, 11 nuevas.
+
+### Lo que el sistema atrapa, alguien lo tiene que leer
+
+Los tres guardias determinísticos ya funcionaban —teléfono inventado, PIN
+inventado, respuesta sin herramienta— pero lo único que hacían con lo que
+atajaban era escribir un `logger.warning`. **Un control que atrapa algo y no
+lo cuenta sirve una sola vez: la vez que alguien mira los logs.**
+
+Ahora escriben en `audit_findings`, la bandeja que el panel ya muestra. No se
+inventó una tabla nueva.
+
+Estos hallazgos son de **otra clase** que los del Auditor. Los del Auditor los
+produce un modelo mirando conversaciones: son sospechas. Estos los produce un
+guardia que *sabe* que algo salió mal. Son los de mayor calidad que el sistema
+puede generar, y se estaban tirando.
+
+Dos de los tres van como **crítico**, no como advertencia:
+
+| Clave | Por qué es crítico |
+|---|---|
+| `pin_inventado` | Pedir un PIN sin motivo le enseña al dueño a tipearlo cuando se lo piden por WhatsApp |
+| `sin_herramienta` | Sin la llamada tampoco corrió la verificación de permiso: no se pierde un número, se pierde el control de acceso |
+
+La clave va entre corchetes al principio de la nota para poder agrupar sin
+parsear castellano —que cambia—, y el mismo problema en la misma conversación
+no se anota más de una vez por día: un guardia que llena la bandeja la vuelve
+ilegible, que es la forma más común de apagar un control sin apagarlo. Pasadas
+24 h vuelve a anotar, porque si sigue pasando hay que volver a enterarse.
+
+### La automejora, probada en vez de prometida
+
+Las cuatro llaves `CFO_ALLOW_AUTOMATIC_*` están asignadas a `False`
+**literal**, y una prueba lee el código fuente y falla si alguna pasara a
+leerse del entorno. Además, ningún módulo del CFO contiene `subprocess`,
+`os.system`, `git push` ni `docker compose up`.
+
+**La automejora no se aplica sola porque el camino para hacerlo no está
+escrito**, no porque una bandera esté apagada. Una bandera se cambia; un
+camino que no existe hay que construirlo, y eso pasa por una revisión.
+
+### Lo que no se pudo verificar en producción
+
+No logré **disparar** un guardia: con `gpt-4o-mini` el bot llamó a la
+herramienta, contestó correctamente al número no autorizado y se negó a
+inventar un teléfono. Los tres guardias se quedaron callados porque no había
+nada que atajar — buena noticia, pero significa que la verificación en
+producción del camino de escritura es indirecta. Lo cubren las 11 pruebas, una
+de ellas contra el endpoint real `/audits`.
