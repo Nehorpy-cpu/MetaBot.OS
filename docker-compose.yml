@@ -40,6 +40,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://metabot:${POSTGRES_PASSWORD}@db:5432/metabot
       BRIDGE_URL: http://bridge:3001
+      # Dominio público desde el que se arman los enlaces de los informes del
+      # CFO. Tiene que ser https y absoluto: el dueño abre ese enlace desde
+      # WhatsApp, y sobre http el token viajaría en claro. Si falta, el
+      # endpoint devuelve 503 en vez de entregar un enlace roto.
+      CFO_REPORT_BASE_URL: ${CFO_REPORT_BASE_URL:-}
     depends_on:
       db:
         condition: service_healthy

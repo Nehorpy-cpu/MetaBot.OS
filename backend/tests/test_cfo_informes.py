@@ -299,3 +299,46 @@ def test_las_aperturas_quedan_registradas():
     fila = client.get(f"/api/companies/{cid}/cfo/informes").json()[0]
     assert fila["aperturas"] == 2
     assert fila["ultima_apertura"]
+
+
+# ─── Despliegue mal configurado ──────────────────────────────────────────
+
+
+def test_sin_base_configurada_no_se_entrega_un_enlace_roto(monkeypatch):
+    """Un enlace relativo (`/r/xxx`) pegado en un WhatsApp no va a ningún
+    lado, y sobre http el token viaja en claro. Las dos cosas son un error de
+    despliegue, y tienen que sonar en el servidor, no en el teléfono del
+    cliente."""
+    from app.routers import cfo as router_cfo
+
+    cid = _empresa("Informe Sin Base")
+    for base in ("", "/", "http://botscomercio.com"):
+        monkeypatch.setattr(router_cfo, "CFO_REPORT_BASE_URL", base)
+        r = client.post(f"/api/companies/{cid}/cfo/informes",
+                        json={"metricas": ["ventas_netas"], **PERIODO})
+        assert r.status_code == 503, f"base '{base}' devolvió {r.status_code}"
+
+
+def test_con_la_base_mal_puesta_no_queda_un_informe_a_medias(monkeypatch):
+    """El chequeo va ANTES de calcular: si falla, no tiene que quedar un
+    informe huérfano en la base esperando una llave que nunca se emitió."""
+    from app.routers import cfo as router_cfo
+
+    cid = _empresa("Informe Sin Huerfanos")
+    db = SessionLocal()
+    try:
+        antes = db.query(FinanceReport).filter(
+            FinanceReport.company_id == cid).count()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(router_cfo, "CFO_REPORT_BASE_URL", "")
+    client.post(f"/api/companies/{cid}/cfo/informes",
+                json={"metricas": ["ventas_netas"], **PERIODO})
+
+    db = SessionLocal()
+    try:
+        assert db.query(FinanceReport).filter(
+            FinanceReport.company_id == cid).count() == antes
+    finally:
+        db.close()

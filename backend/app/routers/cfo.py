@@ -479,6 +479,17 @@ def crear_informe(
     if desconocidas:
         raise HTTPException(422, f"Métricas que no existen: {desconocidas}")
 
+    # Antes de calcular nada: sin base configurada el enlace saldría relativo
+    # (`/r/xxx`), el dueño lo pegaría en un WhatsApp y no iría a ningún lado.
+    # Y sobre http el token viaja en claro. Es un error de despliegue, y tiene
+    # que sonar acá, no en el teléfono del cliente.
+    if not CFO_REPORT_BASE_URL.startswith("https://"):
+        raise HTTPException(
+            503,
+            "CFO_REPORT_BASE_URL no está configurado con una URL https. "
+            "Sin eso el enlace del informe no se puede abrir ni enviar.",
+        )
+
     informe = cfo_reportes.armar(
         db, company, payload.metricas, desde, hasta,
         pedido_por=cfo.solo_digitos(""), titulo=payload.titulo,
