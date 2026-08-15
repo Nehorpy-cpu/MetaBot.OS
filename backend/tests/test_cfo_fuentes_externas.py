@@ -306,3 +306,15 @@ def test_un_conector_de_planilla_no_se_sincroniza_por_ahi():
     r = client.post(f"/api/companies/{cid}/cfo/conectores/{con}/sincronizar")
     assert r.status_code == 422
     assert r.json()["detail"]["codigo"] == "tipo_incorrecto"
+
+
+def test_crear_y_listar_devuelven_la_misma_forma():
+    """El panel pinta la fila recién creada con la respuesta de creación. Con
+    dos formas distintas le queda a medias hasta que recarga."""
+    if not cfo_secretos.hay_llave():
+        pytest.skip("sin CFO_SECRETS_KEY en el entorno de prueba")
+    cid = _empresa("Fuente Misma Forma")
+    creado = _crear(cid, config=PG_OK, credencial="x").json()
+    listado = client.get(f"/api/companies/{cid}/cfo/conectores").json()[0]
+    assert set(creado) == set(listado)
+    assert creado["config"]["tiene_credencial"] is True

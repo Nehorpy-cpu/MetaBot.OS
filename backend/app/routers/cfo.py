@@ -701,7 +701,11 @@ def crear_conector(
     db.refresh(fila)
     audit(db, "cfo.conector.alta", user_id=identity.user_id, company_id=company_id,
           detail={"conector": fila.id, "fuente": payload.fuente, "tipo": payload.tipo})
-    return cfo_conectores.estado(db, fila)
+    # La MISMA forma que devuelve el listado: el panel usa esta respuesta para
+    # pintar la fila recién creada, y con dos formas distintas le queda a
+    # medias hasta que recarga.
+    return {**cfo_conectores.estado(db, fila),
+            "config": cfo_fuentes_externas.resumen_config(fila)}
 
 
 @router.patch("/conectores/{conector_id}")
@@ -724,7 +728,8 @@ def editar_conector(
         audit(db, "cfo.conector.cambio", user_id=identity.user_id,
               company_id=company_id,
               detail={"conector": conector_id, "activo": datos["activo"]})
-    return cfo_conectores.estado(db, fila)
+    return {**cfo_conectores.estado(db, fila),
+            "config": cfo_fuentes_externas.resumen_config(fila)}
 
 
 @router.delete("/conectores/{conector_id}", status_code=204)

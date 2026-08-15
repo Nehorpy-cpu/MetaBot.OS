@@ -530,3 +530,66 @@ inventar un teléfono. Los tres guardias se quedaron callados porque no había
 nada que atajar — buena noticia, pero significa que la verificación en
 producción del camino de escritura es indirecta. Lo cubren las 11 pruebas, una
 de ellas contra el endpoint real `/audits`.
+
+---
+
+## Fase 6 parte 2 — REST y PostgreSQL ✅
+
+Desplegado el 15-ago-2026. 717 pruebas verdes, 21 nuevas.
+
+Es la superficie de más riesgo del módulo entero, y no por el código que trae
+filas.
+
+### El peor escenario, y cómo se cierra
+
+El cliente elige a dónde nos conectamos. Sin freno, alguien carga un conector
+de PostgreSQL apuntando a `db:5432` —o sea, a **nuestra** base— y el sistema
+se conecta desde adentro de la red y le devuelve los datos de todos los demás
+clientes. Un rato de trabajo para él, todos los clientes para nosotros.
+
+Todo host pasa por `netguard` y tiene que resolver a una IP **pública**.
+Probado en producción:
+
+```
+db                → bloqueado (resuelve a 172.18.0.3, nuestra red Docker)
+localhost         → bloqueado (::1)
+127.0.0.1         → bloqueado
+10.0.0.5          → bloqueado
+169.254.169.254   → bloqueado (metadatos de la nube: ahí viven
+                     las credenciales de la máquina)
+conectores creados de esos cinco intentos: 0
+```
+
+No se guarda "para arreglarlo después": un conector mal apuntado que queda en
+la base es uno que alguien puede encender más tarde.
+
+### La consulta del cliente
+
+La escribe él, porque su esquema lo conoce él. Se ejecuta con todo cerrado:
+una sentencia, que empiece con `SELECT` o `WITH`, sin punto y coma —que es el
+mecanismo para encadenar—, con los comentarios descartados **antes** de mirar
+(`-- SELECT` adelante no convierte en lectura lo que viene después), en
+transacción de solo lectura, con `statement_timeout`, y con el tope de filas
+puesto por nosotros envolviendo su consulta: pedírselo en su SQL sería confiar
+en que se acuerde.
+
+### La contraseña de su ERP
+
+Cifrada con Fernet, con la llave en el **entorno del servidor** y no en la
+base: cifrar con una llave guardada al lado de lo cifrado es guardar en claro
+con pasos de más. Verificado en producción: la contraseña no aparece en la API
+(0 coincidencias) ni en claro en la base — quedó `gAAAAABq…`.
+
+Sin llave configurada **no se crea** el conector. Ruidoso al crear y no
+silencioso al sincronizar, para que un servidor a medias no termine guardando
+credenciales en claro "por ahora".
+
+Los errores se limpian antes de guardarse: un error de conexión de PostgreSQL
+trae el DSN entero con la contraseña, y ese texto se muestra en el panel.
+
+### Un cambio de orden que además es mejor ingeniería
+
+Todo lo que se puede rechazar **sin red** se rechaza primero. Resolver un DNS
+para después descubrir que la consulta era un `DELETE` es trabajo de red al
+pedo, y hacía que el motivo del rechazo dependiera de si el servidor tenía
+internet en ese momento.
