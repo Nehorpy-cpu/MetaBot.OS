@@ -3,7 +3,9 @@
 Once fases. Una fase termina cuando **corre en producción con pruebas verdes**,
 no cuando el código está escrito.
 
-Estado al 15-ago-2026: **fases 1 a 5 terminadas**, 584 pruebas verdes.
+Estado al 15-ago-2026: **las once fases terminadas**, 724 pruebas verdes.
+El detalle de cada una, y lo que salió mal en el camino, está en
+`CFO_AGENT_PROGRESS.md`.
 
 ## Terminadas
 

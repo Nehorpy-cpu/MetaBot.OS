@@ -593,3 +593,89 @@ Todo lo que se puede rechazar **sin red** se rechaza primero. Resolver un DNS
 para después descubrir que la consulta era un `DELETE` es trabajo de red al
 pedo, y hacía que el motivo del rechazo dependiera de si el servidor tenía
 internet en ese momento.
+
+---
+
+## Fase 11 — Endurecimiento y repaso final ✅
+
+15-ago-2026. 724 pruebas verdes. **Las once fases están terminadas.**
+
+### Tope de mensajes por número
+
+Existe por plata: desde que la tarea `finanzas` arranca con un modelo pago,
+cada mensaje entrante cuesta. Un número en bucle —un reenvío automático, un
+integrador mal escrito, alguien probando— gasta la cuenta del dueño sin que
+nadie se entere hasta la factura.
+
+Va **después** de guardar el mensaje y **antes** de cualquier modelo: queda
+registro de que la persona escribió, y no se paga un turno para contestarle a
+un bucle. Es por número y no por empresa —si fuera por empresa, un cliente
+pesado dejaría sin bot a todos los demás— y está alto (40/hora) a propósito:
+un tope que se le dispara a un cliente legítimo cuesta más que la plata que
+ahorra.
+
+### Rotación de la llave de cifrado
+
+Sin esto, el día que haya que rotar `CFO_SECRETS_KEY` la única salida sería
+pedirle a cada cliente que vuelva a cargar la contraseña de su ERP — o sea,
+que la llave no se rota nunca. `scripts/rotar_llave_cfo.py` descifra con la
+vieja y recifra con la nueva, y es **todo o nada**: descifra todas antes de
+escribir una, porque una rotación a medias deja unas credenciales con la llave
+vieja y otras con la nueva, y ninguna de las dos abre todo.
+
+### Lo que se midió en vez de suponerse
+
+300 tokens inventados contra `/r/{token}`, en paralelo, contra producción:
+
+```
+300 respuestas 404, ninguna filtración
+el servicio quedó respondiendo en   71 ms
+un informe legítimo abrió en       120 ms (portada) / 97 ms (datos)
+```
+
+No hace falta un limitador propio en la aplicación: con 32 bytes de entropía
+adivinar un token no es una estrategia, y la protección contra inundación de
+tráfico es del proxy, no del código. Escribir un limitador en memoria acá
+habría dado la sensación de control sin darlo — el backend puede correr en
+varios procesos y cada uno tendría su propio contador.
+
+### El repaso final, corrido contra producción
+
+| Qué | Resultado |
+|---|---|
+| Las 17 rutas del CFO gateadas por el bloque | ✅ todas |
+| `/r/{token}` fuera del gate | ✅ a propósito: no hay sesión, la llave es la autorización |
+| Migraciones aplicadas | ✅ `f1c8a24e70d3`, la última |
+| Secretos versionados | ✅ ninguno; `.env` y `GPTAPI.env` ignorados; 0 claves en el árbol |
+| Llaves de automejora | ✅ las cuatro en `False` |
+| Modelos habilitados | ✅ exactamente 3: texto, transcripción, voz |
+| Llave de cifrado cargada | ✅ |
+| Servicio | ✅ 200 |
+
+---
+
+# Estado final del módulo
+
+Las once fases, terminadas y desplegadas. **724 pruebas.**
+
+Lo que el CFO hace hoy: el dueño pregunta por WhatsApp —escribiendo o por nota
+de voz—, el servidor verifica quién es y hasta dónde puede ver, calcula el
+número con una definición aprobada, y contesta diciendo el período, de cuándo
+son los datos y qué advertencia corresponde. Si hace falta más detalle, emite
+un enlace privado que vence.
+
+## Lo que sigue sin resolverse, dicho acá y no en una nota al pie
+
+1. **El número de WhatsApp del demo es personal.** Antes de habilitar el
+   bloque en un cliente real hace falta una línea dedicada.
+2. **El PIN viaja por el mismo WhatsApp que protege.** Un teléfono
+   comprometido con la sesión abierta pasa los dos controles. Mitigado por el
+   vencimiento y el bloqueo, no resuelto.
+3. **El informe no pide PIN al abrirse.** La llave es el único control. Para
+   riesgo alto habría que cambiar el token por una sesión corta previo PIN:
+   está diseñado, no construido.
+4. **Sin datos reales cargados, casi todo es potencial.** Los controles están
+   y los conectores también; lo que falta es que un cliente real conecte su
+   sistema.
+5. **El audio no funciona por el canal oficial de Meta**, solo por el QR. Sin
+   credenciales de Meta no se puede escribir ni probar.
